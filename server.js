@@ -55,6 +55,7 @@ import {
   createLibraryAsset,
   createCardAttribute,
   createProjectAsset,
+  createProjectCard,
   createTask,
   createWorkflowRecord,
   clearCardProcessingState,
@@ -9950,6 +9951,39 @@ app.delete('/api/assets/:id', async (req, res) => {
   } catch (err) {
     console.error('Failed to remove asset card:', err);
     res.status(500).json({ error: 'Failed to remove asset card' });
+  }
+});
+
+// Create an empty Kanban card. Every other card in the app is born from an
+// asset; this is the one route that makes one on its own, for automation that
+// lays the board out before filling it (see createProjectCard).
+app.post('/api/cards', async (req, res) => {
+  try {
+    const { projectId, column, name, cardId, position } = req.body;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+    if (!(await requireProjectAccess(req, res, projectId))) return;
+
+    const result = await createProjectCard(Number(projectId), {
+      // Name or numeric id; storage resolves it against the Columns table.
+      column: column ?? 'Images',
+      name: name ? String(name) : null,
+      cardId: cardId ? String(cardId) : null,
+      position: position === undefined || position === null ? null : Number(position)
+    });
+
+    res.status(result.created ? 201 : 200).json(result.card);
+  } catch (err) {
+    console.error('Failed to create card:', err);
+    if (err.message?.startsWith('Unknown Kanban column')) {
+      return res.status(400).json({ error: err.message });
+    }
+    if (err.message?.startsWith('Project not found:')) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    res.status(500).json({ error: err.message || 'Failed to create card' });
   }
 });
 

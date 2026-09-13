@@ -2035,6 +2035,26 @@ export function toAbsoluteStoragePath(filePath) {
   return path.join(process.cwd(), normalizedPath);
 }
 
+// Accept what every caller naturally has: the column NAME ("Mesh Gen"), or the
+// numeric id that list_cards reports back. Resolved against the table rather
+// than a second copy of KANBAN_COLUMNS, so a renamed column cannot drift.
+async function resolveKanbanColumnName(column) {
+  const db = await getDb();
+  const raw = String(column ?? '').trim();
+  const row = /^\d+$/.test(raw)
+    ? await get(db, 'SELECT name FROM Columns WHERE id = ?', [Number(raw)])
+    : await get(db, 'SELECT name FROM Columns WHERE lower(name) = lower(?)', [raw]);
+
+  if (!row) {
+    const known = (await all(db, 'SELECT id, name FROM Columns ORDER BY position'))
+      .map(entry => `${entry.id}=${entry.name}`)
+      .join(', ');
+    throw new Error(`Unknown Kanban column: ${column}. Valid columns: ${known}`);
+  }
+
+  return row.name;
+}
+
 async function getKanbanColumnIdByName(name) {
   const db = await getDb();
   const row = await get(db, 'SELECT id FROM Columns WHERE name = ?', [name]);
@@ -4456,6 +4476,46 @@ export async function deleteCardAttribute(projectId, externalCardId, position) {
   await normalizeCardAttributePositions(db, card.id);
 
   return { status: 'deleted' };
+}
+
+// Create a Kanban card with nothing on it yet.
+//
+// Everything else in the app makes a card as a SIDE EFFECT of producing an
+// asset (ensureCard from createProjectAsset / setCardProcessingState /
+// createTask), which is why no create path existed for years: the UI has no
+// "add empty card" button. Automation wants the opposite order -- lay out the
+// board first, then fill the cards -- so this is the one entry point that
+// makes a card on its own.
+//
+// Safe to leave empty: deleteCardsIfEmpty only ever runs over the cards an
+// asset was just removed from, so a card that never held one is not swept up.
+export async function createProjectCard(projectId, { column = 'Images', name = null, cardId = null, position = null } = {}) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const columnName = await resolveKanbanColumnName(column);
+
+  // A clientKey that is already taken means the caller is retrying, or is
+  // reusing a key it also passed to a generation call. Handing back the card
+  // it already has beats both erroring and silently making a duplicate the
+  // key can no longer address unambiguously.
+  const existing = cardId ? await resolveProjectCard(normalizedProjectId, cardId) : null;
+  if (existing) {
+    return { created: false, card: mapProjectCardRow(await getCardRow(normalizedProjectId, cardId)) };
+  }
+
+  const card = await ensureCard(normalizedProjectId, columnName, cardId, {
+    name,
+    creationDate: Date.now()
+  });
+
+  // ensureCard appends to the end of the column; an explicit position is a
+  // second step, through moveCard, so the reorder + normalize runs exactly
+  // once and in the transaction that owns it.
+  if (Number.isInteger(position) && position >= 0) {
+    const kanbanColumnId = await getKanbanColumnIdByName(columnName);
+    await moveCard(normalizedProjectId, card.clientKey || card.id, kanbanColumnId, position);
+  }
+
+  return { created: true, card: mapProjectCardRow(await getCardRow(normalizedProjectId, card.clientKey || card.id)) };
 }
 
 export async function deleteCard(projectId, externalCardId) {
