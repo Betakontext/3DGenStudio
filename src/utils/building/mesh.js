@@ -34,6 +34,15 @@
 
 import * as THREE from 'three'
 
+/**
+ * How deep an opening placeholder sits, in metres.
+ *
+ * Enough that the box is visibly set into the wall rather than co-planar with
+ * it: two surfaces at exactly the same depth z-fight, which reads as flickering
+ * rather than as a window.
+ */
+export const SLOT_DEPTH = 0.18
+
 /** Convert one IR point to three.js space. See the header for why this mapping. */
 export function toThree(x, y, z) {
   return [x, z, -y]
@@ -298,4 +307,76 @@ export function buildingBounds(ir) {
     }
   }
   return any ? box : null
+}
+
+/**
+ * The openings, as one instanced box per slot type.
+ *
+ * INSTANCED, NOT MERGED. A forty-storey tower is thousands of openings; merging
+ * them into one geometry means rebuilding every vertex when a single slider
+ * moves, while an InstancedMesh rebuilds a matrix array and nothing else. It is
+ * also the shape the later phases need: a style pack binds a slot type to a
+ * real model, and swapping the instanced geometry is then the whole change.
+ *
+ * A UNIT BOX IS THE PLACEHOLDER, scaled per instance by the opening's own width
+ * and height. Recessed slightly into the wall (the small Z offset) so it reads
+ * as an opening rather than a panel stuck to the outside - without it the boxes
+ * z-fight with the wall they sit on, which looks like flickering rather than
+ * like a window.
+ *
+ * @param {object} ir
+ * @returns {Array<{type: string, count: number, geometry: THREE.BufferGeometry, matrices: Float32Array}>}
+ */
+export function buildSlotInstances(ir) {
+  if (!ir || !Array.isArray(ir.slots) || ir.slots.length === 0) return []
+
+  const byType = new Map()
+  for (const slot of ir.slots) {
+    if (!byType.has(slot.type)) byType.set(slot.type, [])
+    byType.get(slot.type).push(slot)
+  }
+
+  const out = []
+  // Sorted, so the draw order - and therefore anything comparing two builds -
+  // does not depend on which slot happened to be emitted first.
+  for (const type of [...byType.keys()].sort()) {
+    const slots = byType.get(type)
+    const matrices = new Float32Array(slots.length * 16)
+    const matrix = new THREE.Matrix4()
+    const local = new THREE.Matrix4()
+
+    slots.forEach((slot, index) => {
+      // The IR transform is Z-up; convert it the same way a point is. Building
+      // the basis explicitly rather than multiplying by a change-of-basis matrix
+      // keeps the handedness argument in one place - see toThree.
+      const t = slot.transform
+      const alongIr = [t[0], t[1], t[2]]
+      const normalIr = [t[8], t[9], t[10]]
+      const posIr = [t[12], t[13], t[14]]
+
+      const along = toThree(alongIr[0], alongIr[1], alongIr[2])
+      const up = toThree(0, 0, 1)
+      const normal = toThree(normalIr[0], normalIr[1], normalIr[2])
+      const pos = toThree(posIr[0], posIr[1], posIr[2])
+
+      matrix.set(
+        along[0], up[0], normal[0], pos[0],
+        along[1], up[1], normal[1], pos[1],
+        along[2], up[2], normal[2], pos[2],
+        0, 0, 0, 1,
+      )
+      // Scale the unit box to the opening, with a shallow depth.
+      local.makeScale(Math.max(slot.cellW, 1e-4), Math.max(slot.cellH, 1e-4), SLOT_DEPTH)
+      matrix.multiply(local)
+      matrix.toArray(matrices, index * 16)
+    })
+
+    out.push({
+      type,
+      count: slots.length,
+      geometry: new THREE.BoxGeometry(1, 1, 1),
+      matrices,
+    })
+  }
+  return out
 }

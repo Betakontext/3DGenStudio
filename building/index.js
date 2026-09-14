@@ -82,6 +82,32 @@ export {
   readProp,
 } from './catalog.js';
 
+export { MAX_SLOTS, generateFacade } from './facade.js';
+
+export {
+  MAX_REPEAT,
+  MIN_CELL,
+  SIZE,
+  STRETCH,
+  bayParts,
+  placeInCell,
+  repeatCount,
+  splitSpan,
+  storeyParts,
+  tileSpan,
+} from './grammar.js';
+
+export {
+  CURVE_INTERP,
+  createCurve,
+  defaultProfileCurve,
+  evalCurve,
+  isCurve,
+  isFlatCurve,
+  sampleCurve,
+  toCurve,
+} from './param.js';
+
 export { BUILDING_IR_FORMAT, compileBuilding } from './compile.js';
 
 export {

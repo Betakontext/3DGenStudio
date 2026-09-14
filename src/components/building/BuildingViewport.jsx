@@ -23,7 +23,9 @@ import CameraRig from '../meshEditor/CameraRig'
 import ViewportCameras from '../meshEditor/ViewportCameras'
 import ViewGizmo from '../meshEditor/ViewGizmo'
 import { FRAME_EYE_OFFSET, framedOrthoZoom } from '../../utils/cameraFraming'
-import { buildBuildingGeometry, buildLevelOutlines, buildingBounds } from '../../utils/building/mesh'
+import {
+  buildBuildingGeometry, buildLevelOutlines, buildSlotInstances, buildingBounds,
+} from '../../utils/building/mesh'
 
 /**
  * Frames the camera, and makes left-drag orbit.
@@ -156,15 +158,61 @@ export default function BuildingViewport({
   //
   // Switching back to Preview rebuilds once, which is what an unmounted viewport
   // did anyway - so this costs nothing and removes the whole hidden cost.
-  const { geometry, outlines, box } = useMemo(() => {
-    if (!active) return { geometry: null, outlines: null, box: null }
+  const { geometry, outlines, box, slots } = useMemo(() => {
+    if (!active) return { geometry: null, outlines: null, box: null, slots: [] }
     const built = buildBuildingGeometry(ir)
     return {
       geometry: built.geometry,
       outlines: buildLevelOutlines(ir),
       box: buildingBounds(ir),
+      slots: buildSlotInstances(ir),
     }
   }, [ir, active])
+
+  // The InstancedMeshes are built here rather than declared as JSX.
+  //
+  // R3F can express an instancedMesh declaratively, but writing the matrix array
+  // through nested props (`instanceMatrix-array`) does not reliably mark the
+  // attribute for upload, so the instances render stacked at the origin - one
+  // visible box where a thousand windows should be. Constructing the object and
+  // handing it over with <primitive> makes the upload explicit and the disposal
+  // obvious, which matters here: a drag rebuilds this list every frame.
+  const slotMeshes = useMemo(() => slots.map(group => {
+    const material = new THREE.MeshStandardMaterial({
+      // Doors read warmer than windows purely so the front of the building is
+      // findable at a glance while the style packs do not exist yet.
+      color: group.type === 'door' ? '#7a6248' : '#2f3a44',
+      roughness: 0.4,
+      metalness: 0.1,
+    })
+    const mesh = new THREE.InstancedMesh(group.geometry, material, group.count)
+    mesh.name = group.type
+    mesh.instanceMatrix.set(group.matrices)
+    mesh.instanceMatrix.needsUpdate = true
+    // The bounding sphere three computes for an InstancedMesh ignores the
+    // instance transforms, so culling would hide the openings the moment the
+    // building's own origin left the frustum.
+    mesh.frustumCulled = false
+    return mesh
+  }), [slots])
+
+  const slotsRef = useRef(slotMeshes)
+  useEffect(() => {
+    const previous = slotsRef.current
+    slotsRef.current = slotMeshes
+    if (previous && previous !== slotMeshes) {
+      for (const mesh of previous) {
+        mesh.geometry?.dispose?.()
+        mesh.material?.dispose?.()
+      }
+    }
+  }, [slotMeshes])
+  useEffect(() => () => {
+    for (const mesh of slotsRef.current || []) {
+      mesh.geometry?.dispose?.()
+      mesh.material?.dispose?.()
+    }
+  }, [])
 
   useDisposed(geometry)
   useDisposed(outlines)
@@ -249,6 +297,13 @@ export default function BuildingViewport({
           <meshStandardMaterial color="#c9cdd4" roughness={0.85} metalness={0.0} />
         </mesh>
       )}
+
+      {/* The openings. One InstancedMesh per slot type, so a tower's thousand
+          windows cost one draw call rather than a thousand - and so a style pack
+          can later swap the geometry for a real model without touching
+          anything else. Doors read warmer than windows purely so the front of
+          the building is findable at a glance. */}
+      {slotMeshes.map(mesh => <primitive key={mesh.name} object={mesh} />)}
 
       {/* The storey lines are what make a one-metre setback legible - the
           shading alone hides it at most camera angles. */}

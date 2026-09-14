@@ -48,6 +48,11 @@ export const CODE = {
   W_TINY_FOOTPRINT: 'W_TINY_FOOTPRINT',
   W_CORNER_RADIUS: 'W_CORNER_RADIUS',
 
+  // --- facade ---
+  W_NO_OPENINGS: 'W_NO_OPENINGS',
+  W_OPENINGS_SQUASHED: 'W_OPENINGS_SQUASHED',
+  W_SLOTS_TRUNCATED: 'W_SLOTS_TRUNCATED',
+
   // --- settings that quietly do nothing ---
   // Their own code, because "you changed a control and it had no effect" is the
   // single most confusing thing a generator can do, and it deserves to be

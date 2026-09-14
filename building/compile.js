@@ -32,10 +32,11 @@ import { getNodeDef, readMode, readProp } from './catalog.js';
 import { CODE, createDiagnostics, fix, metres } from './diagnostics.js';
 import {
   BUILDING_IR_FORMAT, LEVEL_KIND, createBuildingIr, createPolygonTable,
-  makeLevel, makeSolid,
+  makeLevel, makeSlot, makeSolid,
 } from './ir.js';
 import { JOIN } from './clip.js';
 import { MASS_PROFILE, stackMass } from './mass.js';
+import { MAX_SLOTS, generateFacade } from './facade.js';
 import { isFlatCurve } from './param.js';
 import { normalizeBuildingDoc } from './doc.js';
 import { normalizePolygon, polygonArea, validateRing } from './poly.js';
@@ -196,7 +197,7 @@ export function compileBuilding(document) {
     }
     if (missing) continue;
 
-    values.set(node.id, evaluateNode(node, def, inputValue, diagnostics));
+    values.set(node.id, evaluateNode(node, def, inputValue, diagnostics, doc.building.seed));
   }
 
   // --- phase 4: emit -------------------------------------------------------
@@ -226,6 +227,8 @@ export function compileBuilding(document) {
       index: level.index,
     }));
   }
+  for (const slot of result.slots || []) ir.slots.push(makeSlot(slot));
+
   ir.polygons = polygons.all();
   ir.solids = [makeSolid({ levels: levelIndices, name: doc.name || 'building' })];
 
@@ -279,7 +282,7 @@ function finish(ir, diagnostics) {
  * rule 1 in catalog.js. The switch is deliberately flat: a registry of functions
  * would be tidier and would also hide the fact that there are only a handful.
  */
-function evaluateNode(node, def, inputValue, diagnostics) {
+function evaluateNode(node, def, inputValue, diagnostics, seed) {
   switch (node.type) {
     case 'footprint': {
       const raw = readProp(node, 'shape');
@@ -405,6 +408,60 @@ function evaluateNode(node, def, inputValue, diagnostics) {
         );
       }
       return stack;
+    }
+
+    case 'facade': {
+      const building = inputValue(node, 'building');
+      if (!building?.levels?.length) return building;
+
+      const facade = generateFacade({
+        levels: building.levels,
+        seed,
+        nodeId: node.id,
+        rule: {
+          bayWidth: readProp(node, 'bayWidth'),
+          pierWidth: readProp(node, 'pierWidth'),
+          windowWidth: readProp(node, 'windowWidth'),
+          sillHeight: readProp(node, 'sillHeight'),
+          lintelHeight: readProp(node, 'lintelHeight'),
+          groundSillHeight: readProp(node, 'groundSillHeight'),
+          doorWidth: readProp(node, 'doorWidth'),
+          doorHeight: readProp(node, 'doorHeight'),
+          includeCourtyards: readProp(node, 'includeCourtyards'),
+        },
+      });
+
+      if (facade.slots.length === 0) {
+        diagnostics.warn(
+          CODE.W_NO_OPENINGS,
+          'No openings fitted on this building. The storeys may be shorter than the '
+          + 'sill and lintel together, or the walls shorter than one bay.',
+          { nodeId: node.id, hint: 'Lower the sill and lintel, or raise the storey height.' },
+        );
+      }
+
+      if (facade.squashed) {
+        diagnostics.warn(
+          CODE.W_OPENINGS_SQUASHED,
+          'Some openings had to be narrowed or shortened to fit their bay. A short '
+          + 'wall - the return of an L-plan, say - cannot hold a full-width window.',
+          { nodeId: node.id, hint: 'Reduce the window width or the pier.' },
+        );
+      }
+
+      if (facade.truncated) {
+        diagnostics.warn(
+          CODE.W_SLOTS_TRUNCATED,
+          `This building wants more than ${MAX_SLOTS} openings, so the rest were `
+          + 'dropped. Nothing below is wrong; there is simply a limit on how many '
+          + 'the preview will place.',
+          { nodeId: node.id, hint: 'Widen the bays, or reduce the storey count.' },
+        );
+      }
+
+      // A new object rather than a mutation: nothing in the compiler writes back
+      // into a value another node might still hold.
+      return { ...building, slots: facade.slots };
     }
 
     case 'output':
