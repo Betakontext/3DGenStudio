@@ -66,6 +66,12 @@ export const ANIMATION_ASSETS_DIR = path.join(ASSETS_DIR, 'animations');
 // would bring the block back.
 export const VFX_ASSETS_DIR = path.join(ASSETS_DIR, 'vfx');
 
+// Procedural building documents. Same "the spec IS the asset" reasoning as
+// VFX_ASSETS_DIR above, and held as a FILE for the same reason: metadata is
+// merged rather than replaced, so a document kept in the column could never
+// lose a key - deleting a node and saving would bring the node back.
+export const BUILDING_ASSETS_DIR = path.join(ASSETS_DIR, 'buildings');
+
 // Bumped when a change would make an existing importer plugin MISREAD a
 // bundle. A plugin declares the range it supports and must refuse anything
 // outside it rather than half-importing - the same contract VFX_IR_FORMAT
@@ -98,7 +104,12 @@ const ASSET_TYPES = [
   // "Unknown asset type: vfx". This is never user-visible: mapAssetRow
   // lower-cases the wire type to 'vfx', and the label the user reads lives in
   // ASSET_SECTIONS in src/pages/AssetsPage.jsx, which says "VFX".
-  { id: 6, name: 'Vfx' }
+  { id: 6, name: 'Vfx' },
+  // Procedural building documents. Like a Tree preset and a Vfx graph, the
+  // stored file is the SPEC (footprint + node graph + style binding), not the
+  // mesh it generates - a few tens of kB that regenerates its geometry
+  // deterministically from a seed. Title-cased for the same reason as 'Vfx'.
+  { id: 7, name: 'Building' }
 ];
 const ATTRIBUTE_TYPES = [
   { id: 1, name: 'Text' },
@@ -1848,6 +1859,7 @@ export async function initializeStorage() {
   await fs.mkdir(MOTION_ASSETS_DIR, { recursive: true });
   await fs.mkdir(ANIMATION_ASSETS_DIR, { recursive: true });
   await fs.mkdir(VFX_ASSETS_DIR, { recursive: true });
+  await fs.mkdir(BUILDING_ASSETS_DIR, { recursive: true });
 
   // Back up the DB before the one-time Nodes→Cards migration touches it. That
   // migration only ever applies to a SQLite file that predates the unified Cards
@@ -1950,6 +1962,7 @@ export function getAssetDirectory(type = 'image') {
   if (type === 'brush') return BRUSH_ASSETS_DIR;
   if (type === 'tree') return TREE_ASSETS_DIR;
   if (type === 'vfx') return VFX_ASSETS_DIR;
+  if (type === 'building') return BUILDING_ASSETS_DIR;
   return IMAGE_ASSETS_DIR;
 }
 
@@ -1962,6 +1975,7 @@ export function getAssetSubdirectory(type = 'image') {
   // not error - it falls through to 'images', and the file is written into the
   // wrong directory and exported into the wrong one in a .3dgp too.
   if (type === 'vfx') return 'vfx';
+  if (type === 'building') return 'buildings';
   return 'images';
 }
 
@@ -2997,7 +3011,7 @@ export async function deleteProjectById(projectId, { deleteAssets = false } = {}
      FROM Assets a
      WHERE a.id IN (${placeholders})
        AND a.assetTypeId NOT IN (
-             SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush', 'Tree', 'Vfx')
+             SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush', 'Tree', 'Vfx', 'Building')
            )
        AND NOT EXISTS (SELECT 1 FROM Assets_Projects WHERE Assets_Projects.assetId = a.id)
        AND NOT EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.assetId = a.id)`,

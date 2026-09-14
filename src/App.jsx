@@ -16,6 +16,7 @@ import BoardPage from './pages/BoardPage'
 import AssemblyPage from './pages/AssemblyPage'
 import TreeGenPage from './pages/TreeGenPage'
 import VfxEditorPage from './pages/VfxEditorPage'
+import BuildingGenPage from './pages/BuildingGenPage'
 import WikiPage from './pages/WikiPage'
 
 function AppRoutes() {
@@ -31,6 +32,7 @@ function AppRoutes() {
       <Route path="/assembly" element={<AssemblyPage />} />
       <Route path="/trees" element={<TreeGenPage />} />
       <Route path="/vfx" element={<VfxEditorPage />} />
+      <Route path="/buildings" element={<BuildingGenPage />} />
       <Route path="/wiki" element={<WikiPage />} />
       <Route path="/wiki/:pageId" element={<WikiPage />} />
       <Route path="/library" element={<Navigate to="/assets" replace />} />

@@ -43,4 +43,24 @@ export default defineConfig([
       }],
     },
   },
+  {
+    // The same guard for the building generator, for the same reasons and one
+    // more. A stored building is a ~20KB spec that has to regenerate its mesh
+    // bit-for-bit: the live preview re-evaluates on every slider drag, the
+    // thumbnail is rendered once and must keep matching, and the export has to
+    // produce the building the author actually approved. A single Math.random
+    // anywhere under these paths breaks all three, and the symptom - "the
+    // windows move when I change the floor count" - reads as a design flaw
+    // rather than a bug, so it is caught mechanically. building/random.js is
+    // the only sanctioned source of randomness; see its header for why a slot's
+    // seed is a hash of its identity rather than a position in a stream.
+    files: ['building/**/*.js', 'src/utils/building/**/*.js'],
+    rules: {
+      'no-restricted-properties': ['error', {
+        object: 'Math',
+        property: 'random',
+        message: 'Building code must be deterministic: use randomAt / instanceSeed / slotId from building/random.js.',
+      }],
+    },
+  },
 ])

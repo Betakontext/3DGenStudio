@@ -4377,6 +4377,63 @@ function readVfxGraphMetadata(buffer) {
   };
 }
 
+// The building-document equivalent of readVfxGraphMetadata above.
+//
+// Deliberately does NOT import building/doc.js. The digest this mirrors into the
+// metadata column has to survive a document written by a NEWER app version than
+// the one importing it, and a strict normaliser would reject the whole file over
+// a node type it had never heard of. Reading the few fields the Assets page and
+// the project exporter actually need keeps an import forward-compatible; the
+// editor normalises properly when the document is opened.
+//
+// The reference arrays hold 'asset:<id>' STRINGS. That is invariant 4 in
+// building/doc.js, and it is what makes storage.js's collectAssetIdsFromValue
+// pick a building's textures up for a .3dgp export with no walker changes. Tree
+// presets store bare numbers here and therefore ship broken.
+function readBuildingDocMetadata(buffer) {
+  let parsed;
+  try {
+    parsed = JSON.parse(buffer.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+  // Recognised by structure, not by a version number alone -- every other JSON
+  // in this app has one of those too.
+  const looksLikeBuilding = parsed.kind === 'building-graph'
+    || (Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)
+        && parsed.building && typeof parsed.building === 'object');
+  if (!looksLikeBuilding) return null;
+
+  const references = parsed.references && typeof parsed.references === 'object' ? parsed.references : {};
+  const imageRefs = [];
+  const meshRefs = [];
+  const profileRefs = [];
+  for (const entry of Object.values(references)) {
+    if (!entry || typeof entry !== 'object' || typeof entry.ref !== 'string') continue;
+    if (!/^asset:\d+$/.test(entry.ref)) continue;
+    if (entry.kind === 'mesh') meshRefs.push(entry.ref);
+    else if (entry.kind === 'profile') profileRefs.push(entry.ref);
+    else imageRefs.push(entry.ref);
+  }
+
+  const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+  const edges = Array.isArray(parsed.edges) ? parsed.edges : [];
+
+  return {
+    kind: 'building-graph',
+    format: parsed.format ?? null,
+    seed: parsed.building?.seed ?? null,
+    stylePackId: parsed.building?.stylePackId ?? null,
+    nodeCount: nodes.length,
+    edgeCount: edges.length,
+    imageRefs: [...new Set(imageRefs)].sort(),
+    meshRefs: [...new Set(meshRefs)].sort(),
+    profileRefs: [...new Set(profileRefs)].sort()
+  };
+}
+
 function getExtensionFromContentType(contentType = '', fallback = 'bin') {
   const normalized = String(contentType || '').toLowerCase();
 
@@ -7034,14 +7091,15 @@ app.delete('/api/boards/:id', async (req, res) => {
 app.get('/api/assets/library', async (req, res) => {
   try {
     const scope = scopeId(req);
-    const [images, meshes, brushes, trees, vfx] = await Promise.all([
+    const [images, meshes, brushes, trees, vfx, buildings] = await Promise.all([
       listLibraryAssetsByType('image', getRequestBaseUrl(req), scope),
       listLibraryAssetsByType('mesh', getRequestBaseUrl(req), scope),
       listLibraryAssetsByType('brush', getRequestBaseUrl(req), scope),
       listLibraryAssetsByType('tree', getRequestBaseUrl(req), scope),
-      listLibraryAssetsByType('vfx', getRequestBaseUrl(req), scope)
+      listLibraryAssetsByType('vfx', getRequestBaseUrl(req), scope),
+      listLibraryAssetsByType('building', getRequestBaseUrl(req), scope)
     ]);
-    res.json({ images, meshes, brushes, trees, vfx });
+    res.json({ images, meshes, brushes, trees, vfx, buildings });
   } catch (err) {
     console.error('Failed to list asset library:', err);
     res.status(500).json({ error: 'Failed to list asset library' });
@@ -7263,7 +7321,7 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
 
     const overrideAssetType = (() => {
       const requested = String(req.query?.assetType || req.body?.assetType || '').toLowerCase();
-      return ['image', 'mesh', 'brush', 'tree', 'vfx'].includes(requested) ? requested : null;
+      return ['image', 'mesh', 'brush', 'tree', 'vfx', 'building'].includes(requested) ? requested : null;
     })();
 
     await Promise.all(files.map(async (file, index) => {
@@ -7274,6 +7332,7 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
       // cheap (a few kB) and turns that into a skip with a reason.
       let treeMetadata = null;
       let vfxMetadata = null;
+      let buildingMetadata = null;
       if (!assetType) {
         assetType = inferSupportedAssetTypeFromFilename(file.originalname);
       } else if (assetType === 'brush') {
@@ -7304,6 +7363,19 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
         vfxMetadata = readVfxGraphMetadata(file.buffer);
         if (!vfxMetadata) {
           skipped.push({ name: file.originalname, reason: 'Not a VFX graph' });
+          return;
+        }
+      } else if (assetType === 'building') {
+        // Same reasoning again: a building document is a spec the generator has
+        // to rebuild from, so one that is not a document would become a tile
+        // that only fails when someone clicks Edit.
+        if (path.extname(file.originalname).toLowerCase() !== '.json') {
+          skipped.push({ name: file.originalname, reason: 'Buildings must be JSON files' });
+          return;
+        }
+        buildingMetadata = readBuildingDocMetadata(file.buffer);
+        if (!buildingMetadata) {
+          skipped.push({ name: file.originalname, reason: 'Not a building document' });
           return;
         }
       }
@@ -7346,7 +7418,8 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
           resolution: (assetType === 'image' || assetType === 'brush') ? formatImageResolution(dimensions.width, dimensions.height) : 'Unknown',
           source: 'LIBRARY IMPORT',
           ...(treeMetadata || {}),
-          ...(vfxMetadata || {})
+          ...(vfxMetadata || {}),
+          ...(buildingMetadata || {})
         },
         createdAt: Date.now(),
         ownerId: viewerId(req)

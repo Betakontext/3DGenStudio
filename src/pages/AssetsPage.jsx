@@ -21,7 +21,7 @@ import './AssetsPage.css'
 // and therefore use the wider 3-across grid. Extracted because the membership
 // test appeared in three separate places as a chain of ||, and every new
 // section of this kind had to be added to all three.
-const THUMBNAIL_SECTIONS = new Set(['meshes', 'trees', 'vfx'])
+const THUMBNAIL_SECTIONS = new Set(['meshes', 'trees', 'vfx', 'buildings'])
 
 const ASSETS_PER_PAGE = 20
 // The mesh grid is 3 columns wide, so 21 (7 full rows) paginates more cleanly
@@ -82,6 +82,16 @@ const ASSET_SECTIONS = [
     emptyMessage: 'No VFX effects saved yet — build one in the VFX Editor.',
     cardTag: 'VFX',
     cardIcon: 'auto_awesome'
+  },
+  {
+    key: 'buildings',
+    label: 'Buildings',
+    icon: 'apartment',
+    path: 'assets/buildings',
+    emptyIcon: 'apartment',
+    emptyMessage: 'No buildings saved yet - design one in the Building Generator.',
+    cardTag: 'BUILDING',
+    cardIcon: 'apartment'
   },
   {
     key: 'workflows',
@@ -224,6 +234,18 @@ function buildVfxEditorPath(asset, returnTo = '/assets') {
     returnTo
   })
   return `/vfx?${query.toString()}`
+}
+
+// A building opens in the Building Generator on the same terms: the document
+// carries the footprint, the node graph and its style bindings, so the asset id
+// is the whole of the deep link.
+function buildBuildingEditorPath(asset, returnTo = '/assets') {
+  const assetIdMatch = String(asset.id || '').match(/^library:(\d+)$/) || String(asset.id || '').match(/^(\d+)$/)
+  const query = new URLSearchParams({
+    buildingAssetId: assetIdMatch?.[1] || String(asset.assetId || ''),
+    returnTo
+  })
+  return `/buildings?${query.toString()}`
 }
 
 function buildImageEditorPath(asset, returnTo = '/assets') {
@@ -812,6 +834,7 @@ export default function AssetsPage() {
         const sectionAssetType = activeSection === 'brushes' ? 'brush'
           : activeSection === 'trees' ? 'tree'
             : activeSection === 'vfx' ? 'vfx'
+              : activeSection === 'buildings' ? 'building'
             : null
         const result = await importLibraryAssets(
           assetsToImport,
@@ -1553,6 +1576,17 @@ export default function AssetsPage() {
                   EDIT
                 </button>
               </>
+            ) : activeSection === 'buildings' ? (
+              <>
+                <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                <button
+                  type="button"
+                  className="asset-card__link asset-card__link-btn"
+                  onClick={() => navigate(buildBuildingEditorPath(asset))}
+                >
+                  EDIT
+                </button>
+              </>
             ) : (
               <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
             )}
@@ -2219,7 +2253,7 @@ export default function AssetsPage() {
             className="assets-page__file-input"
             accept={
               activeSection === 'brushes' ? '.png,.abr'
-                : activeSection === 'trees' || activeSection === 'vfx' ? 'application/json,.json'
+                : activeSection === 'trees' || activeSection === 'vfx' || activeSection === 'buildings' ? 'application/json,.json'
                   : '.png,.jpg,.jpeg,.webp,.gif,.bmp,.glb,.gltf,.obj,.fbx,.stl,.ply'
             }
             onChange={handleAssetImportChange}

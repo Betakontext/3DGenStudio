@@ -149,6 +149,7 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
           <Link to="/assembly" className={`header__nav-link ${isActive('/assembly') ? 'header__nav-link--active' : ''}`}>Assembly</Link>
           <Link to="/trees" className={`header__nav-link ${isActive('/trees') ? 'header__nav-link--active' : ''}`}>Trees</Link>
           <Link to="/vfx" className={`header__nav-link ${isActive('/vfx') ? 'header__nav-link--active' : ''}`}>VFX</Link>
+          <Link to="/buildings" className={`header__nav-link ${isActive('/buildings') ? 'header__nav-link--active' : ''}`}>Buildings</Link>
           <Link to="/wiki" className={`header__nav-link ${isActive('/wiki') ? 'header__nav-link--active' : ''}`}>Wiki</Link>
         </nav>
       </div>

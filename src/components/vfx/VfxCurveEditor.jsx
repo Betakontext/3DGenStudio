@@ -86,6 +86,10 @@ export default function VfxCurveEditor({
   unit = '',
   scale = 1,
   domain = VALUE_DOMAIN.LIFE,
+  // What the horizontal axis is called. Defaults to the VFX domain names, so
+  // nothing in the VFX editor changes; the building generator passes 'height',
+  // because "Profile curve over life" is nonsense for a wall.
+  domainLabel = null,
   onChange,
   onCommit,
   getPlayhead = null,
@@ -577,7 +581,9 @@ export default function VfxCurveEditor({
   return (
     <div className="vfx-curve">
       <div className="vfx-curve__head">
-        <span className="vfx-curve__title">{label} over {DOMAIN_AXIS[domain] || 'life'}</span>
+        <span className="vfx-curve__title">
+          {label} over {domainLabel || DOMAIN_AXIS[domain] || 'life'}
+        </span>
         <select
           className="vfx-curve__preset"
           value=""

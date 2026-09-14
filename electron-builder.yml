@@ -85,6 +85,12 @@ files:
   # disagree about the format. Same rule as db/ and mcp/: the whole directory
   # ships, because a name-by-name list would look complete and still miss one.
   - vfx/**/*
+  # The building generator contract: footprint/polygon maths, the node catalog,
+  # the compiler and the BuildingIR. server.js imports it to validate a stored
+  # .building.json and to build an export bundle, and src/ imports the same
+  # modules so the editor and the backend cannot disagree about the format.
+  # Same rule as db/, mcp/ and vfx/: the whole directory ships.
+  - building/**/*
   # THE PARTICLE SIMULATION, and the one place src/ ships. The rule everywhere
   # else is that src/ is browser code and only dist/ is packaged - this subtree
   # is the exception because it is provably neither: system.js, emitter.js,

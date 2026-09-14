@@ -41,6 +41,10 @@ const TYPE_CONFIG = {
   vfx: {
     libraryKey: 'vfx', title: 'VFX Effect', plural: 'effects', emptyIcon: 'auto_awesome',
     preview: 'thumbnail', placeholderIcon: 'auto_awesome', placeholderLabel: 'VFX', childBadge: 'VERSION'
+  },
+  building: {
+    libraryKey: 'buildings', title: 'Building', plural: 'buildings', emptyIcon: 'apartment',
+    preview: 'thumbnail', placeholderIcon: 'apartment', placeholderLabel: 'BUILDING', childBadge: 'VERSION'
   }
 };
 

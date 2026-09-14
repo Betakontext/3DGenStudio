@@ -1,0 +1,474 @@
+/* Procedural Building Generator workspace.
+ *
+ * Same rule as the trees and assembly workspaces: no `backdrop-filter` on
+ * anything that overlaps the viewport. In Electron a blurred panel layered over
+ * a live WebGL canvas forces a canvas readback every composited frame and can
+ * halve the framerate. Panels here use an opaque surface colour instead.
+ *
+ * THE LAYOUT IS THREE FIXED TRACKS, and the centre column is split vertically
+ * between the 3D preview and the node board. Fixed side rails rather than
+ * flexible ones so that opening the inspector never resizes the WebGL canvas -
+ * a canvas resize drops the drawing buffer and reallocates it, which is a
+ * visible hitch on every panel toggle. */
+
+.buildinggen {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--background);
+  color: var(--on-surface);
+  overflow: hidden;
+}
+
+.buildinggen__body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) 320px;
+  min-height: 0;
+}
+
+/* ---- Sidebars ----------------------------------------------------------- */
+
+.buildinggen__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: var(--surface-container-low);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.buildinggen__sidebar--left {
+  border-right: 1px solid var(--surface-container-highest);
+}
+
+.buildinggen__sidebar--right {
+  border-left: 1px solid var(--surface-container-highest);
+}
+
+.buildinggen__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--on-surface-variant);
+}
+
+.buildinggen__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--on-surface-variant);
+}
+
+/* ---- Fields ------------------------------------------------------------- */
+
+.buildinggen__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.buildinggen__label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--on-surface-variant);
+}
+
+.buildinggen__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--surface-container-highest);
+  border-radius: 6px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.buildinggen__input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.buildinggen__seed-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.buildinggen__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid var(--surface-container-highest);
+  border-radius: 6px;
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.buildinggen__icon-btn:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+/* ---- Stats -------------------------------------------------------------- */
+
+.buildinggen__stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 6px;
+  background: var(--surface-container);
+  font-size: 12px;
+}
+
+.buildinggen__stats > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.buildinggen__stats span {
+  color: var(--on-surface-variant);
+}
+
+/* ---- Centre column ------------------------------------------------------ */
+
+.buildinggen__centre {
+  display: grid;
+  /* tabs / stage / diagnostics. The stage takes everything left over, and the
+   * diagnostics strip is auto so it disappears completely when there is
+   * nothing to say rather than leaving an empty band. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.buildinggen__tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--surface-container-highest);
+  background: var(--surface-container-low);
+}
+
+.buildinggen__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.buildinggen__tab .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.buildinggen__tab:hover {
+  color: var(--primary);
+}
+
+.buildinggen__tab--on {
+  background: var(--surface-container);
+  border-color: var(--surface-container-highest);
+  color: var(--primary);
+}
+
+.buildinggen__stage {
+  position: relative;
+  min-height: 0;
+  background: var(--background);
+}
+
+.buildinggen__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---- Diagnostics --------------------------------------------------------- */
+
+.buildinggen__diagnostics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 132px;
+  overflow-y: auto;
+  border-top: 1px solid var(--surface-container-highest);
+  background: var(--surface-container-low);
+}
+
+.buildinggen__diag {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--surface-container);
+}
+
+.buildinggen__diag:last-child {
+  border-bottom: none;
+}
+
+.buildinggen__diag .material-symbols-outlined {
+  font-size: 15px;
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.buildinggen__diag--error { color: var(--error, #ffb4ab); }
+.buildinggen__diag--warn { color: #ffd28a; }
+.buildinggen__diag--info { color: var(--on-surface-variant); }
+
+.buildinggen__diag-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The hint reads as a second sentence rather than as a separate field. */
+.buildinggen__diag-text em {
+  font-style: normal;
+  opacity: 0.75;
+}
+
+.buildinggen__diag-btn {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 10.5px;
+  font-family: inherit;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.buildinggen__diag-btn:hover {
+  opacity: 1;
+}
+
+/* ---- Node list ----------------------------------------------------------- */
+
+.buildinggen__nodes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.buildinggen__node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.buildinggen__node .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.buildinggen__node:hover {
+  background: var(--surface-container);
+  color: var(--on-surface);
+}
+
+.buildinggen__node--on {
+  background: var(--surface-container);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* A muted node is struck through rather than hidden: it is still in the graph
+ * and still has its properties, and hiding it would make it unfindable. */
+.buildinggen__node--muted .buildinggen__node-label {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.buildinggen__node-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.buildinggen__placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--on-surface-variant);
+}
+
+.buildinggen__placeholder .material-symbols-outlined {
+  font-size: 40px;
+  opacity: 0.5;
+}
+
+.buildinggen__placeholder p {
+  margin: 0;
+  max-width: 46ch;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ---- Banners ------------------------------------------------------------ */
+
+.buildinggen__banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--surface-container-highest);
+  background: var(--surface-container);
+}
+
+.buildinggen__banner .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.buildinggen__banner--error {
+  color: var(--error, #ffb4ab);
+}
+
+.buildinggen__banner--ok {
+  color: var(--tertiary);
+}
+
+.buildinggen__banner--draft {
+  color: var(--on-surface-variant);
+}
+
+.buildinggen__banner-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--surface-container-highest);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.buildinggen__banner-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* ---- Action bar --------------------------------------------------------- */
+
+.buildinggen__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--surface-container-highest);
+  background: var(--surface-container-low);
+}
+
+.buildinggen__spacer {
+  flex: 1;
+}
+
+.buildinggen__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--surface-container-highest);
+  border-radius: 6px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.buildinggen__btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.buildinggen__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.buildinggen__btn--primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary, #00363d);
+  font-weight: 600;
+}
+
+.buildinggen__btn--primary:hover:not(:disabled) {
+  color: var(--on-primary, #00363d);
+  filter: brightness(1.08);
+}
+
+/* ---- Stacked panes ------------------------------------------------------- */
+
+/* Both the plan editor and the 3D viewport stay mounted; only one is visible.
+ * See the note in BuildingGenPage.jsx: unmounting the R3F canvas on every tab
+ * switch destroys its WebGL context, and browsers only grant a handful. */
+.buildinggen__pane {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* visibility, NOT opacity.
+ *
+ * opacity: 0 still hit-tests, and react-three-fiber's canvas sets its own
+ * pointer-events - so the hidden 3D pane sat on top of the plan editor and
+ * swallowed every click, which looked exactly like the editor being dead.
+ * visibility: hidden removes the subtree from hit testing and from the
+ * accessibility tree while KEEPING its layout box, so the canvas holds its size
+ * and its WebGL context survives the switch. display: none would collapse it to
+ * zero and force R3F to reallocate the drawing buffer every time. */
+.buildinggen__pane--off {
+  visibility: hidden;
+  pointer-events: none;
+}

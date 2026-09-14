@@ -1,0 +1,117 @@
+/* The footprint editor. Opaque surfaces only - no backdrop-filter anywhere,
+ * for the reason recorded in BuildingGenPage.css: in Electron a blurred panel
+ * over a live canvas forces a readback every composited frame. */
+
+.planedit {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface-container-lowest);
+}
+
+.planedit__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--surface-container-highest);
+  background: var(--surface-container-low);
+  flex: 0 0 auto;
+  /* Deliberately no flex-wrap: see .planedit__hint. */
+}
+
+.planedit__tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--surface-container-highest);
+  border-radius: 6px;
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.planedit__tool .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.planedit__tool:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.planedit__tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.planedit__tool--on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary, #00363d);
+}
+
+.planedit__tool--on:hover:not(:disabled) {
+  color: var(--on-primary, #00363d);
+}
+
+.planedit__sep {
+  width: 1px;
+  height: 20px;
+  background: var(--surface-container-highest);
+  margin: 0 2px;
+}
+
+/* Never wraps. A hint that wraps makes the toolbar taller, which resizes the
+ * canvas underneath it - and the canvas resizing as the hint changes between
+ * modes is a visible jump at exactly the moment the author starts drawing. */
+.planedit__hint {
+  margin-left: auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.planedit__canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.planedit__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The grid is the ground; the canvas paints its own background. */
+  background: var(--surface-container-lowest);
+  cursor: crosshair;
+  outline: none;
+  /* Stops the browser interpreting a drag as a scroll or a text selection,
+   * which otherwise fights with pointer capture on touch and trackpads. */
+  touch-action: none;
+}
+
+.planedit__readout {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--surface-container);
+  border: 1px solid var(--surface-container-highest);
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}

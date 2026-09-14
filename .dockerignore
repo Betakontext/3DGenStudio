@@ -39,6 +39,12 @@
 # is filtered by this same allowlist - so without it the FRONTEND build fails
 # to resolve ../../vfx/*.js and the image build dies at vite.
 !vfx/
+
+# The building generator contract. Needed TWICE OVER for the same reason as
+# vfx/: the runtime stage imports it from server.js, and the builder stage's
+# `COPY . .` is filtered by this allowlist - so without it the FRONTEND build
+# fails to resolve ../../building/*.js and the image build dies at vite.
+!building/
 !vfxPreview.js
 
 # File-based wiki (resolved against the module dir, not cwd).
