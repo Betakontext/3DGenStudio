@@ -29,7 +29,9 @@
 			"LoRA":[
 				{ "FileName": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "Url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors?download=true",        "Size": 0.9 },
 				{ "FileName": "QIE-2511-Studio-DeLight-5000.safetensors", "Url": "https://huggingface.co/prithivMLmods/QIE-2511-Studio-DeLight/resolve/main/QIE-2511-Studio-DeLight-5000.safetensors?download=true",        "Size": 0.2 },
-				{ "FileName": "%E7%A7%BB%E9%99%A4%E5%85%89%E5%BD%B1V2.safetensors", "Url": "https://huggingface.co/dx8152/Qwen-Image-Edit-2509-Light_restoration/resolve/main/%E7%A7%BB%E9%99%A4%E5%85%89%E5%BD%B1V2.safetensors?download=true",        "Size": 0.2 }
+				{ "FileName": "%E7%A7%BB%E9%99%A4%E5%85%89%E5%BD%B1V2.safetensors", "Url": "https://huggingface.co/dx8152/Qwen-Image-Edit-2509-Light_restoration/resolve/main/%E7%A7%BB%E9%99%A4%E5%85%89%E5%BD%B1V2.safetensors?download=true",        "Size": 0.2 },
+				{ "FileName": "marigoldv2-albedo.safetensors", "Url": "https://huggingface.co/huawei-bayerlab/marigold-v2-0/resolve/main/albedo/trainables.safetensors?download=true",        "Size": 1.85 },
+				{ "FileName": "marigoldv2-normals.safetensors", "Url": "https://huggingface.co/huawei-bayerlab/marigold-v2-0/resolve/main/normals/trainables.safetensors?download=true",        "Size": 1.85 }
 			],
 			"UpscaleModels": [
 				{ "FileName": "4xLexicaDAT2_otf.pth", "Url": "https://huggingface.co/visualbruno/Upscalers/resolve/main/4xLexicaDAT2_otf.pth?download=true", "Size": 0.1 }
@@ -155,7 +157,63 @@
 					"Outputs": [
 						{ "Node": "45", "Name": "Save Image", "Type": "Image" }
 					]
-				}		
+				},
+				{
+					"Name": "Mesh Projection with QwenImageEdit - Albedo with MarigoldV2",
+					"File": "setup/Mesh Projection with QwenImageEdit - Albedo with MarigoldV2.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
+						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" },
+						{ "Node": "45", "Input": "value",  "Name": "Albedo Strength",  "Type": "Number" },
+						{ "Node": "36", "Input": "mask_offset",  "Name": "RMBG - Mask Offset",  "Type": "Number" },
+						{ "Node": "36", "Input": "mask_blur",  "Name": "RMBG - Mask Blur",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "37", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Gen Normals with Qwen Image Edit",
+					"File": "setup/Gen Normals with Qwen Image Edit.json",
+					"Inputs": [
+						{ "Node": "3", "Input": "image",  "Name": "Source Image",    "Type": "Image"  }
+					],
+					"Outputs": [
+						{ "Node": "6", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Gen Albedo with Qwen Image Edit",
+					"File": "setup/Gen Albedo with Qwen Image Edit.json",
+					"Inputs": [
+						{ "Node": "3", "Input": "image",  "Name": "Source Image",    "Type": "Image"  },
+						{ "Node": "11", "Input": "value",  "Name": "Albedo Strength",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "6", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Mesh Projection TexturedView with QwenImageEdit - Albedo with MarigoldV2",
+					"File": "setup/Mesh Projection TexturedView with QwenImageEdit - Albedo with MarigoldV2.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
+						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
+						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "42", "Input": "value",  "Name": "Albedo Strength",  "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" },
+						{ "Node": "36", "Input": "mask_offset",  "Name": "RMBG - Mask Offset",  "Type": "Number" },
+						{ "Node": "36", "Input": "mask_blur",  "Name": "RMBG - Mask Blur",  "Type": "Number" }						
+					],
+					"Outputs": [
+						{ "Node": "40", "Name": "Save Image", "Type": "Image" }
+					]
+				}				
 			]
 		},
 		{

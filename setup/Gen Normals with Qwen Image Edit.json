@@ -1,0 +1,150 @@
+{
+  "1": {
+    "inputs": {
+      "unet_name": "{diffusion_model}"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "2": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "3": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "4": {
+    "inputs": {
+      "lora_name": "marigoldv2-normals.safetensors",
+      "modality": "normals",
+      "depth_parameterization": "log_or_linear",
+      "strength": 1,
+      "auto_download": true,
+      "model": [
+        "1",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "MarigoldV2LoRALoader",
+    "_meta": {
+      "title": "Load MarigoldV2 LoRA"
+    }
+  },
+  "5": {
+    "inputs": {
+      "resolution_mode": "fixed",
+      "max_side": 1024,
+      "width": [
+        "8",
+        0
+      ],
+      "height": [
+        "10",
+        0
+      ],
+      "encoder_seed": 2025,
+      "keep_input_size": true,
+      "near_is_bright": true,
+      "vae_tiling": false,
+      "keep_model_loaded": false,
+      "marigold_model": [
+        "4",
+        0
+      ],
+      "image": [
+        "3",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    },
+    "class_type": "MarigoldV2Predict",
+    "_meta": {
+      "title": "Marigold V2 Predict"
+    }
+  },
+  "6": {
+    "inputs": {
+      "images": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "7": {
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "8": {
+    "inputs": {
+      "input1": [
+        "7",
+        0
+      ],
+      "input2": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "MultiplyNode",
+    "_meta": {
+      "title": "Multiply"
+    }
+  },
+  "9": {
+    "inputs": {
+      "value": 1.5
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Float"
+    }
+  },
+  "10": {
+    "inputs": {
+      "input1": [
+        "7",
+        1
+      ],
+      "input2": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "MultiplyNode",
+    "_meta": {
+      "title": "Multiply"
+    }
+  }
+}
