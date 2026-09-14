@@ -39,9 +39,27 @@
 # is filtered by this same allowlist - so without it the FRONTEND build fails
 # to resolve ../../vfx/*.js and the image build dies at vite.
 !vfx/
+!vfxPreview.js
 
 # File-based wiki (resolved against the module dir, not cwd).
 !wiki/
+
+# The Unity importer, which the server copies into every exported VFX bundle
+# (copyUnityImporterInto). BOTH ENTRIES ARE LOAD-BEARING, and they fail in two
+# different ways:
+#
+#   - the .unitypackage is named as a FILE by the Dockerfile, so leaving it out
+#     of this allowlist stops the build dead with "not found";
+#   - the package FOLDER is named as a directory, and Docker copies a directory
+#     whose every member is ignored as an EMPTY one without complaining. That
+#     builds a perfectly good image whose VFX export throws "the Unity importer
+#     is not present in this installation" the first time anyone uses it.
+#
+# Listed precisely rather than as !plugins/: that directory also holds the
+# Phase 0 spikes, the packaging tool and the whole Unreal plugin, none of which
+# a server image has any use for.
+!plugins/unity/com.3dgenstudio.vfx-import/
+!plugins/unity/3dgenstudio-vfx-import.unitypackage
 
 # Re-exclude junk that the directory allowances above would otherwise pull back in.
 **/node_modules
