@@ -80,6 +80,7 @@ function getSharedQuad() {
 export function createBatch(spec) {
   const {
     output, sources, capacity, texture = null, intensity = 1, toneMapped = true,
+    matteAlpha = false,
   } = spec;
   const layout = output.instanceLayout;
 
@@ -138,6 +139,7 @@ export function createBatch(spec) {
     texture,
     intensity,
     toneMapped,
+    matteAlpha,
     // The atlas grid. Part of the batch key too, so every source in this batch
     // agrees about it - two outputs with different layouts cannot share a draw
     // without one of them playing its sheet through the other's grid.
@@ -284,7 +286,8 @@ export function disposeBatch(batch) {
  * @param {Object} ir
  * @param {Array<Object>} emitters
  * @param {{textures?: Map<number, import('three').Texture>,
- *          meshes?: Map<number, Object>, toneMapped?: boolean}} [options]
+ *          meshes?: Map<number, Object>, toneMapped?: boolean,
+ *          matteAlpha?: boolean}} [options]
  * @returns {VfxBatch[]}
  */
 export function createBatches(ir, emitters, options = {}) {
@@ -348,6 +351,8 @@ export function createBatches(ir, emitters, options = {}) {
       texture,
       meshGeometry,
       toneMapped: options.toneMapped !== false,
+      // Only a bake asks for this. See createParticleMaterial.
+      matteAlpha: options.matteAlpha === true,
     });
   });
 }

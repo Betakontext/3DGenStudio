@@ -24,6 +24,13 @@
 // plus `premultipliedAlpha: false` gives a drawing buffer holding independent
 // rgb and a, which is what a PNG stores and what an engine expects to sample.
 //
+// AND THE ADDITIVE OUTPUTS ARE MATTED, because a transparent target is the one
+// thing additive blending has never had an answer for: an additive sprite's
+// alpha says nothing about where the particle is, so baking it straight wrote
+// a black box the size of every billboard into the sheet. materials.js has the
+// arithmetic, under MATTE_ALPHA; `transparent: false` skips it, because a bake
+// onto black is the opaque destination additive already wanted.
+//
 // CELL ORDER IS THE SHADER'S ORDER: row-major, left to right, top to bottom,
 // with row 0 at the TOP of the image. That is what buildVertexShader's flipbook
 // block computes (see the V-flip note beside `uTiles` in materials.js), so a
@@ -261,7 +268,14 @@ export async function captureSpriteSheet(options) {
   // preview's samplers belong to the preview's runtime. Without them a mesh
   // emitter spawns every particle at the origin and the sheet bakes a dot.
   installMeshSamplers(runtime, meshes)
-  const batches = createBatches(ir, runtime.emitters, { textures, meshes })
+  // MATTE THE ADDITIVE OUTPUTS, but only into a transparent sheet. An opaque
+  // bake has a black background to add onto, which is the arrangement additive
+  // blending actually wants, and its alpha channel is 1 everywhere by
+  // definition - so a matte there would be a lie about a channel nobody reads.
+  // See the additive case in materials.js applyBlend.
+  const batches = createBatches(ir, runtime.emitters, {
+    textures, meshes, matteAlpha: transparent,
+  })
   const scene = new THREE.Scene()
   // Deliberately NO scene.background: a background colour is an opaque clear,
   // which would fill the alpha channel and undo the whole point.

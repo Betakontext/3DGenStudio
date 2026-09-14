@@ -272,6 +272,41 @@ void main() {
   // UI-space effect that must be the authored colour.
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+
+  // A MATTE FOR AN ADDITIVE PARTICLE, which it does not otherwise have.
+  //
+  // An additive sprite's alpha channel says nothing about where the particle
+  // IS - most are opaque PNGs whose black background is the transparency, and
+  // that is correct for additive because black adds nothing. But a sprite
+  // SHEET has to store coverage somewhere, and if alpha comes from the texture
+  // it comes out 1 across the whole quad: a black box exactly the size of the
+  // billboard. The brightness is the only coverage an additive particle has,
+  // so the brightness is what the alpha has to be.
+  //
+  // AFTER TONE MAPPING AND THE sRGB ENCODE, and BOTH LINES HAVE TO BE HERE.
+  //
+  // The premultiply cannot use the PREMULTIPLY define above, tempting as that
+  // is: that one runs before ACES, and ACES is not linear, so toneMap(rgb * a)
+  // is not toneMap(rgb) * a. Taking the early route made a fading additive
+  // particle enter the curve dimmer, come out less clipped and more saturated,
+  // and the sheet stopped matching the viewport it was baked from. Multiplying
+  // here instead reproduces three's (SrcAlpha, One) exactly - same operand,
+  // same point in the pipeline, just done in the shader so the alpha channel
+  // is free to carry something else.
+  //
+  // The matte then has to describe the BYTES that land in the PNG rather than
+  // the linear values behind them, which is the other reason this is last:
+  // matting on linear colour reads everything mid-grey as far more transparent
+  // than it looks.
+  //
+  // MAX, NOT LUMINANCE. A saturated blue glow has a luminance of 0.07, so a
+  // luminance matte would erase it; the channel peak keeps a coloured particle
+  // as solid as a white one of the same intensity.
+  #ifdef MATTE_ALPHA
+    gl_FragColor.rgb *= gl_FragColor.a;
+    gl_FragColor.a = clamp(
+      max(max(gl_FragColor.r, gl_FragColor.g), gl_FragColor.b), 0.0, 1.0);
+  #endif
 }
 `;
 
@@ -292,7 +327,10 @@ export function buildVertexShader(layout) {
 
 // Blend state per mode. Separated from the shader so the double-multiply trap
 // in the header is decided in exactly one place.
-function applyBlend(params, blend) {
+//
+// `matte` asks for an additive pass that also writes a usable alpha channel.
+// See the additive case, and MATTE_ALPHA in the fragment shader.
+function applyBlend(params, blend, matte) {
   switch (blend) {
     case 'alpha':
       params.blending = NormalBlending;
@@ -324,6 +362,34 @@ function applyBlend(params, blend) {
       // So the preset is correct and the fix belongs at the destination. See
       // the comment on VfxViewport's <Canvas gl={{ alpha: false }}>, and
       // vfxThumbnail.js, which has always rendered onto an opaque background.
+      //
+      // EXCEPT WHERE THE DESTINATION CANNOT BE OPAQUE. A sprite sheet exists to
+      // produce a matte, so "render onto black" is not an answer there - and
+      // the clamping argument above does not apply to it either, because a
+      // baked sheet is read back with toBlob rather than composited by the
+      // browser. Nothing clamps bytes.
+      //
+      // So the sheet gets its own pair of factors. (One, One) on the colour,
+      // with MATTE_ALPHA premultiplying at the very end of the shader,
+      // reproduces three's preset exactly - (SrcAlpha, One) on a straight
+      // colour and (One, One) on a premultiplied one are the same arithmetic.
+      // What it buys is DECOUPLING the colour from the alpha channel, which
+      // matters because MATTE_ALPHA is about to overwrite that channel with
+      // something that is not coverage. Leave the colour on SrcAlpha and every
+      // particle would be multiplied by its own brightness, dimming the effect
+      // towards black as it fades.
+      if (matte) {
+        params.blending = CustomBlending;
+        params.blendSrc = OneFactor;
+        params.blendDst = OneFactor;
+        params.blendSrcAlpha = OneFactor;
+        params.blendDstAlpha = OneFactor;
+        params.transparent = true;
+        params.depthWrite = false;
+        // NOT the PREMULTIPLY define: see the shader. That one runs before
+        // tone mapping, and the matte needs it after.
+        return false;
+      }
       params.blending = AdditiveBlending;
       params.transparent = true;
       // Depth write off, depth TEST on: an additive particle should be hidden
@@ -347,6 +413,9 @@ function applyBlend(params, blend) {
  * @param {number} [spec.alphaCutoff] enables ALPHA_CLIP when above zero
  * @param {number} [spec.stretch] how much speed lengthens a stretched billboard
  * @param {boolean} [spec.smoothing]
+ * @param {boolean} [spec.matteAlpha] give an ADDITIVE output an alpha channel
+ *   derived from its own brightness. For a render target that is read back
+ *   rather than composited - a sprite sheet - and wrong anywhere else.
  * @param {[number, number]} [spec.tiles] atlas columns and rows; enables the
  *   flipbook path when either is above 1
  * @returns {import('three').ShaderMaterial}
@@ -363,6 +432,7 @@ export function createParticleMaterial(spec) {
     stretch = 0.08,
     smoothing = true,
     tiles = null,
+    matteAlpha = false,
     // Sprites are never perfectly black - see the note in the fragment shader.
     blackPoint = 0,
   } = spec;
@@ -414,7 +484,11 @@ export function createParticleMaterial(spec) {
     toneMapped,
   };
 
-  if (applyBlend(params, blend)) params.defines.PREMULTIPLY = '';
+  // The switch in applyBlend treats every unrecognised blend as additive, so
+  // the matte has to agree with it rather than name 'additive' on its own.
+  const additive = blend !== 'alpha' && blend !== 'premultiplied' && blend !== 'opaque';
+  if (matteAlpha && additive) params.defines.MATTE_ALPHA = '';
+  if (applyBlend(params, blend, matteAlpha && additive)) params.defines.PREMULTIPLY = '';
 
   return new ShaderMaterial(params);
 }

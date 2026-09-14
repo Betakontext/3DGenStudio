@@ -201,7 +201,60 @@ function buildTemplate(id) {
     premultiplied.blendSrc === THREE.OneFactor
     && premultiplied.blendDst === THREE.OneMinusSrcAlphaFactor);
 
-  for (const material of [additive, alpha, premultiplied, opaque]) material.dispose();
+  // ...AND THE ONE DESTINATION THAT CANNOT BE OPAQUE.
+  //
+  // A sprite sheet exists to produce a matte, so "render onto black" is no
+  // answer, and the clamping argument above does not reach it either: a baked
+  // sheet is read back with toBlob rather than composited by the browser.
+  // Without a matte the bake wrote exactly the black box described above into
+  // the PNG - Frost Nova's four additive systems drew grey rectangles the size
+  // of their billboards around the effect.
+  const matte = createParticleMaterial({
+    layout, blend: 'additive', texture: getDefaultSprite(), matteAlpha: true,
+  });
+  check('a matted additive output writes its own alpha',
+    'MATTE_ALPHA' in matte.defines);
+  // The colour has to stop depending on the alpha channel BEFORE the shader
+  // overwrites it, or every particle is multiplied by its own brightness and
+  // the effect dims towards black as it fades. The matte therefore premultiplies
+  // itself, at the END of the shader - NOT through the PREMULTIPLY define,
+  // which runs before ACES. ACES is not linear, so premultiplying early is not
+  // the same colour: the sheet would stop matching the viewport it was baked
+  // from, fading more saturated and less clipped than the preview shows.
+  check('  without the early PREMULTIPLY, which runs before ACES',
+    !('PREMULTIPLY' in matte.defines));
+  check('  adding colour with (One, One)',
+    matte.blending === THREE.CustomBlending
+    && matte.blendSrc === THREE.OneFactor
+    && matte.blendDst === THREE.OneFactor);
+  check('  and accumulating the matte alongside it',
+    matte.blendSrcAlpha === THREE.OneFactor
+    && matte.blendDstAlpha === THREE.OneFactor);
+
+  // The matte is for additive only. The other three modes carry real coverage
+  // in their alpha already, and overwriting it with brightness would turn a
+  // dark-but-solid particle transparent - Frost Nova's ice shards are opaque
+  // and nearly black at the edges.
+  const matteAlphaMode = createParticleMaterial({
+    layout, blend: 'alpha', texture: getDefaultSprite(), matteAlpha: true,
+  });
+  const matteOpaque = createParticleMaterial({
+    layout, blend: 'opaque', texture: getDefaultSprite(), matteAlpha: true,
+  });
+  check('  and never touches a mode that owns its alpha',
+    !('MATTE_ALPHA' in matteAlphaMode.defines)
+    && !('MATTE_ALPHA' in matteOpaque.defines)
+    && matteAlphaMode.blending === THREE.NormalBlending);
+
+  // Unasked-for, the additive preset must come back untouched: the viewport
+  // and the thumbnail both depend on it, and both have opaque destinations.
+  check('  while an unmatted additive output is three’s preset still',
+    additive.blending === THREE.AdditiveBlending
+    && !('MATTE_ALPHA' in additive.defines));
+
+  for (const material of [
+    additive, alpha, premultiplied, opaque, matte, matteAlphaMode, matteOpaque,
+  ]) material.dispose();
 }
 
 {
