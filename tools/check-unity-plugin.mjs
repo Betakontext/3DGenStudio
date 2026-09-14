@@ -22,6 +22,38 @@ const PACKAGE_DIR = path.join(ROOT, 'plugins', 'unity', 'com.3dgenstudio.vfx-imp
 const BUNDLE = path.join(ROOT, 'plugins', 'unity', '3dgenstudio-vfx-import.unitypackage');
 const STAMP = `${BUNDLE}.sources.sha256`;
 
+/**
+ * CRLF to LF for text, bytes verbatim for anything binary.
+ *
+ * WITHOUT THIS THE CHECK CANNOT PASS ON MORE THAN ONE PLATFORM AT A TIME.
+ * .gitattributes sets `* text=auto`, so the repo stores LF and the checkout
+ * converts per core.autocrlf - which Git for Windows turns ON by default and
+ * Linux and macOS leave off. The same commit is therefore CRLF in a
+ * windows-latest runner and LF in ubuntu-latest and macos-latest, and a hash
+ * over raw bytes gives three different answers for identical source. One
+ * stamp, three runners, at most one of them ever agreeing: the desktop build
+ * failed on all three at once with three different "sources" hashes, none of
+ * them the stamp, after a commit merely re-materialised three files with
+ * Windows endings.
+ *
+ * A line ending is not a source change, so it must not be hashed like one.
+ *
+ * Binary is left alone - a NUL byte is the same test git itself uses to decide
+ * a file is not text - because 0x0d 0x0a inside a binary is data, not a line
+ * ending, and stripping it would corrupt the very thing being fingerprinted.
+ */
+function normaliseEol(bytes) {
+  if (bytes.includes(0)) return bytes;
+  const out = Buffer.allocUnsafe(bytes.length);
+  let length = 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] === 0x0d && bytes[index + 1] === 0x0a) continue;
+    out[length] = bytes[index];
+    length += 1;
+  }
+  return out.subarray(0, length);
+}
+
 /** Every file in the package, hashed with its path so a rename counts. */
 export async function hashSources(dir) {
   const files = [];
@@ -39,7 +71,7 @@ export async function hashSources(dir) {
   for (const file of files) {
     hash.update(path.relative(dir, file).split(path.sep).join('/'));
     hash.update('\0');
-    hash.update(await readFile(file));
+    hash.update(normaliseEol(await readFile(file)));
     hash.update('\0');
   }
   return hash.digest('hex');
