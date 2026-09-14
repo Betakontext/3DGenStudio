@@ -19,6 +19,7 @@
 
 #include "Engine/Texture2D.h"
 #include "Engine/StaticMesh.h"
+#include "StaticMeshResources.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Serialization/JsonWriter.h"
@@ -27,6 +28,75 @@
 #include "UObject/Package.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogVfxImport, Log, All);
+
+namespace
+{
+	/**
+	 * What it takes to make a static mesh behave like the preview's does: the
+	 * factor that puts its bounding SPHERE one metre across, and the offset
+	 * that puts that sphere's centre on the particle.
+	 *
+	 * THE IR'S `size` IS A MULTIPLIER, NOT A LENGTH. src/utils/vfx/assets.js
+	 * normalises every mesh it loads for exactly that reason - otherwise what
+	 * a size of 1 means depends on the units the model was authored in, and
+	 * the preview and the engine draw the same effect at two different scales.
+	 * The importer was applying `size` to the mesh at its authored size, so a
+	 * model whose own bounding sphere is 2.4 units across drew 2.4x too large.
+	 *
+	 * ONE METRE, NOT ONE UNIT, because Unreal works in centimetres: the
+	 * preview's normalised mesh is one unit across and one unit there is a
+	 * metre, so the equivalent here is a hundred. This is also why the
+	 * previous code was nearly right - it multiplied `size` straight onto a
+	 * mesh that happened to be about a metre across, which is the one case
+	 * where the two agree.
+	 *
+	 * The same arithmetic as three's computeBoundingSphere: the bounding
+	 * BOX's midpoint, then the furthest vertex from it.
+	 */
+	struct FVfxMeshFit
+	{
+		double Scale = 1.0;
+		FVector Centre = FVector::ZeroVector;
+	};
+
+	FVfxMeshFit VfxFitMeshToUnitSphere(UStaticMesh* Mesh)
+	{
+		FVfxMeshFit Fit;
+		if (Mesh == nullptr || Mesh->GetRenderData() == nullptr
+			|| Mesh->GetRenderData()->LODResources.Num() == 0)
+		{
+			return Fit;
+		}
+
+		const FPositionVertexBuffer& Positions =
+			Mesh->GetRenderData()->LODResources[0].VertexBuffers.PositionVertexBuffer;
+		const uint32 Count = Positions.GetNumVertices();
+		if (Count == 0) { return Fit; }
+
+		FVector Min(Positions.VertexPosition(0));
+		FVector Max = Min;
+		for (uint32 Index = 1; Index < Count; ++Index)
+		{
+			const FVector Position(Positions.VertexPosition(Index));
+			Min = Min.ComponentMin(Position);
+			Max = Max.ComponentMax(Position);
+		}
+		const FVector Centre = (Min + Max) * 0.5;
+
+		double RadiusSquared = 0.0;
+		for (uint32 Index = 0; Index < Count; ++Index)
+		{
+			RadiusSquared = FMath::Max(RadiusSquared,
+				(FVector(Positions.VertexPosition(Index)) - Centre).SizeSquared());
+		}
+		const double Radius = FMath::Sqrt(RadiusSquared);
+		if (!(Radius > UE_SMALL_NUMBER)) { return Fit; }
+
+		Fit.Centre = Centre;
+		Fit.Scale = 50.0 / Radius;
+		return Fit;
+	}
+}
 
 namespace VfxNiagara
 {
@@ -1918,14 +1988,27 @@ void FVfxNiagaraBuilder::BuildOutput(const TSharedPtr<FJsonObject>& SystemObject
 			// this one value covers the whole emitter rather than varying per
 			// particle, which for a size authored as a narrow random range is
 			// the mean either way.
+			// NORMALISED FIRST, then scaled by the authored size. See
+			// VfxFitMeshToUnitSphere: `size` is a multiplier on a mesh one
+			// metre across, and the mesh is whatever size it was modelled at.
+			const FVfxMeshFit Fit = VfxFitMeshToUnitSphere(Mesh);
 			if (PendingMeshScale >= 0.f)
 			{
-				// NO UNIT CONVERSION: sprite size is a length and goes metres ->
-				// centimetres, but this is a MULTIPLIER on a mesh that arrived
-				// in centimetres already. Scaling it by 100 would be the same
-				// mistake in the other direction - and a rune several metres
-				// tall is what the un-scaled version looked like.
-				MeshProperties.Scale = FVector(PendingMeshScale);
+				MeshProperties.Scale = FVector(PendingMeshScale * Fit.Scale);
+				// AND THE PIVOT, or a model not modelled around its own centre
+				// swings about that offset instead of tumbling in place - and
+				// the offset grows with the size, so the bigger particles in a
+				// random range are thrown furthest.
+				//
+				// SCALED BY BOTH, because the renderer is not: the vertex
+				// shader applies this offset as `MeshOffset * ParticleScale`
+				// and Particles.Scale is 1 here (the per-particle Mesh Scale
+				// input refuses every write, which is why the size lives on
+				// the renderer at all), so neither the normalisation nor the
+				// size reaches it unless it is baked in.
+				MeshProperties.PivotOffset =
+					-Fit.Centre * Fit.Scale * PendingMeshScale;
+				MeshProperties.PivotOffsetSpace = ENiagaraMeshPivotOffsetSpace::Mesh;
 			}
 			MeshRenderer->Meshes.Reset();
 			MeshRenderer->Meshes.Add(MeshProperties);
@@ -1939,7 +2022,10 @@ void FVfxNiagaraBuilder::BuildOutput(const TSharedPtr<FJsonObject>& SystemObject
 			if (PendingMeshScale >= 0.f)
 			{
 				Report.Native(CurrentLabel, TEXT("initialize.setSize"),
-					FString::Printf(TEXT("mesh scale %.2f on the renderer"), PendingMeshScale));
+					FString::Printf(
+						TEXT("mesh scale %.2f on the renderer, on a mesh normalised x%.3f ")
+						TEXT("so one unit of size is one metre across"),
+						PendingMeshScale, Fit.Scale));
 			}
 		}
 	}

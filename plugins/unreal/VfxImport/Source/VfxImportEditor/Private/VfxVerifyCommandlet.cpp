@@ -122,6 +122,16 @@ int32 UVfxVerifyCommandlet::Main(const FString& Params)
 				const UStaticMesh* First = Mesh->Meshes.Num() > 0 ? Mesh->Meshes[0].Mesh : nullptr;
 				const UMaterialInterface* Override = Mesh->OverrideMaterials.Num() > 0
 					? Mesh->OverrideMaterials[0].ExplicitMat : nullptr;
+				// SCALE AND PIVOT TOO, because they are where a mesh emitter
+				// goes wrong quietly: the mesh is named correctly in the report
+				// while every instance draws at the model's own size. See
+				// VfxFitMeshToUnitSphere.
+				const FVector MeshScale = Mesh->Meshes.Num() > 0
+					? Mesh->Meshes[0].Scale : FVector::OneVector;
+				const FVector MeshPivot = Mesh->Meshes.Num() > 0
+					? Mesh->Meshes[0].PivotOffset : FVector::ZeroVector;
+				Text += FString::Printf(TEXT("   RENDERER Mesh scale=%s pivot=%s\n"),
+					*MeshScale.ToString(), *MeshPivot.ToString());
 				Text += FString::Printf(TEXT("   RENDERER Mesh mesh=%s material=%s sort=%d\n"),
 					First != nullptr ? *First->GetName() : TEXT("<none>"),
 					Override != nullptr ? *Override->GetName() : TEXT("<none>"),

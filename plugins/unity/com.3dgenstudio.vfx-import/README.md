@@ -105,3 +105,47 @@ looks nearly right, which is worse than an error.
 Every one of these is reported per import, by name. Compatibility is already
 surfaced at *author* time in the app, so an import confirms what the author
 already saw rather than surprising them.
+
+### Plane collision
+
+Shuriken collides a particle as a **sphere of `size/2 x radiusScale`**; the app's
+`collide.plane` kernel clamps the particle's **centre** and knows nothing about
+its size. The importer therefore sets `collision.radiusScale = 0`, so the two
+agree.
+
+Left at Unity's default of 1 the difference is half a particle — nothing for a
+10cm spark, and fatal for a mesh. Frost Nova's Ice Shards are 0.5–1.3 across and
+born 0.2 above the floor, so every one of them started already intersecting the
+plane; Unity re-resolved that collision every frame and each resolution took
+`dampen` (0.6) off the speed, leaving 6% of it after three frames. Forty shards
+spun on the spot inside the frost cloud while the preview threw them clear.
+
+### Verifying motion
+
+`ParticleSystem.Simulate` is **not** the playback path for plane collision — the
+same prefab that pinned every shard in play mode flew correctly under Simulate.
+Motion has to be measured in play mode.
+
+And Unity **does not simulate particles in batchmode at all**: a control system
+built in the same scene with a plain `startSpeed` advanced exactly one frame and
+then froze. So run the editor without `-batchmode` for this, and always put a
+known-good control system in the scene — otherwise "nothing moved" is as likely
+to be the harness as the effect.
+
+### Mesh particles
+
+A particle's `size` is a **multiplier, not a length**, and that only holds for a
+mesh that has been normalised — otherwise what `size = 1` means depends on the
+units the model happened to be authored in. The app normalises every mesh it
+loads, so the importer does too: each referenced model gets a
+`Meshes/<name> (particle).asset` beside it, centred and scaled so its bounding
+sphere is one unit across, and that is what the renderer is given. The original
+model is left untouched.
+
+Mesh renderers are also set to **Local** render alignment rather than Unity's
+default of `View`. Render Alignment applies to mesh particles too, and on `View`
+every instance is turned to face the camera — a field of tumbling debris draws
+as identically-oriented chips that pivot together when the camera moves. For the
+same reason a mesh emitter's start rotation and spin go on the **Y** axis
+(`startRotation3D` / `separateAxes`), which is the axis the app's shader yaws
+about; a billboard keeps the single-float roll.

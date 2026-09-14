@@ -199,6 +199,163 @@ namespace GenStudio3D.VfxImport
             return loaded;
         }
 
+        /// <summary>
+        /// A particle-ready copy of an imported mesh: centred, and scaled so
+        /// its bounding SPHERE is one unit across.
+        ///
+        /// THE PARTICLE'S `size` IS A MULTIPLIER, NOT A LENGTH, and that is
+        /// only true of a mesh that has been normalised. src/utils/vfx/assets.js
+        /// says so in its own header and does this to every mesh it loads
+        /// (normaliseParticleGeometry): without it, what a size of 1 means
+        /// depends on the units the model happened to be authored in, so the
+        /// same effect draws at one scale in the preview and another here.
+        ///
+        /// This was Frost Nova's "Ice Shards". The shard model's own bounds are
+        /// 1.27 x 1.97 x 0.54, so its bounding sphere is 2.4 units across - and
+        /// assigning it raw drew every shard 2.4x larger than the preview did.
+        /// A ring of 40 of them at 0.5-1.3 "size" became a heap of overlapping
+        /// two-metre slabs, which reads as "they do not move" long before it
+        /// reads as "they are too big": the particles were travelling exactly
+        /// as far as they should, but each one was wider than the distance.
+        ///
+        /// THE SAME ARITHMETIC AS three's computeBoundingSphere, deliberately -
+        /// centre on the bounding BOX's midpoint, then take the radius as the
+        /// furthest vertex from it. Using the mean vertex position instead (the
+        /// other obvious reading of "centre") moves the centre towards whichever
+        /// end of the model is more densely tessellated, and the two renderers
+        /// would then disagree by that offset.
+        ///
+        /// The source asset is left alone and a copy is written beside it: the
+        /// model is the user's, may be shared with a MeshFilter elsewhere in
+        /// the project, and re-importing must not accumulate scale.
+        /// </summary>
+        public static Mesh NormaliseForParticles(
+            Mesh source, string destinationFolder, VfxImportReport report)
+        {
+            if (source == null) return null;
+
+            var folder = Path.Combine(destinationFolder, "Meshes");
+            Directory.CreateDirectory(folder);
+            // NAMED AFTER THE FILE, NOT AFTER THE MESH. Every mesh the app
+            // exports is called "temp_mesh.ply" - it is the name of the
+            // exporter's scratch file, not of the model - so naming the copy
+            // after the mesh gave an effect's two different models one asset
+            // path, and the second import silently overwrote the first with
+            // its own geometry. Both systems then drew the same model at the
+            // same scale. The file stem is the asset id, which is unique.
+            var sourcePath = AssetDatabase.GetAssetPath(source);
+            var stem = string.IsNullOrEmpty(sourcePath)
+                ? SanitiseFileName(source.name)
+                : Path.GetFileNameWithoutExtension(sourcePath);
+            var path = ToProjectPath(Path.Combine(folder, stem + " (particle).asset"));
+
+            var vertices = ReadVertices(source);
+            if (vertices == null || vertices.Length == 0)
+            {
+                report.Approximated(null, "mesh " + source.name,
+                    "Unity would not give up this mesh's vertices, so it is used at its authored "
+                    + "size - the preview scales every particle mesh to one unit across, so this "
+                    + "system draws larger or smaller than the preview by that factor. Tick "
+                    + "Read/Write on the model's importer and import again to fix it.");
+                return source;
+            }
+
+            var min = vertices[0];
+            var max = vertices[0];
+            foreach (var v in vertices)
+            {
+                min = Vector3.Min(min, v);
+                max = Vector3.Max(max, v);
+            }
+            var centre = (min + max) * 0.5f;
+            var radius = 0f;
+            foreach (var v in vertices) radius = Mathf.Max(radius, (v - centre).sqrMagnitude);
+            radius = Mathf.Sqrt(radius);
+            if (!(radius > 1e-6f)) return source;
+
+            var scale = 0.5f / radius;
+            for (var i = 0; i < vertices.Length; i++) vertices[i] = (vertices[i] - centre) * scale;
+
+            // Instantiated rather than rebuilt field by field: a copy carries
+            // the submeshes, the second UV set, the vertex colours and the
+            // topology, and a hand-written copy quietly drops whichever of
+            // those the first test model happened not to have.
+            var mesh = Object.Instantiate(source);
+            mesh.name = stem + " (particle)";
+            mesh.vertices = vertices;
+            mesh.RecalculateBounds();
+
+            var existing = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+            if (existing != null)
+            {
+                // Re-importing the same effect must land on the SAME asset, or
+                // every import leaves another " 1" copy behind and any scene
+                // already using the old one keeps a stale scale.
+                EditorUtility.CopySerialized(mesh, existing);
+                Object.DestroyImmediate(mesh);
+                AssetDatabase.SaveAssets();
+                report.Native(null, "mesh " + stem,
+                    string.Format("scaled x{0:F3} and centred so one unit of size is one unit across",
+                        scale));
+                return existing;
+            }
+
+            AssetDatabase.CreateAsset(mesh, path);
+            var loaded = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+            if (loaded == null)
+            {
+                report.Dropped(null, "mesh " + stem, "Unity could not create " + path);
+                return source;
+            }
+            report.Native(null, "mesh " + stem,
+                string.Format("scaled x{0:F3} and centred so one unit of size is one unit across",
+                    scale));
+            return loaded;
+        }
+
+        /// <summary>
+        /// The mesh's vertices, turning Read/Write back on if that is what is
+        /// in the way.
+        ///
+        /// A ModelImporter ships with Read/Write OFF, which in a player means
+        /// `vertices` comes back empty. It is readable in the editor either
+        /// way, so this normally returns on the first line - but an asset
+        /// imported with a preset that strips mesh data does not, and the
+        /// failure is silent and looks like a broken model rather than an
+        /// import setting.
+        /// </summary>
+        private static Vector3[] ReadVertices(Mesh source)
+        {
+            var vertices = source.vertices;
+            if (vertices != null && vertices.Length > 0) return vertices;
+
+            var assetPath = AssetDatabase.GetAssetPath(source);
+            if (string.IsNullOrEmpty(assetPath)) return vertices;
+            var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+            if (importer == null || importer.isReadable) return vertices;
+
+            importer.isReadable = true;
+            importer.SaveAndReimport();
+            var reloaded = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
+            return (reloaded != null ? reloaded : source).vertices;
+        }
+
+        /// <summary>A mesh name that is safe as a file name.</summary>
+        private static string SanitiseFileName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "Mesh";
+            var safe = name;
+            foreach (var c in Path.GetInvalidFileNameChars()) safe = safe.Replace(c, '_');
+            // A model's mesh is often named after the file it came from,
+            // extension and all ("temp_mesh.ply"), and "temp_mesh.ply
+            // (particle).asset" is a name Unity imports as a .asset but reads
+            // as nonsense.
+            var dot = safe.LastIndexOf('.');
+            if (dot > 0) safe = safe.Substring(0, dot);
+            safe = safe.Trim();
+            return safe.Length == 0 ? "Mesh" : safe;
+        }
+
         private static string ToProjectPath(string absoluteOrRelative)
         {
             var full = Path.GetFullPath(absoluteOrRelative).Replace('\\', '/');

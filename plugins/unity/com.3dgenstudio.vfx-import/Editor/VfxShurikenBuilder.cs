@@ -40,6 +40,18 @@ namespace GenStudio3D.VfxImport
         // what the Update stage will do - see DragDecayCurve.
         private float _systemLifetime = 1f;
         private float _systemDrag;
+
+        /// <summary>
+        /// Whether this system draws MESHES, known before the Initialize and
+        /// Update blocks are walked because both rotation blocks need it.
+        ///
+        /// A billboard's rotation is a roll about the view axis, which is the
+        /// single-float rotation Shuriken gives you by default. A mesh's is a
+        /// yaw about Y - that is what the preview's shader does, and it is the
+        /// axis that reads as "tumbling" for debris standing on a floor. They
+        /// are the same number out of the IR and two different fields here.
+        /// </summary>
+        private bool _systemIsMesh;
         // Whether this system is fed by another system's events. A sub-emitter
         // inherits its parent PARTICLE's velocity, which is not what Unity's
         // InheritVelocity module does - see initialize.inheritVelocity.
@@ -149,6 +161,7 @@ namespace GenStudio3D.VfxImport
             _systemLifetime = 1f;
             _systemDrag = 0f;
             _systemIsSubEmitter = system.Has("listen");
+            _systemIsMesh = system["outputs"][0]["mode"].AsString("billboard") == "mesh";
             foreach (var block in system["init"].Items)
             {
                 if (block["srcBlockType"].AsString() == "initialize.setLifetime")
@@ -624,9 +637,22 @@ namespace GenStudio3D.VfxImport
                     // authoring is a random -180..180, and any angle times 57
                     // is still just some angle. update.spin below is where it
                     // shows, because there the error becomes a rate.
-                    var rotation = Curve(block, "rotation");
-                    main.startRotation = Scale(rotation, Mathf.Deg2Rad);
-                    _report.Native(name, type);
+                    var rotation = Scale(Curve(block, "rotation"), Mathf.Deg2Rad);
+                    if (_systemIsMesh)
+                    {
+                        // THE Y AXIS, and only because this system draws a
+                        // mesh - see _systemIsMesh. startRotation3D has to go
+                        // on first: with it off, startRotationY is stored and
+                        // never read, which is a start angle that silently
+                        // does nothing.
+                        main.startRotation3D = true;
+                        main.startRotationY = rotation;
+                    }
+                    else
+                    {
+                        main.startRotation = rotation;
+                    }
+                    _report.Native(name, type, _systemIsMesh ? "about Y" : null);
                     return;
 
                 case "initialize.positionSphere":
@@ -1224,8 +1250,17 @@ namespace GenStudio3D.VfxImport
                     // Unity's script api - see initialize.setRotation above.
                     // Scaling the wrong way turned an authored 35 deg/s into
                     // 2005 rad/s: about 320 revolutions a second.
-                    rotation.z = Scale(Curve(block, "speed"), Mathf.Deg2Rad);
-                    _report.Native(name, type);
+                    var spin = Scale(Curve(block, "speed"), Mathf.Deg2Rad);
+                    if (_systemIsMesh)
+                    {
+                        rotation.separateAxes = true;
+                        rotation.y = spin;
+                    }
+                    else
+                    {
+                        rotation.z = spin;
+                    }
+                    _report.Native(name, type, _systemIsMesh ? "about Y" : null);
                     return;
                 }
 
@@ -1331,6 +1366,29 @@ namespace GenStudio3D.VfxImport
                     collision.type = ParticleSystemCollisionType.Planes;
                     collision.bounce = new ParticleSystem.MinMaxCurve(Scalar(block, "bounce", name, type));
                     collision.dampen = new ParticleSystem.MinMaxCurve(Scalar(block, "friction", name, type));
+                    // A POINT, NOT A BALL. Shuriken collides each particle as a
+                    // sphere of size/2 x radiusScale; the app's kernel
+                    // ('collide.plane') clamps the particle's CENTRE against the
+                    // height and knows nothing about its size. Left at Unity's
+                    // default of 1 the two disagree by half a particle, which is
+                    // nothing for a 10cm spark and everything for a mesh:
+                    //
+                    // Frost Nova's Ice Shards are 0.5-1.3 across and are born
+                    // 0.2 above the floor, so EVERY one of them starts already
+                    // intersecting the plane. Unity then resolves that collision
+                    // on every frame, and each resolution takes `dampen` (0.6)
+                    // off the speed - 40% of it survives one frame, 16% two,
+                    // 6% three. They never climb out. The effect drew 40 shards
+                    // spinning on the spot inside the frost cloud while the
+                    // preview threw them clear of it.
+                    //
+                    // NOT VISIBLE THROUGH ParticleSystem.Simulate, which is how
+                    // this survived a first fix: Simulate let the same prefab
+                    // fly correctly. Plane collision has to be measured in PLAY
+                    // MODE, in a real editor - and batchmode does not simulate
+                    // particles at all, so a control system in the scene is the
+                    // only way to know the harness is working.
+                    collision.radiusScale = 0f;
                     // The plane itself is a Transform reference Shuriken cannot
                     // invent, so the importer makes one at the IR's height.
                     var height = Scalar(block, "height", name, type);
@@ -1434,7 +1492,17 @@ namespace GenStudio3D.VfxImport
                     break;
                 case "mesh":
                     renderer.renderMode = ParticleSystemRenderMode.Mesh;
-                    _report.Native(name, "output.mode", "Mesh");
+                    // NOT View, which is what a fresh ParticleSystem comes
+                    // with. Render Alignment applies to mesh particles too,
+                    // and on View every instance is turned to face the camera
+                    // - so a field of tumbling debris draws as a field of
+                    // identically-oriented chips that all pivot together when
+                    // the camera moves, and the per-particle rotation becomes
+                    // a screen-space roll instead of a yaw. Local keeps the
+                    // mesh in the effect's own frame, which is the space the
+                    // preview's vertex shader works in.
+                    renderer.alignment = ParticleSystemRenderSpace.Local;
+                    _report.Native(name, "output.mode", "Mesh, aligned to the effect rather than the camera");
                     break;
                 case "point":
                     // Unity has no point mode; the app's own point mode is a

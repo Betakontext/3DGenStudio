@@ -114,15 +114,25 @@ namespace GenStudio3D.VfxImport
             var meshes = new Dictionary<int, Mesh>();
             foreach (var pair in imported)
             {
-                if (pair.Value is Texture2D texture) textures[pair.Key] = texture;
-                else if (pair.Value is Mesh mesh) meshes[pair.Key] = mesh;
+                if (pair.Value is Texture2D texture) { textures[pair.Key] = texture; continue; }
+
+                Mesh source = null;
+                if (pair.Value is Mesh mesh) source = mesh;
                 else if (pair.Value is GameObject model)
                 {
                     // A .glb imports as a GameObject hierarchy; the particle
                     // renderer wants the Mesh inside it.
                     var filter = model.GetComponentInChildren<MeshFilter>();
-                    if (filter != null && filter.sharedMesh != null) meshes[pair.Key] = filter.sharedMesh;
+                    if (filter != null) source = filter.sharedMesh;
                 }
+                if (source == null) continue;
+
+                // NORMALISED BEFORE ANYTHING SEES IT, because the IR's `size`
+                // is a multiplier on a unit mesh and only the preview was
+                // holding up that end of the contract. See
+                // VfxBuiltins.NormaliseForParticles.
+                var normalised = VfxBuiltins.NormaliseForParticles(source, destinationFolder, report);
+                meshes[pair.Key] = normalised != null ? normalised : source;
             }
             var materials = new Dictionary<(string, Texture2D), Material>();
             var blendCounts = new Dictionary<string, int>();

@@ -156,13 +156,33 @@ The gaps, all of them reported at import time rather than discovered later:
 
 | Not carried | Why, and what to do |
 |---|---|
-| Textures and meshes | Not imported yet. Import them and assign them to the emitter's material and renderer. |
-| Blend mode | In Unreal this is a property of the **material**, not of the renderer. Assign a material with the blend mode you want. |
-| Mesh and ribbon renderers | The emitter keeps its sprite renderer. |
+| Ribbon renderers | A ribbon needs a ribbon id per strand and the IR has no strands, only particles, so a trail becomes a velocity-aligned sprite. |
 | Path thickness | Particles sit exactly on the curve; add a Jitter Position module to scatter them. |
 | Fixed spacing along a path | Niagara has no walk-along-at-a-distance mode, so it becomes an even spread. |
 | Multiple timeline clips on one track | Emitter State has a single loop delay, so only the first start time survives. Split the track into separate systems. |
 | Per-particle exact randomness | Neither engine lets us inject our PCG32. Seeds travel and engine output is reproducible — it just is not the *same* stream. |
+
+## Mesh particles
+
+A particle's `size` is a **multiplier, not a length**, and that only holds for a
+mesh that has been normalised — otherwise what `size = 1` means depends on the
+units the model happened to be authored in. The app normalises every mesh it
+loads (`src/utils/vfx/assets.js`), so the importer measures each static mesh and
+folds the same correction into the renderer:
+
+- `Meshes[0].Scale` is the authored size **times** the factor that puts the
+  mesh's bounding sphere one metre across;
+- `Meshes[0].PivotOffset` re-centres it, in Mesh space, so a model not built
+  around its own centre tumbles in place rather than swinging about that offset.
+
+Both are baked to absolute values rather than left to the per-particle scale,
+because the vertex shader applies the pivot as `MeshOffset * ParticleScale` and
+`Particles.Scale` is 1 here — Initialize Particle's Mesh Scale input refuses
+every write, which is why the size lives on the renderer at all.
+
+The import report names the factor per emitter, so a mesh authored at roughly a
+metre reads `x0.98` and one that is not reads `x0.43`. `-run=VfxVerify` prints
+the scale and pivot the saved asset actually holds.
 
 ## Diagnosing it against a new engine version
 
