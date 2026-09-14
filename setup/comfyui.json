@@ -50,7 +50,6 @@
     "ComfyUI-HunyuanVideo-Foley",
     "ComfyUI-Image-Filters",
     "ComfyUI-LATO.2",
-    "ComfyUI-LogicUtils",
     "ComfyUI-Manager",
     "ComfyUI-Meshflow",
     "ComfyUI-QRemeshify",
@@ -114,6 +113,11 @@
       "name": "ComfyUI-KJNodes",
       "repo": "kijai/ComfyUI-KJNodes",
       "ref": "c9869eade9920a1b949de07c4a197156006bcceb"
+    },
+    {
+      "name": "ComfyUI-LogicUtils",
+      "repo": "aria1th/ComfyUI-LogicUtils",
+      "ref": "f77c699543b8f9977b24581af66ad026d340b663"
     },
     {
       "name": "ComfyUI-Marigold-v2",
