@@ -472,3 +472,91 @@
   visibility: hidden;
   pointer-events: none;
 }
+
+/* ---- Node row extras ----------------------------------------------------- */
+
+.buildinggen__node-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.buildinggen__node-row .buildinggen__node {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Which storeys a Facade covers, so several chained ones are distinguishable
+ * from the list alone. */
+.buildinggen__node-tag {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-container-highest);
+  color: var(--on-surface-variant);
+  font-size: 10px;
+}
+
+.buildinggen__node-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.buildinggen__node-del .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* Revealed on hover or focus rather than always shown: a delete button beside
+ * every row reads as an invitation, and these rows are navigated far more often
+ * than they are pruned. */
+.buildinggen__node-row:hover .buildinggen__node-del,
+.buildinggen__node-del:focus-visible {
+  opacity: 1;
+}
+
+.buildinggen__node-del:hover {
+  background: var(--surface-container);
+  color: var(--error, #ffb4ab);
+}
+
+/* ---- Add palette --------------------------------------------------------- */
+
+.buildinggen__add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.buildinggen__add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  border: 1px dashed var(--surface-container-highest);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.buildinggen__add-btn .material-symbols-outlined {
+  font-size: 13px;
+}
+
+.buildinggen__add-btn:hover {
+  border-style: solid;
+  border-color: var(--primary);
+  color: var(--primary);
+}

@@ -283,10 +283,33 @@ export const CATALOG = {
     teach: 'Bay width is a NOMINAL: every wall is divided into a whole number of '
          + 'equal bays nearest that width, so nothing lands half-cut at a corner. '
          + 'The openings keep their own size and the wall around them takes up the '
-         + 'slack, which is why one setting fits walls of any length.',
+         + 'slack, which is why one setting fits walls of any length. '
+         + 'CHAIN SEVERAL, each set to different storeys, to give a building a '
+         + 'shopfront, a grander first floor and a plainer attic - a later Facade '
+         + 'replaces an earlier one only on the storeys it claims.',
     inputs: [{ id: 'building', label: 'Building', kind: PORT_KIND.BUILDING, required: true }],
     outputs: [{ id: 'out', label: 'Building', kind: PORT_KIND.BUILDING }],
     props: {
+      fromFloor: {
+        type: PROP_TYPE.INT,
+        label: 'From storey',
+        default: 0,
+        min: 0,
+        max: 200,
+        basic: true,
+        hint: 'Counted from the ground, which is storey 0.',
+        showFor: { storeys: ['range'] },
+      },
+      toFloor: {
+        type: PROP_TYPE.INT,
+        label: 'To storey',
+        default: 0,
+        min: 0,
+        max: 200,
+        basic: true,
+        hint: 'Inclusive.',
+        showFor: { storeys: ['range'] },
+      },
       bayWidth: {
         type: PROP_TYPE.NUMBER,
         label: 'Bay width',
@@ -376,8 +399,52 @@ export const CATALOG = {
         hint: 'A courtyard has walls too. Off doubles nothing and halves the slot '
             + 'count on a plan with a big light well.',
       },
+      placeDoor: {
+        type: PROP_TYPE.BOOL,
+        label: 'Front door',
+        default: true,
+        hint: 'Only does anything on a facade that covers the ground floor.',
+      },
     },
-    modes: {},
+    modes: {
+      storeys: {
+        label: 'Storeys',
+        default: 'all',
+        basic: true,
+        options: [
+          { value: 'all', label: 'All storeys', teach: 'One rule for the whole building.' },
+          {
+            value: 'ground',
+            label: 'Ground floor only',
+            teach: 'The shopfront. Put this AFTER an all-storeys facade to override it.',
+          },
+          {
+            value: 'upper',
+            label: 'Above the ground',
+            teach: 'Everything except the ground floor.',
+          },
+          { value: 'top', label: 'Top storey only', teach: 'The attic or crown.' },
+          { value: 'range', label: 'A range', teach: 'Pick the storeys by number below.' },
+        ],
+      },
+      opening: {
+        label: 'Opening',
+        default: 'window',
+        basic: true,
+        options: [
+          { value: 'window', label: 'Window' },
+          {
+            value: 'shopfront',
+            label: 'Shopfront',
+            teach: 'Tags these openings differently so a style pack can dress them '
+                 + 'as glazing rather than as windows.',
+          },
+          { value: 'arch', label: 'Arch', teach: 'Arcades, loggias, Roman ground floors.' },
+          { value: 'balcony', label: 'Balcony' },
+          { value: 'louvre', label: 'Louvre', teach: 'Plant rooms, industrial and utility floors.' },
+        ],
+      },
+    },
   },
 
   output: {

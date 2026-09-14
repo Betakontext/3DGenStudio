@@ -29,13 +29,37 @@ import BuildingInspector from '../components/building/BuildingInspector'
 import useBuildingDocument from '../hooks/useBuildingDocument'
 import useBuildingCompile from '../hooks/useBuildingCompile'
 import { MAX_SEED } from '../../building/doc.js'
-import { getNodeDef } from '../../building/catalog.js'
+import { CATALOG, CATALOG_ORDER, getNodeDef } from '../../building/catalog.js'
 import { SEVERITY } from '../../building/diagnostics.js'
 import {
-  applyFix, canApplyFix, ensureStarterGraph, setFootprint, setNodeEnabled,
-  setNodeMode, setNodeProp,
+  applyFix, canApplyFix, ensureStarterGraph, insertNodeAfter, orderedNodes,
+  removeNode, setFootprint, setNodeEnabled, setNodeMode, setNodeProp,
 } from '../utils/building/edits'
 import './BuildingGenPage.css'
+
+/**
+ * Whether a node type can be spliced in after the selected one.
+ *
+ * Mirrors insertNodeAfter's own rules so the palette only ever offers what will
+ * actually work - a button that does nothing when pressed is worse than no
+ * button at all.
+ */
+function canInsert(doc, afterId, type) {
+  const def = getNodeDef(type)
+  const source = doc.nodes.find(node => node.id === afterId)
+  if (!def || !source) return false
+  if (def.singleton && doc.nodes.some(node => node.type === type)) return false
+  const sourcePort = getNodeDef(source.type)?.outputs?.[0]
+  const input = def.inputs?.[0]
+  return Boolean(sourcePort && input && sourcePort.kind === input.kind)
+}
+
+/** The short "which storeys" label shown on a Facade row. */
+function storeyTag(node) {
+  const mode = node.modes?.storeys || 'all'
+  if (mode === 'range') return `${node.props?.fromFloor ?? 0}-${node.props?.toFloor ?? 0}`
+  return mode
+}
 
 const TABS = [
   { id: 'plan', label: 'Plan', icon: 'architecture' },
@@ -75,6 +99,9 @@ export default function BuildingGenPage() {
     if (doc.nodes.length > 0) return
     commit(current => ensureStarterGraph(current), { undoLabel: 'New Building' })
   }, [commit, doc.nodes.length, status])
+
+  // Pipeline order, not creation order - see orderedNodes.
+  const nodeOrder = useMemo(() => orderedNodes(doc), [doc])
 
   const footprintNode = useMemo(
     () => doc.nodes.find(node => node.type === 'footprint') || null,
@@ -146,6 +173,22 @@ export default function BuildingGenPage() {
   const onEditCurve = useCallback((nodeId, key) => {
     setOpenCurve(current => (key === null || current === `${nodeId}:${key}` ? null : `${nodeId}:${key}`))
   }, [])
+
+  // Adding a node SPLICES IT INTO THE CHAIN after the selected one. A building is
+  // a pipeline, so "add a Facade" almost always means "put one more step here",
+  // and making the author wire three edges by hand to give the ground floor a
+  // shopfront would be the difference between a feature people use and one they
+  // do not.
+  const onAddNode = useCallback(type => {
+    const after = selected
+    commit(current => insertNodeAfter(current, after, type), {
+      undoLabel: `Add ${getNodeDef(type)?.label || type}`,
+    })
+  }, [commit, selected])
+
+  const onRemoveNode = useCallback(nodeId => {
+    commit(current => removeNode(current, nodeId), { undoLabel: 'Delete Node' })
+  }, [commit])
 
   const onApplyFix = useCallback(fixDescriptor => {
     commit(current => applyFix(current, fixDescriptor), { undoLabel: fixDescriptor.label })
@@ -258,10 +301,10 @@ export default function BuildingGenPage() {
 
           <h2 className="buildinggen__title">Nodes</h2>
           <ul className="buildinggen__nodes">
-            {doc.nodes.map(node => {
+            {nodeOrder.map(node => {
               const def = getNodeDef(node.type)
               return (
-                <li key={node.id}>
+                <li key={node.id} className="buildinggen__node-row">
                   <button
                     type="button"
                     className={`buildinggen__node ${selected === node.id ? 'buildinggen__node--on' : ''} ${node.enabled ? '' : 'buildinggen__node--muted'}`}
@@ -269,11 +312,44 @@ export default function BuildingGenPage() {
                   >
                     <span className="material-symbols-outlined">{def?.icon || 'circle'}</span>
                     <span className="buildinggen__node-label">{def?.label || node.type}</span>
+                    {/* Which storeys a Facade covers, on the row itself: with
+                        several chained, this is the only way to tell them apart
+                        without clicking each one. */}
+                    {node.type === 'facade' && (
+                      <span className="buildinggen__node-tag">{storeyTag(node)}</span>
+                    )}
                   </button>
+                  {/* An Output cannot be deleted - the graph compiles to nothing
+                      without one, and offering the button invites the mistake. */}
+                  {!def?.singleton && (
+                    <button
+                      type="button"
+                      className="buildinggen__node-del"
+                      onClick={() => onRemoveNode(node.id)}
+                      title={`Delete this ${def?.label || node.type}`}
+                    >
+                      <span className="material-symbols-outlined">close</span>
+                    </button>
+                  )}
                 </li>
               )
             })}
           </ul>
+
+          <div className="buildinggen__add">
+            {CATALOG_ORDER.filter(type => canInsert(doc, selected, type)).map(type => (
+              <button
+                key={type}
+                type="button"
+                className="buildinggen__add-btn"
+                onClick={() => onAddNode(type)}
+                title={CATALOG[type].blurb}
+              >
+                <span className="material-symbols-outlined">add</span>
+                {CATALOG[type].label}
+              </button>
+            ))}
+          </div>
 
           <div className="buildinggen__stats">
             <div><span>Storeys</span><strong>{stats.storeyCount ?? 0}</strong></div>

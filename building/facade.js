@@ -110,6 +110,16 @@ function slotTransform(edge, along, z) {
  */
 export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule = {} } = {}) {
   const {
+    // Which storeys this facade dresses. Resolved by the compiler from the
+    // node's mode, so this file never has to know what 'upper' means.
+    floorFrom = 0,
+    floorTo = Infinity,
+    // The style slot the openings are tagged with. A style pack binds meshes and
+    // materials per tag, so tagging the ground floor 'shopfront' is what lets it
+    // be dressed differently from the storeys above without a second geometry
+    // path. Tag only - nothing here draws anything different.
+    openingTag = 'window',
+    placeDoor = true,
     bayWidth = 3,
     pierWidth = 0.6,
     windowWidth = 1.2,
@@ -121,8 +131,16 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
     includeCourtyards = true,
   } = rule;
 
-  const out = { slots: [], truncated: false, squashed: false, doorCount: 0 };
+  const out = {
+    slots: [], truncated: false, squashed: false, doorCount: 0,
+    // Which storeys this node actually claimed. The compiler needs it to decide
+    // what an earlier facade's slots should be replaced by - see the override
+    // rule there - and to tell the author when a facade covers nothing.
+    claimed: new Set(),
+  };
   if (!levels.length) return out;
+
+  const covers = index => index >= floorFrom && index <= floorTo;
 
   // One compile-time slot per drawn property, so a window's choice of variant is
   // stable when an unrelated node is edited. See building/random.js.
@@ -132,7 +150,9 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
   // frontage, which is what anyone looking at the building will read as the
   // front. Chosen once over the whole ground floor rather than per level, so a
   // building has one front door and not one per wall.
-  const door = pickDoorWall(levels, bayWidth);
+  // The door belongs to whichever facade claims the ground floor, so a facade
+  // that only dresses the upper storeys never places one.
+  const door = placeDoor && covers(0) ? pickDoorWall(levels, bayWidth) : null;
 
   const horizontalParts = bayParts({ pierWidth });
 
@@ -140,6 +160,8 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
     const isGround = level.index === 0 && level.kind !== 'plinth';
     // A plinth is a base course, not a storey: it has no windows.
     if (level.kind === 'plinth') continue;
+    if (!covers(level.index)) continue;
+    out.claimed.add(level.index);
 
     const height = level.z1 - level.z0;
     if (!(height > MIN_WALL)) continue;
@@ -199,7 +221,7 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
 
           out.slots.push({
             type: isDoor ? SLOT_TYPE.DOOR : SLOT_TYPE.WINDOW,
-            styleSlot: isDoor ? 'door' : 'window',
+            styleSlot: isDoor ? 'door' : openingTag,
             transform: slotTransform(edge, placed.start + placed.size / 2, centreZ),
             cellW: placed.size,
             cellH: openingHeight,

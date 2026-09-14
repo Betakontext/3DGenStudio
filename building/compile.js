@@ -414,11 +414,28 @@ function evaluateNode(node, def, inputValue, diagnostics, seed) {
       const building = inputValue(node, 'building');
       if (!building?.levels?.length) return building;
 
+      // Which storeys this facade claims. Resolved here rather than in facade.js
+      // so the geometry code never has to know what 'upper' means, and so the
+      // vocabulary can grow without touching it.
+      const storeys = new Set(
+        building.levels.filter(l => l.kind !== 'plinth').map(l => l.index),
+      );
+      const top = storeys.size ? Math.max(...storeys) : 0;
+      const range = resolveStoreyRange(readMode(node, 'storeys'), {
+        top,
+        from: readProp(node, 'fromFloor'),
+        to: readProp(node, 'toFloor'),
+      });
+
       const facade = generateFacade({
         levels: building.levels,
         seed,
         nodeId: node.id,
         rule: {
+          floorFrom: range.from,
+          floorTo: range.to,
+          openingTag: readMode(node, 'opening'),
+          placeDoor: readProp(node, 'placeDoor'),
           bayWidth: readProp(node, 'bayWidth'),
           pierWidth: readProp(node, 'pierWidth'),
           windowWidth: readProp(node, 'windowWidth'),
@@ -431,11 +448,19 @@ function evaluateNode(node, def, inputValue, diagnostics, seed) {
         },
       });
 
-      if (facade.slots.length === 0) {
+      if (facade.claimed.size === 0) {
+        diagnostics.warn(
+          CODE.W_FACADE_NO_STOREYS,
+          `This Facade covers storeys ${range.from} to ${
+            range.to === Infinity ? 'the top' : range.to
+          }, and the building has ${storeys.size}. It dresses nothing.`,
+          { nodeId: node.id, hint: 'Widen the storey range, or add storeys to the Mass.' },
+        );
+      } else if (facade.slots.length === 0) {
         diagnostics.warn(
           CODE.W_NO_OPENINGS,
-          'No openings fitted on this building. The storeys may be shorter than the '
-          + 'sill and lintel together, or the walls shorter than one bay.',
+          'No openings fitted on the storeys this Facade covers. They may be shorter '
+          + 'than the sill and lintel together, or the walls shorter than one bay.',
           { nodeId: node.id, hint: 'Lower the sill and lintel, or raise the storey height.' },
         );
       }
@@ -459,9 +484,19 @@ function evaluateNode(node, def, inputValue, diagnostics, seed) {
         );
       }
 
-      // A new object rather than a mutation: nothing in the compiler writes back
-      // into a value another node might still hold.
-      return { ...building, slots: facade.slots };
+      // THE OVERRIDE RULE, and it is what makes chaining facades useful.
+      //
+      // A facade REPLACES the openings on the storeys it claims and leaves every
+      // other storey exactly as it found them. So an all-storeys facade followed
+      // by a ground-floor one gives a shopfront under a regular grid, and the
+      // order on the board reads the way it behaves: later wins, but only where
+      // it applies.
+      //
+      // The alternative - appending - would put two windows in every bay of any
+      // storey two facades both covered, which is a silently wrong building
+      // rather than an obviously wrong one.
+      const kept = (building.slots || []).filter(slot => !facade.claimed.has(slot.floorIndex));
+      return { ...building, slots: [...kept, ...facade.slots] };
     }
 
     case 'output':
@@ -469,6 +504,31 @@ function evaluateNode(node, def, inputValue, diagnostics, seed) {
 
     default:
       return undefined;
+  }
+}
+
+/**
+ * Turn a storey mode into an inclusive index range.
+ *
+ * `top` is the highest storey index, so 'top' is a range of one and does not
+ * need the caller to know how tall the building is.
+ */
+function resolveStoreyRange(mode, { top, from, to }) {
+  switch (mode) {
+    case 'ground': return { from: 0, to: 0 };
+    case 'upper': return { from: 1, to: Infinity };
+    case 'top': return { from: top, to: top };
+    case 'range': {
+      // Tolerant of the two being the wrong way round: an author dragging the
+      // numbers past each other should get the range they plainly meant, not an
+      // empty one.
+      const lo = Math.min(from, to);
+      const hi = Math.max(from, to);
+      return { from: lo, to: hi };
+    }
+    case 'all':
+    default:
+      return { from: 0, to: Infinity };
   }
 }
 
