@@ -27,6 +27,16 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v3.4.0',
+    date: '2026-09-14',
+    items: [
+			'New: VFX Generator',
+			'ImageEditor - Seamless: Improved with more options',
+			'Trees: Removed leaves pivot point detection',
+			'ComfyUI: Added MarigoldV2 for Normals and Albedo using Qwen Image Edit'
+    ]
+  },
+  {
     version: 'v3.3.1',
     date: '2026-09-08',
     items: [

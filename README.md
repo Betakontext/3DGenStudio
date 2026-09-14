@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-09-14** | New: VFX Generator<br>ImageEditor - Seamless: Improved with more options<br>ComfyUI: Added MarigoldV2 for Normals and Albedo using Qwen Image Edit |
 | **2026-09-08** | Updated ComfyUI nodes and workflows for Trellis2, Pixal3D, Hunyuan<br>MeshEditor - AutoRig: Transfer skeleton and weights to another mesh (high poly to low poly)<br>Improved AutoRig<br>Fixed Animation Editor |
 | **2026-09-07** | New: Tree Generator<br>Image Editor: Added Seamless mode |
 | **2026-09-06** | New: Assembly Editor |
