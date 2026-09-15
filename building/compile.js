@@ -32,10 +32,11 @@ import { getNodeDef, readMode, readProp } from './catalog.js';
 import { CODE, createDiagnostics, fix, metres } from './diagnostics.js';
 import {
   BUILDING_IR_FORMAT, LEVEL_KIND, createBuildingIr, createPolygonTable,
-  makeLevel, makeSlot, makeSolid,
+  makeLevel, makeRoofRung, makeSlot, makeSolid,
 } from './ir.js';
 import { JOIN } from './clip.js';
-import { MASS_PROFILE, stackMass } from './mass.js';
+import { MASS_PROFILE, stackMass, topOfStack } from './mass.js';
+import { ROOF_KIND, generateRoof, roofIsCapped, roofTop, stackRoofs } from './roof.js';
 import { MAX_SLOTS, generateFacade } from './facade.js';
 import { isFlatCurve } from './param.js';
 import { normalizeBuildingDoc } from './doc.js';
@@ -229,6 +230,22 @@ export function compileBuilding(document) {
   }
   for (const slot of result.slots || []) ir.slots.push(makeSlot(slot));
 
+  if (result.roof && result.roof.rungs?.length) {
+    ir.roof = {
+      kind: result.roof.kind,
+      height: result.roof.height,
+      baseZ: result.roof.rungs[0].z,
+      closed: Boolean(result.roof.closed),
+      // Interned into the SAME table the levels use, so a stepped roof whose
+      // tread and riser share a shape stores it once and a flat roof reuses the
+      // top level's polygon outright.
+      rungs: result.roof.rungs.map(rung => makeRoofRung({
+        polygons: rung.polygons.map(polygon => polygons.intern(polygon)),
+        z: rung.z,
+      })),
+    };
+  }
+
   ir.polygons = polygons.all();
   ir.solids = [makeSolid({ levels: levelIndices, name: doc.name || 'building' })];
 
@@ -254,6 +271,7 @@ export function compileBuilding(document) {
     footprintArea: result.footprintArea,
     floorArea: result.floorArea,
     polygonCount: ir.polygons.length,
+    roofHeight: ir.roof ? ir.roof.height : 0,
   };
 
   // --- phase 5: whole-picture checks --------------------------------------
@@ -497,6 +515,91 @@ function evaluateNode(node, def, inputValue, diagnostics, seed) {
       // rather than an obviously wrong one.
       const kept = (building.slots || []).filter(slot => !facade.claimed.has(slot.floorIndex));
       return { ...building, slots: [...kept, ...facade.slots] };
+    }
+
+    case 'roof': {
+      const building = inputValue(node, 'building');
+      if (!building?.levels?.length) return building;
+
+      // A SECOND ROOF CONTINUES THE FIRST, it does not replace it. roof.js
+      // argues a roof is the massing carried on past the top storey; the same
+      // argument makes a roof a fine base for another roof, and that is what
+      // gives a stepped platform with a hip cap (a Mayan temple) or tiers over
+      // a mansard (most of a pagoda) out of the vocabulary that already exists.
+      // Replacing would have made the extra node silently do nothing, which is
+      // the worst of the three options.
+      const below = building.roof;
+      if (roofIsCapped(below)) {
+        // Nothing left to build on: the walk below consumed the plan and ended
+        // on a ridge. Say so here rather than letting generateRoof report the
+        // sliver as "too small for a roof", which is true but unhelpful.
+        diagnostics.warn(
+          CODE.W_ROOF_ON_RIDGE,
+          'The roof below already closes to a ridge, so there is no surface for '
+          + 'this one to stand on and it was skipped.',
+          {
+            nodeId: node.id,
+            hint: 'Give the roof below a height cap so it ends on a flat deck, '
+                + 'or set it to Stepped so it ends on a tread.',
+          },
+        );
+        return building;
+      }
+
+      const top = roofTop(below) || topOfStack(building);
+      const kind = readMode(node, 'kind');
+      const roof = generateRoof({
+        polygons: top.polygons,
+        baseZ: top.z,
+        kind,
+        pitch: readProp(node, 'pitch'),
+        upperPitch: readProp(node, 'upperPitch'),
+        breakFraction: readProp(node, 'breakFraction'),
+        stepRun: readProp(node, 'stepRun'),
+        stepRise: readProp(node, 'stepRise'),
+        overhang: kind === ROOF_KIND.TIERED ? readProp(node, 'overhang') : 0,
+        maxHeight: readProp(node, 'maxHeight'),
+      });
+
+      if (roof.fallback === 'too-small') {
+        // Named for what the author is looking at: with roofs chained, "the top
+        // of the building" is the deck the previous one ended on, and pointing
+        // at the Mass profile would send them to the wrong node entirely.
+        diagnostics.warn(
+          CODE.W_ROOF_FALLBACK,
+          below
+            ? 'The deck the roof below ends on is too small for a roof of this '
+              + 'shape, so this one was left flat.'
+            : 'The top of the building is too small for a roof of this shape, so it '
+              + 'was left flat. A roof needs a plan wider than one offset step.',
+          {
+            nodeId: node.id,
+            hint: below
+              ? 'Raise the height cap on the roof below so it stops sooner and leaves a wider deck.'
+              : 'Widen the plan, or reduce the Mass profile so less is eaten by the time it reaches the top.',
+          },
+        );
+      } else if (!roof.closed && !readProp(node, 'maxHeight')) {
+        diagnostics.info(
+          CODE.I_ROOF_OPEN,
+          `The roof reached ${metres(roof.height)} without closing to a ridge, so `
+          + 'it ends on a flat deck.',
+          { nodeId: node.id },
+        );
+      }
+
+      if (!below) return { ...building, roof };
+
+      const stacked = stackRoofs(below, roof);
+      if (stacked.rungs.length > below.rungs.length) {
+        diagnostics.info(
+          CODE.I_ROOF_STACKED,
+          `This roof sits on the one below, starting at ${metres(top.z)} and `
+          + `taking the building to ${metres(stacked.rungs[stacked.rungs.length - 1].z)}.`,
+          { nodeId: node.id },
+        );
+      }
+      return { ...building, roof: stacked };
     }
 
     case 'output':

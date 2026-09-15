@@ -228,6 +228,17 @@ export function makeSlot({
 }
 
 /**
+ * One rung of a roof's contour ladder.
+ *
+ * `polygons` are indices into the shared polygon table, so a stepped roof whose
+ * tread and riser are the same shape stores it once. See building/roof.js for
+ * what the three consecutive-rung cases mean.
+ */
+export function makeRoofRung({ polygons = [], z = 0 }) {
+  return { polygons: polygons.map(n => n | 0), z: quantize(z) };
+}
+
+/**
  * A run of trim along an edge.
  *
  * EDGE-DRIVEN, NOT FACE-DRIVEN: a cornice follows the top edge of a wall around

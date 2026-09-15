@@ -447,6 +447,95 @@ export const CATALOG = {
     },
   },
 
+  roof: {
+    type: 'roof',
+    label: 'Roof',
+    category: CATEGORY.ROOF,
+    icon: 'roofing',
+    blurb: 'Caps the building.',
+    teach: 'A roof is the massing continued past the top storey: the plan keeps '
+         + 'stepping inward and rising until it closes. That is why a hip roof '
+         + 'works on an L-plan or one with a courtyard without being told about '
+         + 'either, and why Stepped gives a Mayan platform from the same code. '
+         + 'Chain a second Roof and it CONTINUES the first rather than replacing '
+         + 'it, starting on whatever surface the one below ended on - Stepped '
+         + 'then Hip is a Mayan temple, and Tiered over Tiered is a pagoda. The '
+         + 'roof below has to end on a deck for that: give it a height cap, or '
+         + 'use a shape that ends flat.',
+    inputs: [{ id: 'building', label: 'Building', kind: PORT_KIND.BUILDING, required: true }],
+    outputs: [{ id: 'out', label: 'Building', kind: PORT_KIND.BUILDING }],
+    props: {
+      pitch: {
+        type: PROP_TYPE.NUMBER, label: 'Pitch', default: 35, min: 1, max: 85, step: 1,
+        unit: 'deg', basic: true,
+        hint: 'Degrees from horizontal. Steeper is taller over the same plan.',
+        showFor: { kind: ['hip', 'mansard'] },
+      },
+      upperPitch: {
+        type: PROP_TYPE.NUMBER, label: 'Upper pitch', default: 12, min: 0, max: 85, step: 1,
+        unit: 'deg', basic: true,
+        hint: 'The shallow part, above the break.',
+        showFor: { kind: ['mansard'] },
+      },
+      breakFraction: {
+        type: PROP_TYPE.NUMBER, label: 'Break at', default: 0.35, min: 0.05, max: 0.95, step: 0.05,
+        hint: 'How far in the pitch changes, as a fraction of the whole roof. '
+            + 'This is where the attic windows go.',
+        showFor: { kind: ['mansard'] },
+      },
+      stepRun: {
+        type: PROP_TYPE.NUMBER, label: 'Step depth', default: 1.2, min: 0.05, max: 20, step: 0.1,
+        unit: 'm', basic: true,
+        showFor: { kind: ['stepped', 'tiered'] },
+      },
+      stepRise: {
+        type: PROP_TYPE.NUMBER, label: 'Step height', default: 0.9, min: 0.05, max: 20, step: 0.1,
+        unit: 'm', basic: true,
+        showFor: { kind: ['stepped', 'tiered'] },
+      },
+      overhang: {
+        type: PROP_TYPE.NUMBER, label: 'Eave overhang', default: 0.6, min: 0, max: 10, step: 0.1,
+        unit: 'm', basic: true,
+        hint: 'How far each tier oversails the one below. Zero makes a ziggurat; '
+            + 'a little makes an Asian roof.',
+        showFor: { kind: ['tiered'] },
+      },
+      maxHeight: {
+        type: PROP_TYPE.NUMBER, label: 'Height cap', default: 0, min: 0, max: 200, step: 0.5,
+        unit: 'm',
+        hint: 'Stop at this height with a flat deck instead of running to a ridge. '
+            + '0 means no cap.',
+      },
+    },
+    modes: {
+      kind: {
+        label: 'Shape',
+        default: 'hip',
+        basic: true,
+        options: [
+          { value: 'flat', label: 'Flat', teach: 'No roof. The top of the stack is the top.' },
+          {
+            value: 'hip', label: 'Hip',
+            teach: 'Slopes in from every eave to a ridge. On a plan with no long '
+                 + 'axis this is a pyramid.',
+          },
+          {
+            value: 'mansard', label: 'Mansard',
+            teach: 'Steep below, shallow above. The French attic storey.',
+          },
+          {
+            value: 'stepped', label: 'Stepped',
+            teach: 'Flat treads and vertical risers. Mayan platforms, ziggurats.',
+          },
+          {
+            value: 'tiered', label: 'Tiered',
+            teach: 'Stepped, with each tier oversailing the one below. Asian eaves.',
+          },
+        ],
+      },
+    },
+  },
+
   output: {
     type: 'output',
     label: 'Output',

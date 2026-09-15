@@ -24,7 +24,8 @@ import ViewportCameras from '../meshEditor/ViewportCameras'
 import ViewGizmo from '../meshEditor/ViewGizmo'
 import { FRAME_EYE_OFFSET, framedOrthoZoom } from '../../utils/cameraFraming'
 import {
-  buildBuildingGeometry, buildLevelOutlines, buildSlotInstances, buildingBounds,
+  buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildSlotInstances,
+  buildingBounds,
 } from '../../utils/building/mesh'
 
 /**
@@ -158,11 +159,14 @@ export default function BuildingViewport({
   //
   // Switching back to Preview rebuilds once, which is what an unmounted viewport
   // did anyway - so this costs nothing and removes the whole hidden cost.
-  const { geometry, outlines, box, slots } = useMemo(() => {
-    if (!active) return { geometry: null, outlines: null, box: null, slots: [] }
+  const { geometry, roofGeometry, outlines, box, slots } = useMemo(() => {
+    if (!active) {
+      return { geometry: null, roofGeometry: null, outlines: null, box: null, slots: [] }
+    }
     const built = buildBuildingGeometry(ir)
     return {
       geometry: built.geometry,
+      roofGeometry: buildRoofGeometry(ir).geometry,
       outlines: buildLevelOutlines(ir),
       box: buildingBounds(ir),
       slots: buildSlotInstances(ir),
@@ -215,6 +219,7 @@ export default function BuildingViewport({
   }, [])
 
   useDisposed(geometry)
+  useDisposed(roofGeometry)
   useDisposed(outlines)
 
   // THE BUILDING IS DRAWN CENTRED ON THE ORIGIN, and this is why.
@@ -295,6 +300,16 @@ export default function BuildingViewport({
               makes a setback or a batter readable as geometry rather than as
               shading. */}
           <meshStandardMaterial color="#c9cdd4" roughness={0.85} metalness={0.0} />
+        </mesh>
+      )}
+
+      {/* The roof gets its own material, a shade darker than the walls. Not
+          decoration: a hip roof meeting a wall at a shallow pitch is almost
+          indistinguishable from it under flat lighting, and the eave line is
+          what tells you whether the roof is the shape you asked for. */}
+      {roofGeometry && (
+        <mesh geometry={roofGeometry}>
+          <meshStandardMaterial color="#8e7a6b" roughness={0.9} metalness={0} />
         </mesh>
       )}
 

@@ -33,6 +33,8 @@
 // exactly this job). Correct and simple now, cheap to improve later.
 
 import * as THREE from 'three'
+import { differencePolygons } from '../../../building/clip.js'
+import { rungKind } from '../../../building/roof.js'
 
 /**
  * How deep an opening placeholder sits, in metres.
@@ -307,6 +309,145 @@ export function buildingBounds(ir) {
     }
   }
   return any ? box : null
+}
+
+/**
+ * The roof, from its contour ladder.
+ *
+ * THE THREE RUNG RULES, which building/roof.js defines and this function obeys
+ * without knowing what shape it is drawing:
+ *
+ *   slope  polygons and height both change -> the annulus between them, its
+ *          outer edge at the lower height and its inner edge at the upper one
+ *   tread  polygons change, height does not -> the annulus, flat
+ *   riser  polygons identical, height changes -> the walls of the lower contour,
+ *          extruded straight up
+ *
+ * A hip roof is all slopes; a Mayan platform alternates treads and risers; a
+ * mansard is slopes of two pitches. None of that is special-cased here, which is
+ * the whole point of the ladder representation.
+ *
+ * HEIGHT IS ASSIGNED BY WHICH RING A VERTEX CAME FROM, not by interpolation. The
+ * annulus between two contours has the lower contour as its outer boundary and
+ * the upper one as its holes, so a vertex on a hole is at the upper height and
+ * everything else is at the lower one. That is exact, needs no correspondence
+ * between the two contours - which is just as well, since an L-plan's contour
+ * splits in two on the way up and there is no correspondence to find.
+ */
+export function buildRoofGeometry(ir) {
+  const roof = ir?.roof
+  if (!roof || !Array.isArray(roof.rungs) || roof.rungs.length === 0) {
+    return { geometry: null, triangleCount: 0 }
+  }
+
+  const builder = createBuilder()
+  const polygonAt = index => {
+    const stored = ir.polygons[index]
+    if (!stored) return null
+    return { outer: unflatten(stored.outer), holes: (stored.holes || []).map(unflatten) }
+  }
+  const rungPolygons = rung => rung.polygons.map(polygonAt).filter(Boolean)
+
+  for (let i = 1; i < roof.rungs.length; i++) {
+    const lower = roof.rungs[i - 1]
+    const upper = roof.rungs[i]
+    const lowerPolys = rungPolygons(lower)
+    const upperPolys = rungPolygons(upper)
+
+    // Classified by building/roof.js so the mesher and the tests agree rather
+    // than each deciding for itself.
+    const kind = rungKind(
+      { polygons: lowerPolys, z: lower.z },
+      { polygons: upperPolys, z: upper.z },
+    )
+
+    if (kind === 'riser') {
+      // Straight up: the contour's own walls. Outward, because a riser is the
+      // face of a step and is seen from outside.
+      for (const polygon of lowerPolys) {
+        let u = addWalls(builder, polygon.outer, lower.z, upper.z, 0)
+        for (const hole of polygon.holes) u = addWalls(builder, hole, lower.z, upper.z, u)
+      }
+      continue
+    }
+    if (kind === 'none') continue
+
+    // Slope or tread: the annulus between the two contours.
+    for (const band of differencePolygons(lowerPolys, upperPolys)) {
+      addRoofBand(builder, band, lower.z, upper.z, upperPolys)
+    }
+  }
+
+  // Whatever the ladder ends on gets a lid. A closed roof ends on a ridge so thin
+  // the cap is a sliver; a capped one ends on a real flat deck. Both need it, or
+  // the building has a hole where the sky is.
+  const top = roof.rungs[roof.rungs.length - 1]
+  for (const polygon of rungPolygons(top)) {
+    addCap(builder, polygon.outer, polygon.holes, top.z, true)
+  }
+
+  if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
+  return { geometry: builder.build(), triangleCount: builder.triangleCount }
+}
+
+/**
+ * One annular band of a roof.
+ *
+ * Every vertex is at the lower height unless it lies on one of the upper
+ * contour's rings, in which case it is at the upper one. Membership is tested by
+ * proximity rather than by identity: the band comes back from Clipper as fresh
+ * coordinates, quantised to its integer lattice, so the vertices are equal in
+ * value but never the same objects.
+ */
+function addRoofBand(builder, band, lowerZ, upperZ, upperPolys) {
+  const faces = triangulate(band.outer, band.holes)
+  if (faces.length === 0) return
+
+  const points = [...band.outer, ...band.holes.flat()]
+
+  // Every vertex of the upper contour, to test membership against.
+  const upperPoints = []
+  for (const polygon of upperPolys) {
+    upperPoints.push(...polygon.outer, ...polygon.holes.flat())
+  }
+  const isUpper = p => upperPoints.some(
+    q => Math.abs(q[0] - p[0]) < 1e-4 && Math.abs(q[1] - p[1]) < 1e-4,
+  )
+
+  const heights = points.map(p => (isUpper(p) ? upperZ : lowerZ))
+
+  for (const face of faces) {
+    const [ia, ib, ic] = face
+    const a = points[ia]
+    const b = points[ib]
+    const c = points[ic]
+    if (!a || !b || !c) continue
+
+    const A = toThree(a[0], a[1], heights[ia])
+    const B = toThree(b[0], b[1], heights[ib])
+    const C = toThree(c[0], c[1], heights[ic])
+
+    // The normal comes from the triangle itself rather than from the slope,
+    // because a band may contain both sloping and flat parts where a contour
+    // splits, and one assumed normal would light half of it wrongly.
+    const ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2]
+    const vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2]
+    let nx = uy * vz - uz * vy
+    let ny = uz * vx - ux * vz
+    let nz = ux * vy - uy * vx
+    const len = Math.hypot(nx, ny, nz)
+    if (len < 1e-12) continue
+    nx /= len; ny /= len; nz /= len
+    // A roof faces up. Flip the winding rather than the normal so the two agree.
+    const flip = ny < 0
+    builder.tri(
+      A, flip ? C : B, flip ? B : C,
+      [flip ? -nx : nx, flip ? -ny : ny, flip ? -nz : nz],
+      [a[0], a[1]],
+      flip ? [c[0], c[1]] : [b[0], b[1]],
+      flip ? [b[0], b[1]] : [c[0], c[1]],
+    )
+  }
 }
 
 /**

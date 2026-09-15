@@ -318,6 +318,12 @@ export default function BuildingGenPage() {
                     {node.type === 'facade' && (
                       <span className="buildinggen__node-tag">{storeyTag(node)}</span>
                     )}
+                    {/* Same reason, for roofs: chained, they stack - the lower
+                        one's shape is what the upper one stands on - and two
+                        rows reading "Roof" say nothing about which is which. */}
+                    {node.type === 'roof' && (
+                      <span className="buildinggen__node-tag">{node.modes?.kind || 'hip'}</span>
+                    )}
                   </button>
                   {/* An Output cannot be deleted - the graph compiles to nothing
                       without one, and offering the button invites the mistake. */}
@@ -353,7 +359,16 @@ export default function BuildingGenPage() {
 
           <div className="buildinggen__stats">
             <div><span>Storeys</span><strong>{stats.storeyCount ?? 0}</strong></div>
-            <div><span>Height</span><strong>{Math.round((stats.height || 0) * 10) / 10} m</strong></div>
+            <div><span>Walls</span><strong>{Math.round((stats.height || 0) * 10) / 10} m</strong></div>
+            {/* Shown separately from the wall height rather than folded into it:
+                the two are set by different nodes, and "my building got taller"
+                when the only thing that changed was the roof pitch is confusing. */}
+            {stats.roofHeight > 0 && (
+              <div>
+                <span>Roof</span>
+                <strong>+{Math.round(stats.roofHeight * 10) / 10} m</strong>
+              </div>
+            )}
             <div><span>Footprint</span><strong>{Math.round(stats.footprintArea || 0)} m²</strong></div>
             <div><span>Floor area</span><strong>{Math.round(stats.floorArea || 0)} m²</strong></div>
             <div><span>Status</span><strong>{dirty ? 'Unsaved' : 'Saved'}</strong></div>

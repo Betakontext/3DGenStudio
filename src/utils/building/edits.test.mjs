@@ -39,7 +39,7 @@ const chain = doc => {
 // --- the starter ------------------------------------------------------------
 
 test('the starter graph is a connected pipeline', () => {
-  assert.deepEqual(chain(starter()), ['footprint', 'mass', 'facade', 'output'])
+  assert.deepEqual(chain(starter()), ['footprint', 'mass', 'facade', 'roof', 'output'])
   assert.equal(compileBuilding(starter()).ok, true)
 })
 
@@ -50,17 +50,18 @@ test('inserting a Facade SPLICES it into the chain', () => {
   // nothing left dangling.
   const doc = starter()
   const next = insertNodeAfter(doc, idOf(doc, 'facade'), 'facade')
-  assert.deepEqual(chain(next), ['footprint', 'mass', 'facade', 'facade', 'output'])
+  assert.deepEqual(chain(next), ['footprint', 'mass', 'facade', 'facade', 'roof', 'output'])
   assert.equal(compileBuilding(next).ok, true)
 })
 
 test('the spliced node re-points what the source was feeding', () => {
   const doc = starter()
+  const firstFacade = idOf(doc, 'facade')
   const next = insertNodeAfter(doc, idOf(doc, 'mass'), 'facade')
-  // The output must be fed by the NEW facade, not still by the mass.
-  const output = idOf(next, 'output')
-  const feeding = next.edges.find(e => e.to.node === output)
-  assert.equal(next.nodes.find(n => n.id === feeding.from.node).type, 'facade')
+  // Whatever the Mass was feeding must now be fed by the NEW facade, not still
+  // by the Mass.
+  const feeding = next.edges.find(e => e.to.node === firstFacade)
+  assert.equal(feeding.from.node, next.nodes[next.nodes.length - 1].id)
 })
 
 test('a singleton cannot be inserted twice', () => {
@@ -89,7 +90,7 @@ test('removing a middle node HEALS the chain', () => {
   // building that stops compiling until the author notices.
   const doc = starter()
   const next = removeNode(doc, idOf(doc, 'facade'))
-  assert.deepEqual(chain(next), ['footprint', 'mass', 'output'])
+  assert.deepEqual(chain(next), ['footprint', 'mass', 'roof', 'output'])
   assert.equal(compileBuilding(next).ok, true)
 })
 
@@ -101,7 +102,7 @@ test('removing one of two facades leaves the other connected', () => {
   const two = doc.nodes.filter(n => n.type === 'facade')
   assert.equal(two.length, 2)
   const next = removeNode(doc, two[1].id)
-  assert.deepEqual(chain(next), ['footprint', 'mass', 'facade', 'output'])
+  assert.deepEqual(chain(next), ['footprint', 'mass', 'facade', 'roof', 'output'])
   assert.equal(compileBuilding(next).ok, true)
 })
 
@@ -112,7 +113,7 @@ test('removing the Mass does not heal across mismatched kinds', () => {
   const next = removeNode(doc, idOf(doc, 'mass'))
   assert.equal(compileBuilding(next).ok, false)
   assert.equal(next.edges.some(e => e.from.node === idOf(next, 'footprint')
-    && e.to.node === idOf(next, 'output')), false)
+    && e.to.node === idOf(next, 'facade')), false)
 })
 
 // --- list order -------------------------------------------------------------
@@ -124,7 +125,7 @@ test('the node list reads in PIPELINE order, not creation order', () => {
   const base = starter()
   const doc = insertNodeAfter(base, idOf(base, 'facade'), 'facade')
   assert.deepEqual(orderedNodes(doc).map(n => n.type),
-    ['footprint', 'mass', 'facade', 'facade', 'output'])
+    ['footprint', 'mass', 'facade', 'facade', 'roof', 'output'])
 })
 
 test('a disconnected node still appears, at the end', () => {
@@ -214,6 +215,49 @@ test('"top" claims only the highest storey, whatever the count', () => {
     const floors = new Set(compileBuilding(doc).ir.slots.map(s => s.floorIndex))
     assert.deepEqual([...floors], [levels - 1], `${levels} storeys`)
   }
+})
+
+// --- chained roofs ----------------------------------------------------------
+
+test('a second Roof CONTINUES the first rather than replacing it', () => {
+  // The temple: a stepped platform stopped at a deck, capped with a hip. If the
+  // second node replaced the first, the extra node would silently do nothing -
+  // which is what it did before, and the reason this test exists.
+  let doc = starter()
+  const first = idOf(doc, 'roof')
+  doc = setNodeMode(doc, first, 'kind', 'stepped')
+  doc = setNodeProp(doc, first, 'stepRun', 1)
+  doc = setNodeProp(doc, first, 'stepRise', 0.8)
+  doc = setNodeProp(doc, first, 'maxHeight', 2)
+
+  const platform = compileBuilding(doc).ir.roof
+
+  doc = insertNodeAfter(doc, first, 'roof')
+  const second = doc.nodes.filter(n => n.type === 'roof')[1].id
+  doc = setNodeMode(doc, second, 'kind', 'hip')
+  doc = setNodeProp(doc, second, 'pitch', 40)
+
+  const { ir, diagnostics } = compileBuilding(doc)
+  assert.ok(ir.roof.rungs.length > platform.rungs.length, 'the cap added no rungs')
+  assert.ok(ir.roof.height > platform.height, 'the cap added no height')
+  assert.equal(ir.roof.baseZ, platform.baseZ, 'the stack restarted instead of continuing')
+  assert.equal(ir.roof.kind, 'stacked')
+  assert.ok(diagnostics.some(d => d.code === 'I_ROOF_STACKED'))
+  // The platform's own rungs survive intact underneath.
+  assert.deepEqual(ir.roof.rungs.slice(0, platform.rungs.length), platform.rungs)
+})
+
+test('a roof on top of one that closed to a ridge is refused, not mangled', () => {
+  // The starter roof is a hip with no height cap, so it runs to a ridge and
+  // there is nothing left to stand on. Saying so beats building a sliver.
+  let doc = starter()
+  const before = compileBuilding(doc).ir.roof
+
+  doc = insertNodeAfter(doc, idOf(doc, 'roof'), 'roof')
+  const { ir, diagnostics } = compileBuilding(doc)
+
+  assert.deepEqual(ir.roof, before, 'the second roof changed the first')
+  assert.ok(diagnostics.some(d => d.code === 'W_ROOF_ON_RIDGE'))
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

@@ -41,10 +41,11 @@ export function createStarterGraph() {
   footprint.props.shape = JSON.parse(JSON.stringify(DEFAULT_FOOTPRINT))
   const mass = createNode('mass', nextNodeId('mass'))
   const facade = createNode('facade', nextNodeId('facade'))
+  const roof = createNode('roof', nextNodeId('roof'))
   const output = createNode('output', nextNodeId('output'))
 
   return {
-    nodes: [footprint, mass, facade, output],
+    nodes: [footprint, mass, facade, roof, output],
     edges: [
       {
         id: `${footprint.id}:out->${mass.id}:shape`,
@@ -57,8 +58,13 @@ export function createStarterGraph() {
         to: { node: facade.id, port: 'building' },
       },
       {
-        id: `${facade.id}:out->${output.id}:building`,
+        id: `${facade.id}:out->${roof.id}:building`,
         from: { node: facade.id, port: 'out' },
+        to: { node: roof.id, port: 'building' },
+      },
+      {
+        id: `${roof.id}:out->${output.id}:building`,
+        from: { node: roof.id, port: 'out' },
         to: { node: output.id, port: 'building' },
       },
     ],

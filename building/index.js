@@ -82,6 +82,17 @@ export {
   readProp,
 } from './catalog.js';
 
+export {
+  MAX_ROOF_STEPS,
+  ROOF_KIND,
+  bandBetween,
+  generateRoof,
+  roofIsCapped,
+  roofTop,
+  rungKind,
+  stackRoofs,
+} from './roof.js';
+
 export { MAX_SLOTS, generateFacade } from './facade.js';
 
 export {
@@ -127,6 +138,7 @@ export {
   flattenRing,
   irDigest,
   makeLevel,
+  makeRoofRung,
   makeSlot,
   makeSolid,
   makeTrim,

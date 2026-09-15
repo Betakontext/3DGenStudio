@@ -11,7 +11,9 @@ import { compileBuilding } from '../../../building/compile.js'
 import { createNode } from '../../../building/catalog.js'
 import { normalizeBuildingDoc } from '../../../building/doc.js'
 import { MASS_PROFILE } from '../../../building/mass.js'
-import { buildBuildingGeometry, buildLevelOutlines, buildingBounds, toThree } from './mesh.js'
+import {
+  buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildingBounds, toThree,
+} from './mesh.js'
 
 let passed = 0
 function test(name, fn) {
@@ -268,6 +270,111 @@ test('an empty IR yields no geometry rather than an empty buffer', () => {
   }
   assert.equal(buildLevelOutlines(null), null)
   assert.equal(buildingBounds(null), null)
+})
+
+// --- roofs -------------------------------------------------------------------
+
+function roofGraph({ shape = SQUARE, kind = 'hip', roof = {}, mass = {} } = {}) {
+  const fp = createNode('footprint', 'fp')
+  fp.props.shape = shape
+  const ms = createNode('mass', 'ms')
+  Object.assign(ms.props, { levelCount: 2, ...mass })
+  const rf = createNode('roof', 'rf')
+  rf.modes.kind = kind
+  Object.assign(rf.props, roof)
+  return normalizeBuildingDoc({
+    nodes: [fp, ms, rf, createNode('output', 'out')],
+    edges: [
+      { from: { node: 'fp', port: 'out' }, to: { node: 'ms', port: 'shape' } },
+      { from: { node: 'ms', port: 'out' }, to: { node: 'rf', port: 'building' } },
+      { from: { node: 'rf', port: 'out' }, to: { node: 'out', port: 'building' } },
+    ],
+  })
+}
+
+test('a hip roof meshes, and sits ON TOP of the walls', () => {
+  const ir = compileBuilding(roofGraph({ kind: 'hip', roof: { pitch: 40 } })).ir
+  assert.ok(ir.roof, 'no roof in the IR')
+  const { geometry, triangleCount } = buildRoofGeometry(ir)
+  assert.ok(geometry, 'the roof produced no geometry')
+  assert.ok(triangleCount > 8, `only ${triangleCount} triangles`)
+
+  const pos = geometry.getAttribute('position')
+  let minY = Infinity
+  let maxY = -Infinity
+  for (let i = 0; i < pos.count; i++) {
+    minY = Math.min(minY, pos.getY(i))
+    maxY = Math.max(maxY, pos.getY(i))
+  }
+  // The eave is the top of the walls; the ridge is above it.
+  assert.ok(Math.abs(minY - ir.stats.height) < 1e-3, `eave at ${minY}, walls end at ${ir.stats.height}`)
+  assert.ok(maxY > minY + 1, 'the roof is flat')
+  assert.ok(Math.abs(maxY - minY - ir.roof.height) < 1e-3)
+})
+
+test('roof triangles face UPWARD, not into the building', () => {
+  // A roof lit from underneath is the classic winding mistake, and it is
+  // invisible until the model is shaded.
+  const ir = compileBuilding(roofGraph({ kind: 'hip', roof: { pitch: 35 } })).ir
+  const { geometry } = buildRoofGeometry(ir)
+  const nor = geometry.getAttribute('normal')
+  for (let i = 0; i < nor.count; i++) {
+    assert.ok(nor.getY(i) >= -1e-6, `a roof triangle faces down (ny=${nor.getY(i)})`)
+  }
+})
+
+test('stored normals agree with the winding', () => {
+  const ir = compileBuilding(roofGraph({ kind: 'hip', roof: { pitch: 35 } })).ir
+  const { geometry } = buildRoofGeometry(ir)
+  for (const t of triangles(geometry)) {
+    assert.ok(dot(windingNormal(t), t.normal) > 0.99, 'a roof triangle is lit inside out')
+  }
+})
+
+test('a flat roof meshes as a lid and nothing else', () => {
+  const ir = compileBuilding(roofGraph({ kind: 'flat' })).ir
+  const { geometry, triangleCount } = buildRoofGeometry(ir)
+  assert.ok(geometry)
+  assert.equal(triangleCount, 2, 'a flat lid over a rectangle is two triangles')
+  assert.equal(ir.roof.height, 0)
+})
+
+test('a stepped roof produces vertical risers as well as flat treads', () => {
+  const ir = compileBuilding(roofGraph({
+    shape: { outer: [[0, 0], [30, 0], [30, 30], [0, 30]], holes: [] },
+    kind: 'stepped', roof: { stepRun: 3, stepRise: 2 },
+  })).ir
+  const { geometry } = buildRoofGeometry(ir)
+  const normals = triangles(geometry).map(t => t.normal)
+  assert.ok(normals.some(n => Math.abs(n[1]) > 0.99), 'no flat tread')
+  assert.ok(normals.some(n => Math.abs(n[1]) < 0.01), 'no vertical riser')
+})
+
+test('a roof over a courtyard leaves the courtyard open', () => {
+  const ir = compileBuilding(roofGraph({
+    shape: {
+      outer: [[0, 0], [30, 0], [30, 30], [0, 30]],
+      holes: [[[10, 10], [10, 20], [20, 20], [20, 10]]],
+    },
+    kind: 'hip', roof: { pitch: 30 },
+  })).ir
+  const { geometry } = buildRoofGeometry(ir)
+  assert.ok(geometry)
+  // Nothing may be drawn over the middle of the court at eave height.
+  for (const t of triangles(geometry)) {
+    const overCourt = t.centroid[0] > 13 && t.centroid[0] < 17
+      && t.centroid[2] < -13 && t.centroid[2] > -17
+    assert.ok(!overCourt || t.centroid[1] > ir.stats.height + 0.5,
+      `the courtyard was roofed over at ${t.centroid}`)
+  }
+})
+
+test('no roof in the IR yields no geometry rather than throwing', () => {
+  for (const empty of [null, {}, { roof: null }, { roof: { rungs: [] } }]) {
+    const { geometry, triangleCount } = buildRoofGeometry(empty)
+    assert.equal(geometry, null)
+    assert.equal(triangleCount, 0)
+  }
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)
