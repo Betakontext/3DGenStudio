@@ -277,3 +277,62 @@ export function forgetAssetImageUrl(reference) {
   const match = /^asset:(\d+)$/.exec(String(reference || ''))
   if (match) textureUrlCache.delete(match[1])
 }
+
+// --- exported meshes ---------------------------------------------------------
+
+/**
+ * Save a GLB to the mesh library, either as a new asset or as a VERSION of one.
+ *
+ * TWO MULTIPART DIALECTS AGAIN, the same trap the header describes for saving a
+ * building: library-upload takes loose form fields, `:id/versions` takes ONE
+ * `payload` JSON part. Getting them the wrong way round produces a 400 that says
+ * nothing useful, which is most of why this wrapper exists.
+ *
+ * @param {Object} options
+ * @param {Blob}   options.blob
+ * @param {string} options.name
+ * @param {Object} [options.metadata]
+ * @param {number} [options.parentAssetId] save as a version of this asset
+ * @returns {Promise<{id: number}>}
+ */
+export async function saveMeshToLibrary({ blob, name, metadata = {}, parentAssetId = null }) {
+  const file = new File([blob], `${name}.glb`, { type: 'model/gltf-binary' })
+
+  if (parentAssetId) {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('payload', JSON.stringify({
+      type: 'mesh',
+      name,
+      metadata,
+      createdAt: Date.now(),
+      // A LOD level looks almost exactly like the model it came from, so
+      // rendering three more thumbnails of the same building would be three
+      // seconds spent to produce four near-identical pictures.
+      inheritThumbnail: true,
+    }))
+    const response = await fetch(`${API_BASE}/assets/${parentAssetId}/versions`, {
+      method: 'POST', body: form,
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload?.error || 'Could not save the mesh version')
+    return payload
+  }
+
+  const form = new FormData()
+  form.append('file', file)
+  form.append('type', 'mesh')
+  form.append('name', name)
+  form.append('metadata', JSON.stringify(metadata))
+  const response = await fetch(`${API_BASE}/assets/library-upload`, { method: 'POST', body: form })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not save the mesh')
+  return payload
+}
+
+/** The bare numeric id from whichever shape a route returned. */
+export function assetIdOf(payload) {
+  const raw = payload?.id ?? payload?.assetId ?? payload?.versionId
+  const id = Number(String(raw ?? '').replace('library:', ''))
+  return Number.isFinite(id) && id > 0 ? id : null
+}

@@ -1,0 +1,323 @@
+/* The export dialog. Same overlay and field shapes as the texture dialog, with a
+   different prefix - see BuildingAiPanel.css for why these are copied rather than
+   shared. Opaque, like every overlay on this page: no backdrop-filter anywhere
+   near the live WebGL canvas. */
+.bexport-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 9, 12, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.bexport {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  color: #e6e9f0;
+}
+
+.bexport__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #23262d;
+}
+
+.bexport__header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.bexport__header button {
+  background: none;
+  border: none;
+  color: #8a93a4;
+  cursor: pointer;
+  display: inline-flex;
+}
+
+.bexport__header button:hover {
+  color: #e6e9f0;
+}
+
+.bexport__body {
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bexport__teach {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9aa3b4;
+}
+
+.bexport__teach strong {
+  color: #cdd4e0;
+}
+
+.bexport__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.bexport__presets button {
+  background: #1b1e24;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #b8c0cf;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.bexport__presets button:hover {
+  border-color: #3a3f49;
+  color: #e6e9f0;
+}
+
+.bexport__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bexport__field > span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a93a4;
+}
+
+.bexport__field textarea,
+.bexport__field select {
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e9f0;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.bexport__note {
+  margin: 0;
+  font-size: 11px;
+  color: #8a93a4;
+}
+
+.bexport__note strong {
+  color: #cdd4e0;
+}
+
+.bexport__message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  border-radius: 5px;
+  padding: 8px 10px;
+}
+
+.bexport__message img {
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+  /* On the checkerboard-free dark panel a black-background sprite would vanish
+     into the message box, so it gets its own dark tile to sit on. */
+  background: #000;
+  object-fit: contain;
+}
+
+.bexport__message.is-error {
+  background: rgba(160, 60, 60, 0.16);
+  border: 1px solid rgba(200, 90, 90, 0.35);
+  color: #f0c8c8;
+}
+
+.bexport__message.is-success {
+  background: rgba(60, 140, 90, 0.14);
+  border: 1px solid rgba(90, 190, 130, 0.3);
+  color: #c8f0d8;
+}
+
+.bexport__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid #23262d;
+}
+
+.bexport__actions button {
+  background: #1b1e24;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #b8c0cf;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.bexport__actions button.is-primary {
+  background: #2f5fb0;
+  border-color: #3d6fc4;
+  color: #fff;
+}
+
+.bexport__actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The shared ComfyUI parameter field (WorkflowParameterField), reused verbatim
+ * from the image editor so enum dropdowns and the prompt-helper button come for
+ * free. Only the skin is local: its own stylesheet is sized for a side panel,
+ * and this is a compact dialog. */
+.bexport__params {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bexport__params .image-editor-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a93a4;
+  gap: 4px;
+}
+
+/* A checkbox reads as a sentence, not as a field label. */
+.bexport__params .image-editor-label--checkbox {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: #e6e9f0;
+}
+
+.bexport__params .image-editor-input {
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e9f0;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 8px;
+}
+
+.bexport__params .image-editor-input:focus-visible {
+  outline: 2px solid #6ea8ff;
+  outline-offset: 1px;
+}
+
+
+
+/* The tile-size field, which the sprite panel has no equivalent of. */
+.bexport__field input[type='number'] {
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e9f0;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.bexport__field small {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #8a93a4;
+}
+
+/* A material sample is opaque, so unlike a particle sprite it needs no dark tile
+   behind it - but it does want to show as a tile rather than as a photo. */
+.bexport__message img {
+  background: #14161b;
+  object-fit: cover;
+}
+
+
+/* The LOD list. A checkbox, a name, and the number that actually decides which
+   levels are worth shipping. */
+.bexport__levels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bexport__level {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+
+.bexport__level:hover {
+  background: #1b1e24;
+}
+
+.bexport__level label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.bexport__level input:disabled {
+  cursor: default;
+}
+
+.bexport__level-name {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  line-height: 1.2;
+  color: #e6e9f0;
+}
+
+.bexport__level-name small {
+  font-size: 10px;
+  color: #8a93a4;
+}
+
+/* Tabular so the counts line up and the drop between levels is readable at a
+   glance - that comparison is the whole reason the number is shown. */
+.bexport__level-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: #9aa3b4;
+  white-space: nowrap;
+}
+
+.bexport__field input[type='text'] {
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e9f0;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}

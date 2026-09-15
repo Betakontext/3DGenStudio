@@ -27,6 +27,8 @@ import BuildingViewport from '../components/building/BuildingViewport'
 import BuildingStylePanel from '../components/building/BuildingStylePanel'
 import BuildingTextures from '../components/building/BuildingTextures'
 import BuildingAiPanel from '../components/building/BuildingAiPanel'
+import BuildingExportDialog from '../components/building/BuildingExportDialog'
+import ExportMeshDialog from '../components/ExportMeshDialog'
 import BuildingPlanEditor from '../components/building/BuildingPlanEditor'
 import BuildingInspector from '../components/building/BuildingInspector'
 import useBuildingDocument from '../hooks/useBuildingDocument'
@@ -78,6 +80,11 @@ export default function BuildingGenPage() {
   // Which texture slot the generate dialog is open for, or null.
   // { refKey, guideSlot } while the generate dialog is open, or null.
   const [generating, setGenerating] = useState(null)
+  const [exporting, setExporting] = useState(false)
+  // The finished Object3D, handed to the app's own export dialog for formats,
+  // folders, collision and FBX. Held rather than rebuilt so the two dialogs
+  // cannot disagree about what was exported.
+  const [exportObject, setExportObject] = useState(null)
   const onGenerateTexture = useCallback(
     (refKey, guideSlot) => setGenerating({ refKey, guideSlot }), [],
   )
@@ -294,6 +301,28 @@ export default function BuildingGenPage() {
           <button type="button" className="buildinggen__banner-btn" onClick={restoreDraft}>Restore</button>
           <button type="button" className="buildinggen__banner-btn" onClick={discardDraft}>Discard</button>
         </div>
+      )}
+
+      {exporting && (
+        <BuildingExportDialog
+          doc={doc}
+          name={doc.name}
+          onClose={() => setExporting(false)}
+          onExportFiles={object => {
+            // Hand the built object to the app's own dialog rather than
+            // duplicating formats, folder browsing, collision and FBX here.
+            setExporting(false)
+            setExportObject(object)
+          }}
+        />
+      )}
+
+      {exportObject && (
+        <ExportMeshDialog
+          getObject3D={() => exportObject}
+          defaultName={doc.name || 'Building'}
+          onClose={() => setExportObject(null)}
+        />
       )}
 
       {generating && (
@@ -613,6 +642,15 @@ export default function BuildingGenPage() {
           <span className="material-symbols-outlined">redo</span>
         </button>
         <span className="buildinggen__spacer" />
+        <button
+          type="button"
+          className="buildinggen__btn"
+          onClick={() => setExporting(true)}
+          disabled={!compiled.ir?.levels?.length}
+          title="Save as a mesh, with LOD levels regenerated from the graph"
+        >
+          Export
+        </button>
         {savedAssetId != null && (
           <button
             type="button"
