@@ -1,0 +1,101 @@
+{
+  "format": 1,
+  "id": "fantasy-keep",
+  "name": "Fantasy Keep",
+  "category": "Fantasy",
+  "blurb": "A battered stone keep with arrow slits, twisted out of true.",
+  "teach": "Defensive architecture and fantasy architecture want the same two things: mass at the bottom and almost no openings. The batter gives the thickened base, the arrow slits are an ordinary Facade with the window width dropped to half a metre and the pier widened past it, and a Twist deform rotates each storey a little against the one below so the keep looks hand-piled rather than extruded. The twist is seeded from the document, so it is the same crooked tower every time.",
+  "palette": {
+    "wall": "#8f8d86",
+    "trim": "#6e6c66",
+    "roof": "#3e4a3f",
+    "opening": "#1c1c1a",
+    "door": "#4b3826",
+    "accent": "#5a6b7d"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "batter",
+        "join": "round"
+      },
+      "props": {
+        "levelCount": 6,
+        "groundHeight": 4.4,
+        "levelHeight": 3.2,
+        "plinthHeight": 0.8,
+        "amount": 1.1,
+        "cornerRadius": 0.5
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "upper",
+        "opening": "arch"
+      },
+      "props": {
+        "bayWidth": 3.0,
+        "windowWidth": 0.5,
+        "pierWidth": 1.0,
+        "sillHeight": 1.4,
+        "lintelHeight": 0.8
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "ground",
+        "opening": "arch"
+      },
+      "props": {
+        "bayWidth": 3.4,
+        "windowWidth": 0.6,
+        "pierWidth": 1.2,
+        "groundSillHeight": 1.8,
+        "doorWidth": 1.8,
+        "doorHeight": 3.4
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "hip"
+      },
+      "props": {
+        "pitch": 68
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "cornice"
+      },
+      "props": {
+        "projection": 0.5,
+        "depth": 0.55
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "string"
+      },
+      "props": {
+        "projection": 0.2,
+        "depth": 0.3,
+        "every": 2
+      }
+    },
+    {
+      "type": "deform",
+      "modes": {
+        "mode": "twist"
+      },
+      "props": {
+        "amount": 9
+      }
+    }
+  ]
+}

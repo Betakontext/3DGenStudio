@@ -1,0 +1,98 @@
+{
+  "format": 1,
+  "id": "futurist-shell",
+  "name": "Futurist Shell",
+  "category": "Future",
+  "blurb": "A waisted glass shell that pulls in at the middle and flares at the crown.",
+  "teach": "This is the only shipped style that drives the Mass with a Curve rather than a fixed amount, and it is what the curve profile is for: the plan is pulled inward at the waist and back outward at the top, so the tower narrows and then cantilevers. Positive is inward and negative is outward, which is why the last key is below zero. Rounded corners and near-zero piers do the rest - at this bay width the glazing reads as one continuous ribbon rather than as windows.",
+  "palette": {
+    "wall": "#e8eaed",
+    "trim": "#c3c8cf",
+    "roof": "#aeb4bc",
+    "opening": "#3d5a6c",
+    "door": "#4f7f8f",
+    "accent": "#7fd4e8"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "curve",
+        "join": "round"
+      },
+      "props": {
+        "levelCount": 10,
+        "groundHeight": 5.5,
+        "levelHeight": 3.4,
+        "cornerRadius": 0.5,
+        "curve": {
+          "keys": [
+            {
+              "t": 0,
+              "v": 0,
+              "interp": "auto"
+            },
+            {
+              "t": 0.55,
+              "v": 1.2,
+              "interp": "auto"
+            },
+            {
+              "t": 1,
+              "v": -0.6,
+              "interp": "auto"
+            }
+          ],
+          "preWrap": "clamp",
+          "postWrap": "clamp"
+        }
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "all",
+        "opening": "window"
+      },
+      "props": {
+        "bayWidth": 1.8,
+        "windowWidth": 1.25,
+        "pierWidth": 0.12,
+        "sillHeight": 0.3,
+        "lintelHeight": 0.15
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "ground",
+        "opening": "shopfront"
+      },
+      "props": {
+        "bayWidth": 3.2,
+        "windowWidth": 2.4,
+        "pierWidth": 0.2,
+        "groundSillHeight": 0.05,
+        "doorWidth": 2.4,
+        "doorHeight": 4
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "flat"
+      },
+      "props": {}
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "eave"
+      },
+      "props": {
+        "projection": 0.75,
+        "depth": 0.22
+      }
+    }
+  ]
+}

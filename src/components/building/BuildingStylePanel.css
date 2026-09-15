@@ -4,46 +4,78 @@
   gap: 6px;
 }
 
-.bstyle__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* The select and its re-apply button on one row: the button is a fixed square
+   and the select takes whatever is left, so a long style name shortens rather
+   than pushing the button out of the panel. */
+.bstyle__pick {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: stretch;
+  gap: 6px;
 }
 
-.bstyle__item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border: 1px solid transparent;
+.bstyle__select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--outline-variant);
   border-radius: 8px;
-  background: transparent;
-  color: var(--on-surface);
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
-}
-
-.bstyle__item:hover:not(:disabled) {
   background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-size: 13px;
+  cursor: pointer;
 }
 
-.bstyle__item:disabled {
+.bstyle__select:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.bstyle__select:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.bstyle__item--on {
-  border-color: var(--primary);
-  background: var(--surface-container-high);
+.bstyle__again {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
 }
 
-.bstyle__item--on .bstyle__name {
-  color: var(--primary);
+.bstyle__again:hover:not(:disabled) {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+}
+
+.bstyle__again:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.bstyle__again .material-symbols-outlined {
+  font-size: 18px;
+}
+
+/* The chosen style's palette and blurb. Aligned to the TOP rather than centred:
+   the blurb wraps to two or three lines and a centred swatch strip beside it
+   drifts away from the row it belongs to. */
+.bstyle__current {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 2px 0;
+}
+
+.bstyle__blurb {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
 }
 
 /* The swatch strip is the style's identity at a glance, so it reads as one
@@ -59,27 +91,6 @@
 .bstyle__swatch {
   width: 9px;
   height: 22px;
-}
-
-.bstyle__text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.bstyle__name {
-  font-size: 13px;
-  line-height: 1.25;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bstyle__category {
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--on-surface-variant);
 }
 
 .bstyle__note,

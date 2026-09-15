@@ -1,13 +1,22 @@
 // The style picker.
 //
-// A LIST IN THE SIDEBAR RATHER THAN A MODAL DIALOG, which is a deliberate
-// departure from the plan's `BuildingPresetsDialog`. A style here is not a
-// thumbnail you recognise and dismiss - it restructures the graph, and the only
-// honest preview of it is the 3D viewport that a modal would be covering.
-// Keeping the list beside the viewport means picking one, seeing the building
-// change, and picking the next takes two clicks and no dismissals. When there
-// are thirty packs rather than four, a searchable dialog earns its place; at
-// four it would only be in the way.
+// A DROPDOWN IN THE SIDEBAR, and it used to be a list. The list's own comment
+// said the trade explicitly: "when there are thirty packs rather than four, a
+// searchable dialog earns its place; at four it would only be in the way". At
+// eleven the list was taller than the viewport controls beside it and pushed the
+// texture slots off the bottom of the panel, which is the point at which a
+// vertical stack stops being a convenience. A select collapses to one row,
+// groups by category for free, and is keyboard- and type-ahead-navigable without
+// anything being written here.
+//
+// WHAT THE LIST WAS ACTUALLY GOOD AT was showing the palette, so the swatch
+// strip stays - moved below the select, for the SELECTED style, alongside its
+// blurb. One style's colours at a time rather than eleven, which is what you
+// want once you have chosen.
+//
+// STILL NOT A MODAL. A style restructures the graph, and the only honest preview
+// of it is the 3D viewport a dialog would be covering. Picking one, watching the
+// building change and picking the next has to stay cheap.
 //
 // APPLYING IS A DOCUMENT EDIT, not a mode. The panel hands a pack to
 // applyStylePack and the page commits the result through the same history the
@@ -34,6 +43,26 @@ function Swatches({ palette }) {
       ))}
     </span>
   )
+}
+
+/**
+ * Styles grouped by category, both the groups and the styles in name order.
+ *
+ * SORTED HERE rather than relying on the directory order the route happens to
+ * return. A select is scanned by eye and by type-ahead, and an arbitrary order
+ * defeats both; the directory listing is alphabetical by FILENAME, which is not
+ * the same as by name and is not grouped at all.
+ */
+function byCategory(styles) {
+  const groups = new Map()
+  for (const style of styles) {
+    const key = style.category || 'Other'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(style)
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([category, list]) => [category, list.sort((a, b) => a.name.localeCompare(b.name))])
 }
 
 export default function BuildingStylePanel({ doc, activeId, onApply }) {
@@ -79,6 +108,7 @@ export default function BuildingStylePanel({ doc, activeId, onApply }) {
   if (library === undefined) return null
   const styles = library?.styles || []
   const skipped = library?.skipped || []
+  const active = styles.find(style => style.id === activeId) || null
 
   return (
     <div className="bstyle">
@@ -109,28 +139,65 @@ export default function BuildingStylePanel({ doc, activeId, onApply }) {
           {' '}<code>resources/buildings/styles/</code>.
         </p>
       )}
-      <ul className="bstyle__list">
-        {styles.map(style => (
-          <li key={style.id}>
-            <button
-              type="button"
-              className={`bstyle__item ${activeId === style.id ? 'bstyle__item--on' : ''}`}
-              onClick={() => apply(style)}
-              disabled={Boolean(busy)}
-              title={style.blurb}
-            >
-              <Swatches palette={style.palette} />
-              <span className="bstyle__text">
-                <span className="bstyle__name">{style.name}</span>
-                <span className="bstyle__category">{style.category}</span>
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+
+      {styles.length > 0 && (
+        <div className="bstyle__pick">
+          <select
+            className="bstyle__select"
+            value={active ? active.id : ''}
+            disabled={Boolean(busy)}
+            onChange={event => {
+              const style = styles.find(candidate => candidate.id === event.target.value)
+              if (style) apply(style)
+            }}
+            aria-label="Style"
+          >
+            {/* A PLACEHOLDER ROW, because a document starts with no style and a
+                select has to show something. Disabled so it cannot be chosen as
+                an action - there is no "un-apply", only undo. */}
+            <option value="" disabled>
+              {active ? active.name : 'Choose a style…'}
+            </option>
+            {byCategory(styles).map(([category, list]) => (
+              <optgroup key={category} label={category}>
+                {list.map(style => (
+                  <option key={style.id} value={style.id}>{style.name}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          {/* RE-APPLY, which the list gave away for free and a select takes back:
+              choosing the row you are already on fires no change event. It is
+              worth a button because applying is how you get BACK to a style
+              after tuning a facade and deciding you preferred it as shipped. */}
+          <button
+            type="button"
+            className="bstyle__again"
+            onClick={() => active && apply(active)}
+            disabled={!active || Boolean(busy)}
+            title={active
+              ? `Apply ${active.name} again, discarding your changes to its nodes`
+              : 'Pick a style first'}
+          >
+            <span className="material-symbols-outlined">refresh</span>
+          </button>
+        </div>
+      )}
+
+      {/* The chosen style's identity: its palette and what it is for. One
+          style's colours rather than eleven, which is the trade the dropdown
+          makes and the reason the swatches did not simply disappear with the
+          list. */}
+      {active && (
+        <div className="bstyle__current">
+          <Swatches palette={active.palette} />
+          <span className="bstyle__blurb">{active.blurb}</span>
+        </div>
+      )}
+
       {/* Said once, here, rather than in a tooltip on every row: applying a
           style REPLACES the nodes between the footprint and the output, and a
-          user who has just tuned a facade deserves to know that before clicking
+          user who has just tuned a facade deserves to know that before choosing
           rather than after. Undo covers it, which is why this is a note and not
           a confirmation. */}
       {styles.length > 0 && (

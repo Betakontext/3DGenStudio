@@ -1,0 +1,79 @@
+{
+  "format": 1,
+  "id": "aztec-pyramid",
+  "name": "Aztec Pyramid",
+  "category": "Ancient",
+  "blurb": "A steep stepped platform carrying a windowed shrine on a flat deck.",
+  "teach": "Where the Mayan pack steps gently and finishes in a small hipped shrine, this one is steep and finishes FLAT: a tall rise on a short run, and a height cap that stops the offset walk before it closes to a ridge. What the cap leaves is a tread - a level deck - and that deck is the temple platform. It is also what lets the parapet work: a parapet needs something to stand on, and a roof that closes to a point has nothing.",
+  "palette": {
+    "wall": "#a39079",
+    "trim": "#8a7860",
+    "roof": "#6d5a46",
+    "opening": "#241f18",
+    "door": "#7a2f22",
+    "accent": "#2f7d6a"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "setback",
+        "join": "miter"
+      },
+      "props": {
+        "levelCount": 5,
+        "groundHeight": 2.6,
+        "levelHeight": 2.3,
+        "step": 0.55,
+        "every": 1,
+        "cornerRadius": 0
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "top",
+        "opening": "window"
+      },
+      "props": {
+        "bayWidth": 1.9,
+        "windowWidth": 0.8,
+        "pierWidth": 0.5,
+        "sillHeight": 0.6,
+        "lintelHeight": 0.4,
+        "placeDoor": false
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "stepped"
+      },
+      "props": {
+        "stepRun": 0.4,
+        "stepRise": 1.1,
+        "maxHeight": 2.0
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "parapet"
+      },
+      "props": {
+        "projection": 0.35,
+        "depth": 0.8
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "plinth"
+      },
+      "props": {
+        "projection": 0.9,
+        "depth": 0.7
+      }
+    }
+  ]
+}

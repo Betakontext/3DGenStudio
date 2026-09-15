@@ -6,6 +6,7 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { pickStyle } = require('./building-probe-style.cjs');
 const BASE = process.env.PROBE_BASE || 'http://127.0.0.1:3001';
 const OUT = process.env.PROBE_OUT || path.join(process.cwd(), 'probe-generate');
 const WORKFLOW = process.env.PROBE_WORKFLOW || 'Turbo';
@@ -41,7 +42,7 @@ app.whenReady().then(async () => {
   };
 
   // A style first, so there is a building to texture.
-  await js(`[...document.querySelectorAll('.bstyle__item')].find(b => /Roman/.test(b.textContent))?.click()`);
+  await js(`${pickStyle('Roman')}`);
   await sleep(1500);
   await js(`document.querySelector('.buildinggen__tab:nth-child(2)')?.click()`);
   await sleep(800);

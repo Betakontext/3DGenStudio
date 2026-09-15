@@ -29,6 +29,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { compileBuilding } from '../building/compile.js';
+import { SEVERITY } from '../building/diagnostics.js';
 import { createNode } from '../building/catalog.js';
 import { createBuildingDoc, serializeBuildingDoc } from '../building/doc.js';
 import { applyStylePack, validateStylePack } from '../building/stylepack.js';
@@ -114,14 +115,18 @@ for (const file of files) {
   );
 
   const result = compileBuilding(doc);
-  const errors = result.diagnostics.filter(d => d.severity === 'error');
+  // SEVERITY, not a string literal, and that is not pedantry: this file spent
+  // its whole life filtering for "warning" where the vocabulary says "warn", so
+  // the note block below never printed once and every shipped pack looked clean
+  // on a plan two of them were quietly giving up on.
+  const errors = result.diagnostics.filter(d => d.severity === SEVERITY.ERROR);
   if (!check(result.ok && !errors.length, 'compiles clean on a plan with a courtyard',
     errors.map(d => `${d.code}: ${d.message}`).join('\n        '))) continue;
 
   // A warning is not a failure - W_MASS_TRUNCATED is CORRECT for a ziggurat -
   // but it is printed, because a shipped pack warning on a plain rectangle is
   // usually a value that wants tuning.
-  for (const d of result.diagnostics.filter(d => d.severity === 'warning')) {
+  for (const d of result.diagnostics.filter(d => d.severity === SEVERITY.WARN)) {
     console.log(`  note  ${d.code}: ${d.message.slice(0, 100)}`);
   }
 

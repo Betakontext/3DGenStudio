@@ -12,9 +12,9 @@ const BASE = process.env.PROBE_BASE || 'http://127.0.0.1:3001';
 const OUT = process.env.PROBE_OUT || path.join(process.cwd(), 'probe-style');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const styleRows = `[...document.querySelectorAll('.bstyle__item')]`;
-const clickStyle = name => `${styleRows}
-  .find(b => new RegExp(${JSON.stringify(name)}).test(b.textContent))?.click()`;
+const { listStyles, pickStyle } = require('./building-probe-style.cjs');
+const styleRows = listStyles;
+const clickStyle = name => pickStyle(name);
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1500, height: 950, show: true });

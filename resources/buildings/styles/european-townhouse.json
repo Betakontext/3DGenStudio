@@ -1,0 +1,107 @@
+{
+  "format": 1,
+  "id": "european-townhouse",
+  "name": "European Townhouse",
+  "category": "Classical",
+  "blurb": "Six storeys of stone with a mansard crown and scattered balconies.",
+  "teach": "The nineteenth-century apartment block is a vertical rhythm held together by horizontals: a shopfront at the pavement, five near-identical storeys of tall narrow windows, a string course marking every floor, and a heavy cornice under a mansard roof. The mansard's break is a fraction of how far the plan can erode at all, not of its width, so it lands in the same place on a small block and a large one - and the PITCH, not the break, is what sets how tall the crown reads. The balconies are set to Scattered rather than to every window: a seeded share, which is what stops a long terrace looking like a spreadsheet. Re-roll the seed and they move.",
+  "palette": {
+    "wall": "#cfc6b4",
+    "trim": "#b7ad98",
+    "roof": "#4a4f55",
+    "opening": "#2c2f33",
+    "door": "#3c4a3e",
+    "accent": "#6f7359"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "straight",
+        "join": "miter"
+      },
+      "props": {
+        "levelCount": 6,
+        "groundHeight": 4.2,
+        "levelHeight": 3.1,
+        "cornerRadius": 0
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "upper",
+        "opening": "window",
+        "balcony": "scattered"
+      },
+      "props": {
+        "bayWidth": 2.4,
+        "windowWidth": 1,
+        "pierWidth": 0.55,
+        "sillHeight": 0.95,
+        "lintelHeight": 0.45,
+        "balconyDepth": 0.55,
+        "balconyWidth": 1.5,
+        "balconyHeight": 0.95,
+        "balconyChance": 0.45
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "ground",
+        "opening": "shopfront"
+      },
+      "props": {
+        "bayWidth": 2.8,
+        "windowWidth": 1.9,
+        "pierWidth": 0.4,
+        "groundSillHeight": 0.35,
+        "doorWidth": 1.4,
+        "doorHeight": 3
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "mansard"
+      },
+      "props": {
+        "pitch": 62,
+        "upperPitch": 14,
+        "breakFraction": 0.16
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "cornice"
+      },
+      "props": {
+        "projection": 0.45,
+        "depth": 0.6
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "string"
+      },
+      "props": {
+        "projection": 0.12,
+        "depth": 0.22,
+        "every": 1
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "plinth"
+      },
+      "props": {
+        "projection": 0.2,
+        "depth": 0.5
+      }
+    }
+  ]
+}

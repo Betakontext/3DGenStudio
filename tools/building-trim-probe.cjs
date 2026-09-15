@@ -11,8 +11,8 @@ const BASE = process.env.PROBE_BASE || 'http://127.0.0.1:3001';
 const OUT = process.env.PROBE_OUT || path.join(process.cwd(), 'probe-trim');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const clickStyle = name => `[...document.querySelectorAll('.bstyle__item')]
-  .find(b => new RegExp(${JSON.stringify(name)}).test(b.textContent))?.click()`;
+const { listStyles, pickStyle } = require('./building-probe-style.cjs');
+const clickStyle = name => pickStyle(name);
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1500, height: 950, show: true });
@@ -49,7 +49,7 @@ app.whenReady().then(async () => {
     `JSON.stringify([...document.querySelectorAll('.buildinggen__node')].map(b => b.textContent.trim()))`));
 
   console.log('styles:', await js(
-    `JSON.stringify([...document.querySelectorAll('.bstyle__item')].map(b => b.textContent.trim()))`));
+    listStyles));
 
   await js(`document.querySelector('.buildinggen__tab:nth-child(2)')?.click()`);
   await sleep(600);

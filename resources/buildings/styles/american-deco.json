@@ -1,0 +1,100 @@
+{
+  "format": 1,
+  "id": "american-deco",
+  "name": "American Deco",
+  "category": "Modern",
+  "blurb": "A setback tower in stone and steel, crowned with a parapet.",
+  "teach": "The stepped silhouette is not a style choice, it is a zoning law: New York's 1916 ordinance forced towers to step back from the street as they rose, and the look followed. So the whole shape comes from the Mass profile set to Setback, stepping every four storeys. The string course is set to the same interval, which is what puts a band exactly where each step happens rather than somewhere near it.",
+  "palette": {
+    "wall": "#b8ada0",
+    "trim": "#8f8578",
+    "roof": "#4c4a46",
+    "opening": "#22262b",
+    "door": "#7a6a4a",
+    "accent": "#c9a227"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "setback",
+        "join": "miter"
+      },
+      "props": {
+        "levelCount": 14,
+        "groundHeight": 5,
+        "levelHeight": 3.3,
+        "step": 0.9,
+        "every": 4,
+        "cornerRadius": 0
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "all",
+        "opening": "window"
+      },
+      "props": {
+        "bayWidth": 2.4,
+        "windowWidth": 1.15,
+        "pierWidth": 0.65,
+        "sillHeight": 0.8,
+        "lintelHeight": 0.4
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "ground",
+        "opening": "shopfront"
+      },
+      "props": {
+        "bayWidth": 3.2,
+        "windowWidth": 2.1,
+        "pierWidth": 0.4,
+        "groundSillHeight": 0.1,
+        "doorWidth": 2,
+        "doorHeight": 4
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "flat"
+      },
+      "props": {}
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "parapet"
+      },
+      "props": {
+        "projection": 0.3,
+        "depth": 1.4
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "string"
+      },
+      "props": {
+        "projection": 0.18,
+        "depth": 0.35,
+        "every": 4
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "plinth"
+      },
+      "props": {
+        "projection": 0.25,
+        "depth": 1
+      }
+    }
+  ]
+}

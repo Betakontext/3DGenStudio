@@ -1,0 +1,93 @@
+{
+  "format": 1,
+  "id": "asian-pagoda",
+  "name": "Asian Pagoda",
+  "category": "Traditional",
+  "blurb": "Battered timber storeys under two stacked tiers of deep-eaved roof.",
+  "teach": "Two Tiered Roof stages chained: the first is capped in height so it ends on a deck, and the second starts from that deck instead of replacing it. Chain a third and it keeps going. The tiers crown the building rather than covering every storey - a roof caps the whole massing, not each floor - so the lower eaves are a String course with its projection pushed out to half a metre, which is what reads as shelter at every level. The Mass carries a batter so each storey is smaller than the one below.",
+  "palette": {
+    "wall": "#e0d3bc",
+    "trim": "#7d3b2e",
+    "roof": "#3f4a52",
+    "opening": "#2f2a22",
+    "door": "#8a3f2c",
+    "accent": "#c9a227"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "batter",
+        "join": "miter"
+      },
+      "props": {
+        "levelCount": 4,
+        "groundHeight": 3.8,
+        "levelHeight": 3,
+        "amount": 1.1,
+        "cornerRadius": 0
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "all",
+        "opening": "louvre"
+      },
+      "props": {
+        "bayWidth": 1.9,
+        "windowWidth": 1.25,
+        "pierWidth": 0.35,
+        "sillHeight": 0.7,
+        "lintelHeight": 0.5,
+        "groundSillHeight": 0.7,
+        "doorWidth": 1.35,
+        "doorHeight": 2.6
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "tiered"
+      },
+      "props": {
+        "stepRun": 1.0,
+        "stepRise": 0.7,
+        "overhang": 0.8,
+        "maxHeight": 1.4
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "tiered"
+      },
+      "props": {
+        "stepRun": 0.85,
+        "stepRise": 0.8,
+        "overhang": 0.6
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "string"
+      },
+      "props": {
+        "projection": 0.5,
+        "depth": 0.28,
+        "every": 1
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "plinth"
+      },
+      "props": {
+        "projection": 0.6,
+        "depth": 0.5
+      }
+    }
+  ]
+}
