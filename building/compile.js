@@ -32,13 +32,14 @@ import { getNodeDef, readMode, readProp } from './catalog.js';
 import { CODE, createDiagnostics, fix, metres } from './diagnostics.js';
 import {
   BUILDING_IR_FORMAT, LEVEL_KIND, createBuildingIr, createPolygonTable,
-  makeLevel, makeRoofRung, makeSlot, makeSolid,
+  makeLevel, makeMaterial, makeRoofRung, makeSlot, makeSolid,
 } from './ir.js';
 import { JOIN } from './clip.js';
 import { MASS_PROFILE, stackMass, topOfStack } from './mass.js';
 import { ROOF_KIND, generateRoof, roofIsCapped, roofTop, stackRoofs } from './roof.js';
 import { MAX_SLOTS, generateFacade } from './facade.js';
 import { isFlatCurve } from './param.js';
+import { PALETTE_SLOTS, paletteOf } from './stylepack.js';
 import { normalizeBuildingDoc } from './doc.js';
 import { normalizePolygon, polygonArea, validateRing } from './poly.js';
 
@@ -248,6 +249,14 @@ export function compileBuilding(document) {
 
   ir.polygons = polygons.all();
   ir.solids = [makeSolid({ levels: levelIndices, name: doc.name || 'building' })];
+
+  // The palette travels into the IR as material slots, ALWAYS - defaulted when
+  // no style has been applied - so a consumer never has to know whether this
+  // building has a style and never has to carry its own fallback colours.
+  const palette = paletteOf(doc);
+  for (const slot of PALETTE_SLOTS) {
+    ir.materials.push(makeMaterial({ slot, color: palette[slot] }));
+  }
 
   // References travel into the IR so a consumer resolves textures through one
   // table - invariant 3 in doc.js - rather than hunting through nodes.

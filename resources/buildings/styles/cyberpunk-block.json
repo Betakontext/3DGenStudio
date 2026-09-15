@@ -1,0 +1,83 @@
+{
+  "format": 1,
+  "id": "cyberpunk-block",
+  "name": "Cyberpunk Block",
+  "category": "Future",
+  "blurb": "A stacked residential tower: dense glazing, setbacks, a flat plant deck.",
+  "teach": "The look is density, not decoration. Narrow bays with almost no pier read as a continuous glass grid; the setbacks every three floors give the stacked silhouette; the ground floor is a shopfront and the top is a louvred plant deck. Raise the storey count and it keeps working - that is what the integer bay snapping is for.",
+  "palette": {
+    "wall": "#2b3038",
+    "trim": "#434b57",
+    "roof": "#1e2228",
+    "opening": "#17313a",
+    "door": "#2ee6d6",
+    "accent": "#2ee6d6"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "setback",
+        "join": "round"
+      },
+      "props": {
+        "levelCount": 9,
+        "groundHeight": 4.5,
+        "levelHeight": 3.1,
+        "step": 0.6,
+        "every": 3,
+        "cornerRadius": 0.5
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "all",
+        "opening": "window"
+      },
+      "props": {
+        "bayWidth": 2.2,
+        "windowWidth": 1.6,
+        "pierWidth": 0.2,
+        "sillHeight": 0.45,
+        "lintelHeight": 0.2
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "ground",
+        "opening": "shopfront"
+      },
+      "props": {
+        "bayWidth": 3.2,
+        "windowWidth": 2.6,
+        "pierWidth": 0.3,
+        "groundSillHeight": 0.1,
+        "doorWidth": 2,
+        "doorHeight": 3
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "top",
+        "opening": "louvre"
+      },
+      "props": {
+        "bayWidth": 1.6,
+        "windowWidth": 1.0,
+        "pierWidth": 0.25,
+        "sillHeight": 0.3,
+        "lintelHeight": 0.3
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "flat"
+      },
+      "props": {}
+    }
+  ]
+}

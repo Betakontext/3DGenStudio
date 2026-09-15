@@ -24,6 +24,12 @@ import {
   PRESET_ID_PATTERN,
   PRESET_ASSET_FILE_PATTERN,
 } from './vfx/preset.js';
+import {
+  STYLE_PACK_ID_PATTERN,
+  normalizeStylePack,
+  stylePackSummary,
+  validateStylePack,
+} from './building/stylepack.js';
 import { mountMcp } from './mcp/http.js';
 import { mountLogs } from './logs.js';
 import { moveGlbPivot, PIVOT_MODES } from './meshPivot.js';
@@ -1509,6 +1515,92 @@ app.post('/api/vfx/preset-assets', requireVfxAuthor, async (req, res) => {
     res.status(500).json({ error: err.message || 'Failed to add the asset' });
   }
 });
+
+// --- building style packs ---------------------------------------------------
+//
+// Shipped style packs, as FILES, on the same terms as the VFX preset library:
+// the directory is the index, there is no manifest to fall out of step, and the
+// category is a field rather than a folder.
+//
+// THIS IS NOT A CONTRADICTION of "there is no /api/buildings". That rule is
+// about building DOCUMENTS, which are user content and go through the existing
+// asset routes so they inherit projects, versioning, export and the gateway. A
+// style pack is shipped read-only resource content that no asset route could
+// serve, which is exactly what the VFX preset routes exist for.
+const BUILDING_STYLES_DIR = path.join(RESOURCES_DIR, 'buildings', 'styles');
+const BUILDING_STYLE_THUMBS_DIR = path.join(RESOURCES_DIR, 'buildings', 'thumbnails');
+
+const buildingStylePath = (id) => path.join(BUILDING_STYLES_DIR, `${id}.json`);
+
+// The id becomes a filename, so it is matched against the pattern rather than
+// escaped - `..%2f..%2fetc` is a path, not an id.
+function readBuildingStyleId(req, res) {
+  const id = String(req.params.id || '');
+  if (!STYLE_PACK_ID_PATTERN.test(id)) {
+    res.status(400).json({ error: 'Invalid style pack id.' });
+    return null;
+  }
+  return id;
+}
+
+async function readBuildingStylePack(id) {
+  const raw = await fs.readFile(buildingStylePath(id), 'utf8');
+  const pack = normalizeStylePack(JSON.parse(raw));
+  // The id is the FILENAME, always. A pack whose body disagrees with its file
+  // name would be unaddressable through this route.
+  pack.id = id;
+  pack.hasThumbnail = existsSync(path.join(BUILDING_STYLE_THUMBS_DIR, `${id}.png`));
+  return pack;
+}
+
+app.get('/api/buildings/styles', async (req, res) => {
+  try {
+    const entries = await fs.readdir(BUILDING_STYLES_DIR).catch(() => []);
+    const ids = entries
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => name.slice(0, -5))
+      .filter((id) => STYLE_PACK_ID_PATTERN.test(id));
+    const styles = [];
+    for (const id of ids) {
+      try {
+        const pack = await readBuildingStylePack(id);
+        // ONE BAD PACK MUST NOT EMPTY THE LIBRARY - the same rule the VFX preset
+        // listing follows, for the same reason: a stray comma in one
+        // hand-edited file would otherwise read as "the styles are gone".
+        const problems = validateStylePack(pack);
+        if (problems.length) {
+          console.error(`Skipping invalid building style "${id}": ${problems[0]}`);
+          continue;
+        }
+        styles.push({ ...stylePackSummary(pack), hasThumbnail: pack.hasThumbnail });
+      } catch (err) {
+        console.error(`Skipping unreadable building style "${id}":`, err.message);
+      }
+    }
+    res.json({ styles });
+  } catch (err) {
+    console.error('Failed to list building styles:', err);
+    res.status(500).json({ error: err.message || 'Failed to list building styles' });
+  }
+});
+
+app.get('/api/buildings/styles/:id', async (req, res) => {
+  const id = readBuildingStyleId(req, res);
+  if (!id) return;
+  try {
+    const pack = await readBuildingStylePack(id);
+    const problems = validateStylePack(pack);
+    // Reported rather than swallowed: the pack is shipped content, so a problem
+    // here is a bug in the app and the author needs to see which field.
+    if (problems.length) return res.status(500).json({ error: problems[0], problems });
+    res.json({ style: pack });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'No such style pack.' });
+    console.error(`Failed to read building style "${id}":`, err);
+    res.status(500).json({ error: err.message || 'Failed to read the style pack' });
+  }
+});
+
 
 const INITIAL_SCHEMA = {
   projects: [

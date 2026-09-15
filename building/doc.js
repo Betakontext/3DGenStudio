@@ -114,7 +114,9 @@ export function createBuildingDoc(overrides = {}) {
     kind: BUILDING_DOC_KIND,
     name: 'Untitled Building',
     savedAt: 0,
-    building: { seed: 12345, units: BUILDING_UNITS, stylePackId: null, overrides: {} },
+    building: {
+      seed: 12345, units: BUILDING_UNITS, stylePackId: null, style: null, overrides: {},
+    },
     nodes: [],
     edges: [],
     exposed: {},
@@ -122,6 +124,28 @@ export function createBuildingDoc(overrides = {}) {
     layout: { nodes: {}, notes: [] },
     ...overrides,
   });
+}
+
+const STYLE_HEX = /^#[0-9a-f]{6}$/i;
+
+/**
+ * The style snapshot a document carries: a name and up to six colours.
+ *
+ * Unknown keys are DROPPED rather than kept. The snapshot is compared by
+ * buildingSignature to decide whether to recompile, so a stray key from a
+ * hand-edited file would make an unchanged building recompile forever.
+ */
+function normalizeStyleSnapshot(style) {
+  if (!isObject(style)) return null;
+  const palette = {};
+  if (isObject(style.palette)) {
+    for (const [slot, value] of Object.entries(style.palette)) {
+      if (typeof value === 'string' && STYLE_HEX.test(value)) palette[slot] = value.toLowerCase();
+    }
+  }
+  const name = toSafeString(style.name, '');
+  if (!name && !Object.keys(palette).length) return null;
+  return { name, palette };
 }
 
 function normalizeReferenceEntry(entry) {
@@ -276,6 +300,12 @@ export function normalizeBuildingDoc(input) {
       seed: toUint32(building.seed, 12345),
       units: BUILDING_UNITS,
       stylePackId: typeof building.stylePackId === 'string' ? building.stylePackId : null,
+      // A SNAPSHOT of the style that was applied, not a link to it. See
+      // stylepack.js: a building saved today must render the same way after the
+      // shipped pack is revised or removed, so the colours travel in the
+      // document. Normalised here rather than by importing stylepack.js, which
+      // imports this file.
+      style: normalizeStyleSnapshot(building.style),
       overrides: isObject(building.overrides) ? { ...building.overrides } : {},
     },
     nodes: uniqueNodes,

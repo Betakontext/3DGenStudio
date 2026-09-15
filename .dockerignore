@@ -86,6 +86,8 @@ resources/
 # of resources/ is animation GLBs, preview videos and Python wheels that only a
 # desktop install uses.
 !resources/vfx/
+# ...and the building style packs, read by /api/buildings/styles.
+!resources/buildings/
 tools/
 setup/
 dist/

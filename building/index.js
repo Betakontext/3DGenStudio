@@ -96,6 +96,23 @@ export {
 export { MAX_SLOTS, generateFacade } from './facade.js';
 
 export {
+  DEFAULT_PALETTE,
+  PALETTE_SLOTS,
+  RESERVED_STAGES,
+  STYLE_PACK_FORMAT,
+  STYLE_PACK_ID_PATTERN,
+  VOCABULARY_KIND,
+  VOCABULARY_SLOTS,
+  applyStylePack,
+  createStylePack,
+  normalizeStylePack,
+  packAssetNeeds,
+  paletteOf,
+  stylePackSummary,
+  validateStylePack,
+} from './stylepack.js';
+
+export {
   MAX_REPEAT,
   MIN_CELL,
   SIZE,
@@ -138,6 +155,7 @@ export {
   flattenRing,
   irDigest,
   makeLevel,
+  makeMaterial,
   makeRoofRung,
   makeSlot,
   makeSolid,

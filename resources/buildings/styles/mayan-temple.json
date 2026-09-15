@@ -1,0 +1,68 @@
+{
+  "format": 1,
+  "id": "mayan-temple",
+  "name": "Mayan Temple",
+  "category": "Ancient",
+  "blurb": "A stepped limestone platform carrying a small shrine.",
+  "teach": "A ziggurat is the Mass node's Setback profile with a step on every level, and the platform on top is a Stepped roof - the same offset walk, continued. The shrine is a second Roof node stacked on the platform's top tread, which is why the first one carries a height cap: a roof that closes to a ridge leaves nothing to build on.",
+  "palette": {
+    "wall": "#b9b3a1",
+    "trim": "#a09a88",
+    "roof": "#7d8a6a",
+    "opening": "#2b2b24",
+    "door": "#4a4436",
+    "accent": "#6e7a5c"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "setback",
+        "join": "miter"
+      },
+      "props": {
+        "levelCount": 4,
+        "groundHeight": 3.2,
+        "levelHeight": 2.6,
+        "step": 0.6,
+        "every": 1,
+        "cornerRadius": 0
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "top",
+        "opening": "arch"
+      },
+      "props": {
+        "bayWidth": 3,
+        "windowWidth": 1.2,
+        "pierWidth": 1,
+        "sillHeight": 0.8,
+        "lintelHeight": 0.5,
+        "placeDoor": false
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "stepped"
+      },
+      "props": {
+        "stepRun": 0.8,
+        "stepRise": 0.9,
+        "maxHeight": 1.8
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "hip"
+      },
+      "props": {
+        "pitch": 52
+      }
+    }
+  ]
+}

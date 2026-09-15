@@ -25,7 +25,7 @@ import ViewGizmo from '../meshEditor/ViewGizmo'
 import { FRAME_EYE_OFFSET, framedOrthoZoom } from '../../utils/cameraFraming'
 import {
   buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildSlotInstances,
-  buildingBounds,
+  buildingBounds, irPalette,
 } from '../../utils/building/mesh'
 
 /**
@@ -181,11 +181,16 @@ export default function BuildingViewport({
   // visible box where a thousand windows should be. Constructing the object and
   // handing it over with <primitive> makes the upload explicit and the disposal
   // obvious, which matters here: a drag rebuilds this list every frame.
+  // The style pack's colours, or the neutral defaults when no style is applied.
+  // Read from the IR rather than from the document so the preview cannot show a
+  // palette the compiler did not actually use.
+  const palette = useMemo(() => irPalette(ir), [ir])
+
   const slotMeshes = useMemo(() => slots.map(group => {
     const material = new THREE.MeshStandardMaterial({
-      // Doors read warmer than windows purely so the front of the building is
-      // findable at a glance while the style packs do not exist yet.
-      color: group.type === 'door' ? '#7a6248' : '#2f3a44',
+      // Doors read warmer than windows in every default palette, purely so the
+      // front of the building is findable at a glance.
+      color: group.type === 'door' ? palette.door : palette.opening,
       roughness: 0.4,
       metalness: 0.1,
     })
@@ -198,7 +203,7 @@ export default function BuildingViewport({
     // building's own origin left the frustum.
     mesh.frustumCulled = false
     return mesh
-  }), [slots])
+  }), [slots, palette.door, palette.opening])
 
   const slotsRef = useRef(slotMeshes)
   useEffect(() => {
@@ -295,11 +300,10 @@ export default function BuildingViewport({
       <group position={viewOffset}>
       {geometry && (
         <mesh geometry={geometry}>
-          {/* Flat-ish and pale on purpose. Until style packs land in Phase 4
-              there is no material to show, and a neutral surface is the one that
-              makes a setback or a batter readable as geometry rather than as
-              shading. */}
-          <meshStandardMaterial color="#c9cdd4" roughness={0.85} metalness={0.0} />
+          {/* The style pack's wall colour, or a neutral grey when there is no
+              style: a flat pale surface is the one that makes a setback or a
+              batter readable as geometry rather than as shading. */}
+          <meshStandardMaterial color={palette.wall} roughness={0.85} metalness={0.0} />
         </mesh>
       )}
 
@@ -309,7 +313,7 @@ export default function BuildingViewport({
           what tells you whether the roof is the shape you asked for. */}
       {roofGeometry && (
         <mesh geometry={roofGeometry}>
-          <meshStandardMaterial color="#8e7a6b" roughness={0.9} metalness={0} />
+          <meshStandardMaterial color={palette.roof} roughness={0.9} metalness={0} />
         </mesh>
       )}
 
@@ -324,7 +328,7 @@ export default function BuildingViewport({
           shading alone hides it at most camera angles. */}
       {showOutlines && outlines && (
         <lineSegments geometry={outlines}>
-          <lineBasicMaterial color="#6d7480" transparent opacity={0.9} />
+          <lineBasicMaterial color={palette.accent} transparent opacity={0.9} />
         </lineSegments>
       )}
       </group>

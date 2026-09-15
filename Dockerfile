@@ -90,6 +90,8 @@ COPY --chown=node:node src/utils/vfx ./src/utils/vfx
 COPY --chown=node:node wiki ./wiki
 # The VFX starter-effect library, served read-only from /api/vfx/presets.
 COPY --chown=node:node resources/vfx ./resources/vfx
+# The building style packs, served read-only from /api/buildings/styles.
+COPY --chown=node:node resources/buildings ./resources/buildings
 # The Unity importer, offered alongside an exported VFX bundle. Named
 # precisely: plugins/unity also holds the Phase 0 spikes and the packaging
 # tool, which are development artifacts with no place in a server image.

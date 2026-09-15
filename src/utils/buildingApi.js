@@ -192,3 +192,39 @@ export async function saveBuildingAsset({ name, doc, thumbnail = null, assetId =
   }
   return payload
 }
+
+// --- style packs -------------------------------------------------------------
+//
+// Shipped resource content, NOT assets, so these two do not go through the asset
+// routes the rest of this file wraps. See the route definitions in server.js for
+// why that is not a contradiction of the "no /api/buildings" rule above.
+
+/**
+ * Every shipped style pack, as summaries.
+ *
+ * NULL AND [] MEAN DIFFERENT THINGS, and collapsing them is a mistake worth not
+ * repeating: `null` is "could not reach the style library" - almost always a
+ * server that has not been restarted since the route was added - and `[]` is
+ * "the library is genuinely empty". A picker that renders nothing in both cases
+ * looks identical to a feature that was never built.
+ *
+ * Never throws either way: a style picker that explodes takes the page with it.
+ */
+export async function fetchStylePacks() {
+  try {
+    const response = await fetch(`${API_BASE}/buildings/styles`)
+    if (!response.ok) return null
+    const payload = await response.json()
+    return Array.isArray(payload?.styles) ? payload.styles : null
+  } catch {
+    return null
+  }
+}
+
+/** One pack in full - the graph recipe, which the summaries omit. */
+export async function fetchStylePack(id) {
+  const response = await fetch(`${API_BASE}/buildings/styles/${encodeURIComponent(id)}`)
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not load the style pack')
+  return payload.style
+}

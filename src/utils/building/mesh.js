@@ -521,3 +521,22 @@ export function buildSlotInstances(ir) {
   }
   return out
 }
+
+/**
+ * The palette, as a slot -> colour map the renderer can index directly.
+ *
+ * The compiler always emits every slot - see compile.js - so this needs no
+ * defaults of its own, and a component that reads it never has to know whether
+ * a style pack has been applied. The fallback here covers only an IR from
+ * before materials existed.
+ */
+export function irPalette(ir) {
+  const out = {
+    wall: '#c9cdd4', trim: '#b4b9c2', roof: '#8e7a6b',
+    opening: '#2f3a44', door: '#7a6248', accent: '#6d7480',
+  }
+  for (const material of ir?.materials || []) {
+    if (material?.slot && material.color) out[material.slot] = material.color
+  }
+  return out
+}

@@ -24,6 +24,7 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import BuildingViewport from '../components/building/BuildingViewport'
+import BuildingStylePanel from '../components/building/BuildingStylePanel'
 import BuildingPlanEditor from '../components/building/BuildingPlanEditor'
 import BuildingInspector from '../components/building/BuildingInspector'
 import useBuildingDocument from '../hooks/useBuildingDocument'
@@ -194,6 +195,15 @@ export default function BuildingGenPage() {
     commit(current => applyFix(current, fixDescriptor), { undoLabel: fixDescriptor.label })
   }, [commit])
 
+  // A style arrives as a whole replacement document, already computed by the
+  // panel, so this commits it rather than recomputing it - applyStylePack needs
+  // the fetched pack and this page has no business fetching one.
+  const onApplyStyle = useCallback((next, label) => {
+    commit(() => next, { undoLabel: `Apply ${label}` })
+    setSelectedId(null)
+    setMessage({ tone: 'ok', text: `${label} applied. Undo restores the previous graph.` })
+  }, [commit])
+
   // --- save ----------------------------------------------------------------
 
   const handleSave = useCallback(async ({ forkNew = false } = {}) => {
@@ -298,6 +308,14 @@ export default function BuildingGenPage() {
               </button>
             </div>
           </label>
+
+          {/* Above the node list, because picking a style REPLACES that list -
+              reading them the other way round would suggest the opposite. */}
+          <BuildingStylePanel
+            doc={doc}
+            activeId={doc.building.stylePackId}
+            onApply={onApplyStyle}
+          />
 
           <h2 className="buildinggen__title">Nodes</h2>
           <ul className="buildinggen__nodes">

@@ -1,0 +1,55 @@
+{
+  "format": 1,
+  "id": "egyptian-pylon",
+  "name": "Egyptian Pylon",
+  "category": "Ancient",
+  "blurb": "Battered sandstone walls, one great doorway, a flat crowned top.",
+  "teach": "The whole style is the batter: walls that lean inward as they rise. Nothing else about the building is unusual, which is the point - it uses the same Mass node as a glass tower, with the profile set to Batter. Openings are rare and enormous; the door is the composition.",
+  "palette": {
+    "wall": "#d8c08a",
+    "trim": "#c2a46a",
+    "roof": "#b99a5e",
+    "opening": "#2a2018",
+    "door": "#4a3a22",
+    "accent": "#8e7440"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "batter",
+        "join": "miter"
+      },
+      "props": {
+        "levelCount": 3,
+        "groundHeight": 5.5,
+        "levelHeight": 4.5,
+        "amount": 1.8,
+        "cornerRadius": 0
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "ground",
+        "opening": "window"
+      },
+      "props": {
+        "bayWidth": 5.5,
+        "windowWidth": 0.9,
+        "pierWidth": 1.8,
+        "groundSillHeight": 2.4,
+        "doorWidth": 3.2,
+        "doorHeight": 5,
+        "includeCourtyards": false
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "flat"
+      },
+      "props": {}
+    }
+  ]
+}

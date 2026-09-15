@@ -1,0 +1,106 @@
+.bstyle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bstyle__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bstyle__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--on-surface);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.bstyle__item:hover:not(:disabled) {
+  background: var(--surface-container-high);
+}
+
+.bstyle__item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bstyle__item--on {
+  border-color: var(--primary);
+  background: var(--surface-container-high);
+}
+
+.bstyle__item--on .bstyle__name {
+  color: var(--primary);
+}
+
+/* The swatch strip is the style's identity at a glance, so it reads as one
+   object rather than four dots: no gaps, one rounded outline around the set. */
+.bstyle__swatches {
+  display: flex;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+}
+
+.bstyle__swatch {
+  width: 9px;
+  height: 22px;
+}
+
+.bstyle__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bstyle__name {
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bstyle__category {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--on-surface-variant);
+}
+
+.bstyle__note,
+.bstyle__error {
+  margin: 2px 2px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--on-surface-variant);
+}
+
+.bstyle__error {
+  color: var(--error, #e5786d);
+}
+
+/* Inline code in the two "the library is not there" messages: a path or a route
+   is the actionable part of those sentences and has to be copyable by eye. */
+.bstyle__note code,
+.bstyle__error code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--surface-container-high);
+}

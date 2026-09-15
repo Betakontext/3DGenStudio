@@ -1,0 +1,69 @@
+{
+  "format": 1,
+  "id": "roman-villa",
+  "name": "Roman Villa",
+  "category": "Classical",
+  "blurb": "Low, wide and arcaded, under a shallow hipped roof.",
+  "teach": "Roman domestic architecture is horizontal: two tall storeys at most, a deep arcaded ground floor, and a shallow hip roof with a heavy eave. Draw a plan with a courtyard hole and the arcade wraps it automatically - the facade walks the inner ring too, so the openings face into the peristyle.",
+  "palette": {
+    "wall": "#ddd3c0",
+    "trim": "#c9bfa8",
+    "roof": "#9c4f34",
+    "opening": "#3a3026",
+    "door": "#6b4a2f",
+    "accent": "#b3a68c"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": {
+        "profile": "straight",
+        "join": "miter"
+      },
+      "props": {
+        "levelCount": 2,
+        "groundHeight": 4.4,
+        "levelHeight": 3.6,
+        "cornerRadius": 0
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "upper",
+        "opening": "window"
+      },
+      "props": {
+        "bayWidth": 2.8,
+        "windowWidth": 1.1,
+        "pierWidth": 0.7,
+        "sillHeight": 1.2,
+        "lintelHeight": 0.7
+      }
+    },
+    {
+      "type": "facade",
+      "modes": {
+        "storeys": "ground",
+        "opening": "arch"
+      },
+      "props": {
+        "bayWidth": 2.6,
+        "windowWidth": 1.5,
+        "pierWidth": 0.5,
+        "groundSillHeight": 0,
+        "doorWidth": 1.8,
+        "doorHeight": 3
+      }
+    },
+    {
+      "type": "roof",
+      "modes": {
+        "kind": "hip"
+      },
+      "props": {
+        "pitch": 22
+      }
+    }
+  ]
+}

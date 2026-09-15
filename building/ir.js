@@ -239,6 +239,18 @@ export function makeRoofRung({ polygons = [], z = 0 }) {
 }
 
 /**
+ * One material slot.
+ *
+ * A COLOUR AND A REFERENCE, not a shader description. The IR is consumed by the
+ * preview, by an exporter and eventually by two different engines, and none of
+ * them want this file's opinion about roughness curves. `color` is what the
+ * preview draws when `ref` is empty, which is every shipped style pack today.
+ */
+export function makeMaterial({ slot, color = '', ref = '' }) {
+  return { slot: String(slot || ''), color: String(color || ''), ref: String(ref || '') };
+}
+
+/**
  * A run of trim along an edge.
  *
  * EDGE-DRIVEN, NOT FACE-DRIVEN: a cornice follows the top edge of a wall around
