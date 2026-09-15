@@ -12,7 +12,8 @@ import { createNode } from '../../../building/catalog.js'
 import { normalizeBuildingDoc } from '../../../building/doc.js'
 import { MASS_PROFILE } from '../../../building/mass.js'
 import {
-  buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildingBounds, toThree,
+  buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildTrimGeometry,
+  buildingBounds, toThree,
 } from './mesh.js'
 
 let passed = 0
@@ -375,6 +376,148 @@ test('no roof in the IR yields no geometry rather than throwing', () => {
     assert.equal(geometry, null)
     assert.equal(triangleCount, 0)
   }
+})
+
+// --- trim and deformation ---------------------------------------------------
+
+/** The same graph, plus a chain of extra stages after the Mass. */
+function graphWith(stages, options = {}) {
+  const base = graph(options)
+  const nodes = [...base.nodes]
+  const edges = base.edges.filter(e => e.to.node !== 'out')
+  let previous = 'ms'
+  stages.forEach((stage, i) => {
+    const node = createNode(stage.type, `n${i}`)
+    Object.assign(node.props, stage.props || {})
+    Object.assign(node.modes, stage.modes || {})
+    nodes.push(node)
+    edges.push({ from: { node: previous, port: 'out' }, to: { node: node.id, port: 'building' } })
+    previous = node.id
+  })
+  edges.push({ from: { node: previous, port: 'out' }, to: { node: 'out', port: 'building' } })
+  return normalizeBuildingDoc({ ...base, nodes, edges })
+}
+
+const irOf = doc => compileBuilding(doc).ir
+
+test('a trim run is swept into real geometry', () => {
+  const ir = irOf(graphWith([{ type: 'trim', modes: { where: 'cornice' } }], { shape: SQUARE }))
+  assert.equal(ir.trims.length, 1)
+  const built = buildTrimGeometry(ir)
+  // Four corners x seven section edges x two triangles.
+  assert.equal(built.triangleCount, 56)
+  assert.ok(built.geometry.getAttribute('normal'), 'the sweep produced no normals')
+})
+
+test('the section is centred on its line and the right size', () => {
+  const ir = irOf(graphWith([
+    { type: 'trim', modes: { where: 'cornice' }, props: { projection: 0.4, depth: 0.8 } },
+  ], { shape: SQUARE, mass: { props: { levelCount: 2, groundHeight: 4, levelHeight: 3 } } }))
+  const tris = triangles(buildTrimGeometry(ir).geometry)
+  const ys = tris.flatMap(t => [t.a[1], t.b[1], t.c[1]])
+  // The cornice sits at the top of the stack, 7m up, and straddles it by half
+  // its height each way.
+  assert.ok(Math.abs(Math.min(...ys) - 6.6) < 1e-3, `bottom at ${Math.min(...ys)}`)
+  assert.ok(Math.abs(Math.max(...ys) - 7.4) < 1e-3, `top at ${Math.max(...ys)}`)
+})
+
+test('THE MITRE: a corner projects further than a wall does', () => {
+  // The whole reason trim is edge-driven. A per-face moulding stops at 0.4m from
+  // each wall and leaves a notch; a mitred one reaches 0.4/cos(45) at the corner.
+  const ir = irOf(graphWith([
+    { type: 'trim', modes: { where: 'cornice' }, props: { projection: 0.4 } },
+  ], { shape: SQUARE }))
+  const tris = triangles(buildTrimGeometry(ir).geometry)
+  // The plan is 0..10 in both axes. At the corner the section is placed along
+  // the bisector and scaled by 1/cos(45), so the corner point lands at
+  // (10.4, 10.4): the same 0.4m clear of BOTH walls as the straight runs are of
+  // one. Un-mitred it would sit at 10 + 0.4/sqrt(2) = 10.283 and leave a notch.
+  const corner = Math.max(...tris.flatMap(t => [t.a, t.b, t.c]).map(p => p[0]))
+  assert.ok(Math.abs(corner - 10.4) < 1e-3,
+    `the corner reached ${corner.toFixed(3)}, expected 10.400`)
+  assert.ok(corner > 10 + 0.4 / Math.SQRT2 + 0.05, 'the corner was not mitred')
+})
+
+test('a courtyard cornice projects INTO the courtyard', () => {
+  // Reversed, it would be buried in the masonry - the winding rule in trim.js.
+  const ir = irOf(graphWith([{ type: 'trim', modes: { where: 'cornice' } }], { shape: COURTYARD }))
+  assert.equal(ir.trims.length, 2)
+  const hole = ir.trims[1]
+  const xs = hole.path.filter((_, i) => i % 3 === 0)
+  // The hole spans x 10..20; trim around it must reach INSIDE that, not outside.
+  assert.ok(Math.min(...xs) >= 10 - 1e-6 && Math.max(...xs) <= 20 + 1e-6)
+})
+
+test('trims ACCUMULATE - a plinth and a cornice are two runs, not one', () => {
+  const ir = irOf(graphWith([
+    { type: 'trim', modes: { where: 'plinth' } },
+    { type: 'trim', modes: { where: 'cornice' } },
+  ], { shape: SQUARE }))
+  assert.deepEqual(ir.trims.map(t => t.profileId), ['plinth', 'cornice'])
+})
+
+test('no trim node means no trim geometry, and no cost', () => {
+  const built = buildTrimGeometry(irOf(graph({ shape: SQUARE })))
+  assert.equal(built.geometry, null)
+  assert.equal(built.triangleCount, 0)
+})
+
+test('a deformation moves the walls, and the descriptor rides along', () => {
+  const straight = irOf(graph({ shape: SQUARE, mass: { props: { levelCount: 3 } } }))
+  const twisted = irOf(graphWith([
+    { type: 'deform', modes: { mode: 'twist' }, props: { amount: 45 } },
+  ], { shape: SQUARE, mass: { props: { levelCount: 3 } } }))
+
+  assert.equal(straight.deform, null)
+  assert.equal(twisted.deform.mode, 'twist')
+
+  const a = buildBuildingGeometry(straight)
+  const b = buildBuildingGeometry(twisted)
+  assert.equal(a.triangleCount, b.triangleCount, 'the warp changed the topology')
+
+  const top = g => Math.max(...triangles(g.geometry).flatMap(t => [t.a, t.b, t.c]).map(p => p[0]))
+  assert.ok(top(b) > top(a) + 0.5, 'the twisted building is no wider than the straight one')
+})
+
+test('a twisted wall is lit by its own direction, not the undeformed one', () => {
+  // The silent failure: positions warped, normals left behind, so the building
+  // looks right until it is shaded.
+  const ir = irOf(graphWith([
+    { type: 'deform', modes: { mode: 'twist' }, props: { amount: 60 } },
+  ], { shape: SQUARE, mass: { props: { levelCount: 4 } } }))
+  const tris = triangles(buildBuildingGeometry(ir).geometry)
+
+  // Seeded above 1, not at 0: a running minimum started at 0 can never rise, so
+  // the assertion below would fail on correct geometry and report 90 degrees.
+  let worst = 2
+  for (const t of tris) {
+    const ux = t.b[0] - t.a[0], uy = t.b[1] - t.a[1], uz = t.b[2] - t.a[2]
+    const vx = t.c[0] - t.a[0], vy = t.c[1] - t.a[1], vz = t.c[2] - t.a[2]
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
+    const length = Math.hypot(nx, ny, nz)
+    if (length < 1e-9) continue
+    const dot = (nx / length) * t.normal[0] + (ny / length) * t.normal[1]
+      + (nz / length) * t.normal[2]
+    worst = Math.min(worst, dot)
+  }
+  assert.ok(worst > 0.999, `a face normal is ${Math.acos(worst) * 57.3}deg off its own triangle`)
+})
+
+test('an undeformed building takes the identity path, byte for byte', () => {
+  // The warp must cost nothing when there is none: buildBuildingGeometry asks
+  // for the placer by identity to decide whether to re-derive normals at all.
+  const doc = graph({ shape: COURTYARD, mass: { modes: { profile: MASS_PROFILE.SETBACK } } })
+  const a = buildBuildingGeometry(irOf(doc)).geometry.getAttribute('position').array
+  const b = buildBuildingGeometry(irOf(doc)).geometry.getAttribute('position').array
+  assert.deepEqual(Array.from(a), Array.from(b))
+})
+
+test('the camera bounds follow a leaning building', () => {
+  const upright = buildingBounds(irOf(graph({ shape: SQUARE, mass: { props: { levelCount: 4 } } })))
+  const leaning = buildingBounds(irOf(graphWith([
+    { type: 'deform', modes: { mode: 'lean' }, props: { amount: 6, axis: 0 } },
+  ], { shape: SQUARE, mass: { props: { levelCount: 4 } } })))
+  assert.ok(leaning.max.x > upright.max.x + 5, 'a leaning building would frame off-centre')
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

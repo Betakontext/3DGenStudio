@@ -215,7 +215,14 @@ export async function fetchStylePacks() {
     const response = await fetch(`${API_BASE}/buildings/styles`)
     if (!response.ok) return null
     const payload = await response.json()
-    return Array.isArray(payload?.styles) ? payload.styles : null
+    if (!Array.isArray(payload?.styles)) return null
+    // `skipped` carries the packs the server refused and why. Without it an
+    // all-rejected library is indistinguishable from an empty one, and those
+    // two need opposite fixes.
+    return {
+      styles: payload.styles,
+      skipped: Array.isArray(payload.skipped) ? payload.skipped : [],
+    }
   } catch {
     return null
   }

@@ -65,6 +65,12 @@ function testDoc() {
   });
 }
 
+/** The deform mode a document ended up with, for the summary line. */
+function deformOf(doc) {
+  const node = doc.nodes.find(n => n.type === 'deform');
+  return node && node.modes.mode !== 'none' ? node.modes.mode : '';
+}
+
 const files = fs.existsSync(STYLES_DIR)
   ? fs.readdirSync(STYLES_DIR).filter(name => name.endsWith('.json')).sort()
   : [];
@@ -139,9 +145,19 @@ for (const file of files) {
     stats,
   });
 
+  // A pack that declares trim stages and produces no runs has a settings bug -
+  // a string course on a one-storey building, say - and the result looks merely
+  // plain rather than wrong, so nothing else would catch it.
+  if ((pack.graph || []).some(stage => stage.type === 'trim')) {
+    check(stats.trimCount > 0, 'the trim stages it declares produce runs');
+  }
+
   console.log(`  ->    ${stats.storeyCount} storeys, ${stats.height.toFixed(1)}m`
     + `${stats.roofHeight > 0 ? ` + ${stats.roofHeight.toFixed(1)}m roof` : ', flat'}`
-    + `, ${stats.slotCount} openings\n`);
+    + `, ${stats.slotCount} openings`
+    + `${stats.trimCount ? `, ${stats.trimCount} trim (${stats.trimLength.toFixed(0)}m)` : ''}`
+    + `${deformOf(doc) ? `, ${deformOf(doc)}` : ''}`);
+  console.log('');
 }
 
 // --- the part that makes the rest mean something -----------------------------

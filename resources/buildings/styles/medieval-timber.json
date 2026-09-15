@@ -1,0 +1,53 @@
+{
+  "format": 1,
+  "id": "medieval-timber",
+  "name": "Medieval Timber",
+  "category": "Historic",
+  "blurb": "Jettied upper floors on a narrow plot, settled out of true.",
+  "teach": "Two ideas carry the whole style. The Mass profile is set to Jetty, so every storey oversails the one below - that is why a medieval street narrows as it rises. Then a Deform set to Sag racks the frame: corners settle and floors droop, more the higher you go, seeded from the document so it is the same crooked building every time. The string courses are the bressummer beams that carry each jetty.",
+  "palette": {
+    "wall": "#e4dcc8",
+    "trim": "#4a3826",
+    "roof": "#5c4433",
+    "opening": "#2a2018",
+    "door": "#3d2c1c",
+    "accent": "#6b5540"
+  },
+  "graph": [
+    {
+      "type": "mass",
+      "modes": { "profile": "jetty", "join": "miter" },
+      "props": { "levelCount": 4, "groundHeight": 3.2, "levelHeight": 2.5, "amount": 1.1, "cornerRadius": 0 }
+    },
+    {
+      "type": "facade",
+      "modes": { "storeys": "upper", "opening": "window" },
+      "props": { "bayWidth": 2.1, "windowWidth": 1, "pierWidth": 0.5, "sillHeight": 0.85, "lintelHeight": 0.35 }
+    },
+    {
+      "type": "facade",
+      "modes": { "storeys": "ground", "opening": "shopfront" },
+      "props": { "bayWidth": 2.6, "windowWidth": 1.7, "pierWidth": 0.4, "groundSillHeight": 0.5, "doorWidth": 1, "doorHeight": 2 }
+    },
+    {
+      "type": "roof",
+      "modes": { "kind": "hip" },
+      "props": { "pitch": 58 }
+    },
+    {
+      "type": "trim",
+      "modes": { "where": "string" },
+      "props": { "projection": 0.16, "depth": 0.3, "every": 1 }
+    },
+    {
+      "type": "trim",
+      "modes": { "where": "plinth" },
+      "props": { "projection": 0.14, "depth": 0.45 }
+    },
+    {
+      "type": "deform",
+      "modes": { "mode": "sag" },
+      "props": { "amount": 0.34 }
+    }
+  ]
+}

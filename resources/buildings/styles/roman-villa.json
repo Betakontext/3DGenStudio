@@ -64,6 +64,26 @@
       "props": {
         "pitch": 22
       }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "plinth"
+      },
+      "props": {
+        "projection": 0.3,
+        "depth": 0.6
+      }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "cornice"
+      },
+      "props": {
+        "projection": 0.55,
+        "depth": 0.7
+      }
     }
   ]
 }

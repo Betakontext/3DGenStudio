@@ -6,7 +6,10 @@
 
 import assert from 'node:assert/strict'
 import { compileBuilding } from '../../../building/compile.js'
-import { createBuildingDoc } from '../../../building/doc.js'
+import {
+  createBuildingDoc, parseBuildingDoc, serializeBuildingDoc,
+} from '../../../building/doc.js'
+import { irDigest } from '../../../building/ir.js'
 import {
   ensureStarterGraph, insertNodeAfter, orderedNodes, removeNode, setNodeMode,
   setNodeProp,
@@ -258,6 +261,85 @@ test('a roof on top of one that closed to a ridge is refused, not mangled', () =
 
   assert.deepEqual(ir.roof, before, 'the second roof changed the first')
   assert.ok(diagnostics.some(d => d.code === 'W_ROOF_ON_RIDGE'))
+})
+
+// --- trim and deform in the chain -------------------------------------------
+
+test('a parapet on a pitched roof is reported, not silently drawn along the ridge', () => {
+  // "I added a parapet and got a spine" is exactly the kind of result nobody can
+  // explain from the picture alone.
+  let doc = starter()
+  doc = insertNodeAfter(doc, idOf(doc, 'roof'), 'trim')
+  doc = setNodeMode(doc, idOf(doc, 'trim'), 'where', 'parapet')
+  assert.ok(compileBuilding(doc).diagnostics.some(d => d.code === 'W_PARAPET_ON_PITCH'))
+
+  // On a flat roof there is a real deck to stand on, so nothing is said.
+  doc = setNodeMode(doc, idOf(doc, 'roof'), 'kind', 'flat')
+  assert.equal(compileBuilding(doc).diagnostics.some(d => d.code === 'W_PARAPET_ON_PITCH'), false)
+})
+
+test('a string course with nowhere to go says so', () => {
+  let doc = starter()
+  doc = setNodeProp(doc, idOf(doc, 'mass'), 'levelCount', 1)
+  doc = insertNodeAfter(doc, idOf(doc, 'roof'), 'trim')
+  doc = setNodeMode(doc, idOf(doc, 'trim'), 'where', 'string')
+  const result = compileBuilding(doc)
+  assert.ok(result.diagnostics.some(d => d.code === 'W_TRIM_NO_RUNS'))
+  assert.equal(result.ok, true, 'a missing band should not fail the build')
+})
+
+test('a Deform node bends the windows as well as the walls', () => {
+  // The whole reason the warp is applied centrally: slots are stored transforms,
+  // so a warp that moved the walls and not the slots would leave every window
+  // floating beside the building it belongs to.
+  let doc = starter()
+  doc = setNodeProp(doc, idOf(doc, 'mass'), 'levelCount', 5)
+  const before = compileBuilding(doc).ir
+
+  doc = insertNodeAfter(doc, idOf(doc, 'roof'), 'deform')
+  doc = setNodeMode(doc, idOf(doc, 'deform'), 'mode', 'lean')
+  doc = setNodeProp(doc, idOf(doc, 'deform'), 'amount', 5)
+  const after = compileBuilding(doc).ir
+
+  assert.equal(after.slots.length, before.slots.length, 'the warp changed the facade')
+  // The lean is proportional to HEIGHT, and a top-storey window sits at the
+  // middle of its storey rather than at the roofline - so the expected shift is
+  // 5m scaled by the window's own height over the building's, not a flat 5m.
+  const top = ir => ir.slots.filter(s => s.floorIndex === 4)
+  const height = Math.max(...after.levels.map(l => l.z1))
+  const expected = 5 * (top(before)[0].transform[14] / height)
+  const shift = top(after)[0].transform[12] - top(before)[0].transform[12]
+  assert.ok(expected > 4, `the test picked a window at ${top(before)[0].transform[14]}m`)
+  assert.ok(Math.abs(shift - expected) < 0.05,
+    `the top storey's windows moved ${shift.toFixed(2)}m, expected ${expected.toFixed(2)}m`)
+  // ...and the ground floor follows the SAME law, which is the point: a lean is
+  // continuous in height, so a window 2m up moves a little and one 15m up moves
+  // a lot. Only z = 0 exactly is pinned.
+  const ground = ir => ir.slots.filter(s => s.floorIndex === 0)
+  const groundExpected = 5 * (ground(before)[0].transform[14] / height)
+  const groundShift = ground(after)[0].transform[12] - ground(before)[0].transform[12]
+  assert.ok(Math.abs(groundShift - groundExpected) < 0.05,
+    `the ground floor moved ${groundShift.toFixed(2)}m, expected ${groundExpected.toFixed(2)}m`)
+  assert.ok(groundShift < shift / 3, 'the lean is not increasing with height')
+})
+
+test('a Deform set to None leaves the IR exactly as it was', () => {
+  let doc = starter()
+  const before = compileBuilding(doc).ir
+  doc = insertNodeAfter(doc, idOf(doc, 'roof'), 'deform')
+  doc = setNodeMode(doc, idOf(doc, 'deform'), 'mode', 'none')
+  const after = compileBuilding(doc).ir
+  assert.equal(after.deform, null)
+  assert.equal(irDigest(after), irDigest(before))
+})
+
+test('trim and deform survive a round trip through the document', () => {
+  let doc = starter()
+  doc = insertNodeAfter(doc, idOf(doc, 'roof'), 'trim')
+  doc = insertNodeAfter(doc, idOf(doc, 'trim'), 'deform')
+  doc = setNodeProp(doc, idOf(doc, 'deform'), 'amount', 25)
+  const reloaded = parseBuildingDoc(serializeBuildingDoc(doc))
+  assert.equal(irDigest(compileBuilding(reloaded).ir), irDigest(compileBuilding(doc).ir))
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

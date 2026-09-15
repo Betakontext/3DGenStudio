@@ -25,7 +25,7 @@ import ViewGizmo from '../meshEditor/ViewGizmo'
 import { FRAME_EYE_OFFSET, framedOrthoZoom } from '../../utils/cameraFraming'
 import {
   buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildSlotInstances,
-  buildingBounds, irPalette,
+  buildTrimGeometry, buildingBounds, irPalette,
 } from '../../utils/building/mesh'
 
 /**
@@ -159,14 +159,18 @@ export default function BuildingViewport({
   //
   // Switching back to Preview rebuilds once, which is what an unmounted viewport
   // did anyway - so this costs nothing and removes the whole hidden cost.
-  const { geometry, roofGeometry, outlines, box, slots } = useMemo(() => {
+  const { geometry, roofGeometry, trimGeometry, outlines, box, slots } = useMemo(() => {
     if (!active) {
-      return { geometry: null, roofGeometry: null, outlines: null, box: null, slots: [] }
+      return {
+        geometry: null, roofGeometry: null, trimGeometry: null, outlines: null,
+        box: null, slots: [],
+      }
     }
     const built = buildBuildingGeometry(ir)
     return {
       geometry: built.geometry,
       roofGeometry: buildRoofGeometry(ir).geometry,
+      trimGeometry: buildTrimGeometry(ir).geometry,
       outlines: buildLevelOutlines(ir),
       box: buildingBounds(ir),
       slots: buildSlotInstances(ir),
@@ -225,6 +229,7 @@ export default function BuildingViewport({
 
   useDisposed(geometry)
   useDisposed(roofGeometry)
+  useDisposed(trimGeometry)
   useDisposed(outlines)
 
   // THE BUILDING IS DRAWN CENTRED ON THE ORIGIN, and this is why.
@@ -314,6 +319,15 @@ export default function BuildingViewport({
       {roofGeometry && (
         <mesh geometry={roofGeometry}>
           <meshStandardMaterial color={palette.roof} roughness={0.9} metalness={0} />
+        </mesh>
+      )}
+
+      {/* Trim gets the palette's trim colour and a slightly shinier finish than
+          the wall: a cornice is the one element whose whole job is to catch the
+          light, and at the same roughness as the wall it disappears into it. */}
+      {trimGeometry && (
+        <mesh geometry={trimGeometry}>
+          <meshStandardMaterial color={palette.trim} roughness={0.6} metalness={0.05} />
         </mesh>
       )}
 

@@ -63,6 +63,17 @@
       "props": {
         "pitch": 52
       }
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "string"
+      },
+      "props": {
+        "projection": 0.22,
+        "depth": 0.35,
+        "every": 1
+      }
     }
   ]
 }

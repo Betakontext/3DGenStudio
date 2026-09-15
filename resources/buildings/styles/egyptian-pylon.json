@@ -50,6 +50,16 @@
         "kind": "flat"
       },
       "props": {}
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "cornice"
+      },
+      "props": {
+        "projection": 0.7,
+        "depth": 1.1
+      }
     }
   ]
 }

@@ -536,6 +536,135 @@ export const CATALOG = {
     },
   },
 
+  trim: {
+    type: 'trim',
+    label: 'Trim',
+    category: CATEGORY.DETAIL,
+    icon: 'horizontal_rule',
+    blurb: 'Runs a moulding along an edge.',
+    teach: 'Trim follows EDGES, not faces, which is why a cornice mitres round a '
+         + 'corner instead of leaving a notch there. One node is one run: add a '
+         + 'Plinth, a String course and a Cornice and you have most of a '
+         + 'classical elevation. Unlike a Facade, trims ACCUMULATE - a later one '
+         + 'never replaces an earlier one.',
+    inputs: [{ id: 'building', label: 'Building', kind: PORT_KIND.BUILDING, required: true }],
+    outputs: [{ id: 'out', label: 'Building', kind: PORT_KIND.BUILDING }],
+    props: {
+      projection: {
+        type: PROP_TYPE.NUMBER, label: 'Projection', default: 0.35, min: 0.01, max: 5, step: 0.05,
+        unit: 'm', basic: true,
+        hint: 'How far the moulding stands out from the wall.',
+      },
+      depth: {
+        type: PROP_TYPE.NUMBER, label: 'Height', default: 0.4, min: 0.02, max: 8, step: 0.05,
+        unit: 'm', basic: true,
+        hint: 'How tall the moulding is. A parapet grows upward from its line; '
+            + 'everything else is centred on it.',
+      },
+      every: {
+        type: PROP_TYPE.INT, label: 'Every', default: 1, min: 1, max: 20, step: 1,
+        unit: 'storeys',
+        hint: 'A band on every storey, or every second, or every third.',
+        showFor: { where: ['string'] },
+      },
+      includeHoles: {
+        type: PROP_TYPE.BOOL, label: 'Around courtyards', default: true,
+        hint: 'Run the moulding around courtyard walls as well as the outside.',
+      },
+    },
+    modes: {
+      where: {
+        label: 'Run',
+        default: 'cornice',
+        basic: true,
+        options: [
+          {
+            value: 'cornice', label: 'Cornice',
+            teach: 'The crown, at the top of the highest storey. Classical and '
+                 + 'European buildings live or die on this one.',
+          },
+          {
+            value: 'string', label: 'String course',
+            teach: 'A band between storeys. What gives a tall elevation a scale.',
+          },
+          {
+            value: 'plinth', label: 'Plinth',
+            teach: 'The base course, where the building meets the ground.',
+          },
+          {
+            value: 'eave', label: 'Eave',
+            teach: 'Where the roof meets the wall, following the roof rather than '
+                 + 'the storey - so an overhang takes it with it.',
+          },
+          {
+            value: 'parapet', label: 'Parapet',
+            teach: 'A wall standing above a flat roof. On a pitched roof there is '
+                 + 'no deck to stand on and it will follow the ridge instead.',
+          },
+        ],
+      },
+    },
+  },
+
+  deform: {
+    type: 'deform',
+    label: 'Deform',
+    category: CATEGORY.DETAIL,
+    icon: 'waves',
+    blurb: 'Bends the finished building.',
+    teach: 'Build square, then warp. The grammar snaps bays to whole numbers on '
+         + 'straight walls; doing that AND curving at the same time would cost '
+         + 'the snapping, so the bend runs afterwards and moves everything '
+         + 'together - walls, windows and trim. A storey is a solid block, so the '
+         + 'warp acts per storey: that is how twisted towers are really built, '
+         + 'and it is why Sag racks the corners rather than bowing a long wall.',
+    inputs: [{ id: 'building', label: 'Building', kind: PORT_KIND.BUILDING, required: true }],
+    outputs: [{ id: 'out', label: 'Building', kind: PORT_KIND.BUILDING }],
+    props: {
+      amount: {
+        type: PROP_TYPE.NUMBER, label: 'Amount', default: 1, min: -90, max: 90, step: 0.1,
+        basic: true,
+        hint: 'Degrees for Twist, metres for everything else. Negative reverses it.',
+      },
+      axis: {
+        type: PROP_TYPE.NUMBER, label: 'Direction', default: 0, min: 0, max: 360, step: 5,
+        unit: 'deg', basic: true,
+        hint: 'Which way it leans or bends, in plan. 0 is east.',
+        showFor: { mode: ['lean', 'bend'] },
+      },
+    },
+    modes: {
+      mode: {
+        label: 'Warp',
+        default: 'twist',
+        basic: true,
+        options: [
+          { value: 'none', label: 'None', teach: 'Leaves the building alone.' },
+          {
+            value: 'twist', label: 'Twist',
+            teach: 'Each storey rotated a little more than the one below. '
+                 + 'Amount is the total turn from bottom to top, in degrees.',
+          },
+          {
+            value: 'lean', label: 'Lean',
+            teach: 'Slides sideways with height, in a straight line. Pisa.',
+          },
+          {
+            value: 'bend', label: 'Bend',
+            teach: 'Slides sideways along a curve, so the base stays upright and '
+                 + 'the top swings out. Futurist shells and bowed walls.',
+          },
+          {
+            value: 'sag', label: 'Sag',
+            teach: 'Seeded settling: corners rack and floors droop, more the '
+                 + 'higher you go. Medieval timber and fantasy. Driven by the '
+                 + "document's seed, so it is the same building every time.",
+          },
+        ],
+      },
+    },
+  },
+
   output: {
     type: 'output',
     label: 'Output',

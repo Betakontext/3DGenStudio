@@ -32,11 +32,13 @@ import { getNodeDef, readMode, readProp } from './catalog.js';
 import { CODE, createDiagnostics, fix, metres } from './diagnostics.js';
 import {
   BUILDING_IR_FORMAT, LEVEL_KIND, createBuildingIr, createPolygonTable,
-  makeLevel, makeMaterial, makeRoofRung, makeSlot, makeSolid,
+  makeLevel, makeMaterial, makeRoofRung, makeSlot, makeSolid, makeTrim,
 } from './ir.js';
 import { JOIN } from './clip.js';
 import { MASS_PROFILE, stackMass, topOfStack } from './mass.js';
 import { ROOF_KIND, generateRoof, roofIsCapped, roofTop, stackRoofs } from './roof.js';
+import { MAX_TRIM_RUNS, TRIM_WHERE, generateTrim } from './trim.js';
+import { DEFORM_MODE, makeDeform, makeWarp, warpPath, warpTransform } from './deform.js';
 import { MAX_SLOTS, generateFacade } from './facade.js';
 import { isFlatCurve } from './param.js';
 import { PALETTE_SLOTS, paletteOf } from './stylepack.js';
@@ -229,7 +231,22 @@ export function compileBuilding(document) {
       index: level.index,
     }));
   }
-  for (const slot of result.slots || []) ir.slots.push(makeSlot(slot));
+  // THE DEFORMATION IS APPLIED HERE, ONCE, for everything the IR stores as
+  // coordinates. The descriptor travels with it so the mesher can warp the wall
+  // and roof vertices it generates from the 2D polygons using the identical
+  // function - which is what stops the windows and the walls disagreeing.
+  const warp = makeWarp(result.deform);
+  if (result.deform && result.deform.mode !== DEFORM_MODE.NONE) {
+    ir.deform = makeDeform(result.deform);
+  }
+
+  for (const slot of result.slots || []) {
+    ir.slots.push(makeSlot({ ...slot, transform: warpTransform(warp, slot.transform) }));
+  }
+
+  for (const run of result.trims || []) {
+    ir.trims.push(makeTrim({ ...run, path: warpPath(warp, run.path) }));
+  }
 
   if (result.roof && result.roof.rungs?.length) {
     ir.roof = {
@@ -281,6 +298,8 @@ export function compileBuilding(document) {
     floorArea: result.floorArea,
     polygonCount: ir.polygons.length,
     roofHeight: ir.roof ? ir.roof.height : 0,
+    trimCount: ir.trims.length,
+    trimLength: ir.trims.reduce((total, run) => total + pathLength(run.path, run.closed), 0),
   };
 
   // --- phase 5: whole-picture checks --------------------------------------
@@ -611,12 +630,146 @@ function evaluateNode(node, def, inputValue, diagnostics, seed) {
       return { ...building, roof: stacked };
     }
 
+    case 'trim': {
+      const building = inputValue(node, 'building');
+      if (!building?.levels?.length) return building;
+
+      const where = readMode(node, 'where');
+      const { runs, truncated } = generateTrim({
+        levels: building.levels,
+        roof: building.roof,
+        where,
+        every: readProp(node, 'every'),
+        includeHoles: readProp(node, 'includeHoles'),
+        projection: readProp(node, 'projection'),
+        depth: readProp(node, 'depth'),
+      });
+
+      if (!runs.length) {
+        diagnostics.warn(
+          CODE.W_TRIM_NO_RUNS,
+          where === TRIM_WHERE.STRING
+            ? 'A string course needs at least two storeys to sit between, so this '
+              + 'run produced nothing.'
+            : 'This trim run found no edge to follow.',
+          {
+            nodeId: node.id,
+            hint: where === TRIM_WHERE.STRING
+              ? 'Add storeys, or lower Every so a band lands below the top.'
+              : 'Check that the building has levels above this run.',
+          },
+        );
+      } else if (truncated) {
+        diagnostics.warn(
+          CODE.W_TRIM_TRUNCATED,
+          `This run hit the ${MAX_TRIM_RUNS}-run limit and stopped there.`,
+          {
+            nodeId: node.id,
+            hint: 'Raise Every so fewer storeys get a band, or turn off '
+                + '"Around courtyards".',
+          },
+        );
+      }
+
+      // A PARAPET NEEDS A DECK. On a pitched roof the last contour is the ridge,
+      // so the run would be a fin along the apex - which is a ridge capping, a
+      // real thing, but not what the author asked for. Said here rather than
+      // silently drawn, because "I added a parapet and got a spine" is exactly
+      // the kind of result nobody can explain.
+      // roofIsCapped, not `closed`: a FLAT roof is trivially closed and its whole
+      // deck is exactly what a parapet wants to stand on. What disqualifies a
+      // roof is having closed after rising.
+      if (where === TRIM_WHERE.PARAPET && roofIsCapped(building.roof)) {
+        diagnostics.warn(
+          CODE.W_PARAPET_ON_PITCH,
+          'This roof closes to a ridge, so the parapet follows the ridge rather '
+          + 'than standing on a deck.',
+          {
+            nodeId: node.id,
+            hint: 'Set the roof to Flat, or give it a height cap so it ends on a deck.',
+          },
+        );
+      }
+
+      // TRIMS ACCUMULATE. A facade REPLACES the storeys it claims and a roof
+      // CONTINUES the one below it; a trim does neither, because a plinth, a
+      // string course and a cornice are three different runs on one building and
+      // any rule that made a later node supersede an earlier one would make the
+      // common case impossible.
+      return { ...building, trims: [...(building.trims || []), ...runs] };
+    }
+
+    case 'deform': {
+      const building = inputValue(node, 'building');
+      if (!building?.levels?.length) return building;
+
+      const mode = readMode(node, 'mode');
+      const amount = readProp(node, 'amount');
+      if (mode === DEFORM_MODE.NONE || !amount) return building;
+
+      // The warp is normalised over the building's own height and turns about
+      // its own centre, so the same settings mean the same thing on a cottage
+      // and a tower. Taking the plan's bounding centre rather than its centroid:
+      // an L-shaped plan's centroid can sit outside the building, and twisting
+      // about a point in mid-air throws the whole thing sideways.
+      const box = levelBounds(building.levels);
+      const height = Math.max(...building.levels.map(level => level.z1), 0);
+
+      return {
+        ...building,
+        deform: makeDeform({
+          mode,
+          amount,
+          axis: readProp(node, 'axis'),
+          height,
+          seed,
+          centre: [(box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2],
+        }),
+      };
+    }
+
     case 'output':
       return inputValue(node, 'building');
 
     default:
       return undefined;
   }
+}
+
+/** Total length of a flat [x, y, z, ...] polyline, closing the loop if asked. */
+function pathLength(path, closed) {
+  let total = 0;
+  const count = Math.floor(path.length / 3);
+  for (let i = 1; i < count; i++) {
+    total += Math.hypot(
+      path[i * 3] - path[(i - 1) * 3],
+      path[i * 3 + 1] - path[(i - 1) * 3 + 1],
+      path[i * 3 + 2] - path[(i - 1) * 3 + 2],
+    );
+  }
+  if (closed && count > 2) {
+    total += Math.hypot(
+      path[0] - path[(count - 1) * 3],
+      path[1] - path[(count - 1) * 3 + 1],
+      path[2] - path[(count - 1) * 3 + 2],
+    );
+  }
+  return total;
+}
+
+/** The plan bounds of a whole stack, for centring a warp. */
+function levelBounds(levels) {
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+  for (const level of levels) {
+    for (const point of level.polygon.outer || []) {
+      if (point[0] < minX) minX = point[0];
+      if (point[0] > maxX) maxX = point[0];
+      if (point[1] < minY) minY = point[1];
+      if (point[1] > maxY) maxY = point[1];
+    }
+  }
+  if (!Number.isFinite(minX)) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  return { minX, minY, maxX, maxY };
 }
 
 /**

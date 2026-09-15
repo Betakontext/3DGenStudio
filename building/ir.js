@@ -163,6 +163,11 @@ export function createBuildingIr({ seed = 0 } = {}) {
     slots: [],
     trims: [],
     roof: null,
+    // How the finished building is bent. A DESCRIPTOR, not baked coordinates:
+    // the slots and trims in this IR are already warped, but walls and roofs are
+    // generated from the 2D polygons by the consumer, which needs the function
+    // to apply. See building/deform.js.
+    deform: null,
     materials: [],
     references: {},
     stats: {
@@ -257,12 +262,20 @@ export function makeMaterial({ slot, color = '', ref = '' }) {
  * a corner and has to miter where two runs meet, which is information a face
  * does not carry. `path` is a flat [x, y, z, ...] polyline in IR coordinates.
  */
-export function makeTrim({ profileId = '', path = [], closed = false, level = 0 }) {
+export function makeTrim({
+  profileId = '', path = [], closed = false, level = 0, projection = 0, depth = 0,
+}) {
   return {
     profileId: String(profileId || ''),
     path: path.map(quantize),
     closed: Boolean(closed),
     level: level | 0,
+    // The RUN carries its own section size rather than the consumer looking it
+    // up from the node that made it. A consumer of the IR has no nodes - see the
+    // header on why the IR exists - and two runs of the same profile at
+    // different sizes are ordinary on one building.
+    projection: quantize(projection),
+    depth: quantize(depth),
   };
 }
 

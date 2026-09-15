@@ -1561,23 +1561,28 @@ app.get('/api/buildings/styles', async (req, res) => {
       .map((name) => name.slice(0, -5))
       .filter((id) => STYLE_PACK_ID_PATTERN.test(id));
     const styles = [];
+    // REPORTED, NOT JUST LOGGED. One bad pack must not empty the library - the
+    // rule the VFX preset listing follows - but a library that came back empty
+    // because every pack was rejected looks exactly like a library that is not
+    // installed, and the fix for those two is completely different. The client
+    // gets the reasons so it can say which happened.
+    const skipped = [];
     for (const id of ids) {
       try {
         const pack = await readBuildingStylePack(id);
-        // ONE BAD PACK MUST NOT EMPTY THE LIBRARY - the same rule the VFX preset
-        // listing follows, for the same reason: a stray comma in one
-        // hand-edited file would otherwise read as "the styles are gone".
         const problems = validateStylePack(pack);
         if (problems.length) {
           console.error(`Skipping invalid building style "${id}": ${problems[0]}`);
+          skipped.push({ id, problem: problems[0] });
           continue;
         }
         styles.push({ ...stylePackSummary(pack), hasThumbnail: pack.hasThumbnail });
       } catch (err) {
         console.error(`Skipping unreadable building style "${id}":`, err.message);
+        skipped.push({ id, problem: err.message || 'could not be read' });
       }
     }
-    res.json({ styles });
+    res.json({ styles, skipped });
   } catch (err) {
     console.error('Failed to list building styles:', err);
     res.status(500).json({ error: err.message || 'Failed to list building styles' });

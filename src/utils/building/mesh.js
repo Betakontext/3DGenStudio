@@ -35,6 +35,8 @@
 import * as THREE from 'three'
 import { differencePolygons } from '../../../building/clip.js'
 import { rungKind } from '../../../building/roof.js'
+import { makeWarp } from '../../../building/deform.js'
+import { trimSection } from '../../../building/trim.js'
 
 /**
  * How deep an opening placeholder sits, in metres.
@@ -48,6 +50,22 @@ export const SLOT_DEPTH = 0.18
 /** Convert one IR point to three.js space. See the header for why this mapping. */
 export function toThree(x, y, z) {
   return [x, z, -y]
+}
+
+/**
+ * The point placer for an IR: straight to three space, or through its warp first.
+ *
+ * Returns `toThree` ITSELF when there is no deformation, so a caller can test
+ * identity to decide whether normals need re-deriving, and an undeformed
+ * building costs exactly what it did before deformation existed.
+ */
+function placer(ir) {
+  const warp = makeWarp(ir?.deform)
+  if (warp.isIdentity) return toThree
+  return (x, y, z) => {
+    const [wx, wy, wz] = warp.warp(x, y, z)
+    return toThree(wx, wy, wz)
+  }
 }
 
 /**
@@ -101,7 +119,7 @@ function unflatten(flat) {
  * right. Explicit per-face normals also mean no vertex is shared between two
  * walls, which is what keeps the UVs independent per face.
  */
-function createBuilder() {
+function createBuilder({ recomputeNormals = false } = {}) {
   const positions = []
   const normals = []
   const uvs = []
@@ -110,7 +128,28 @@ function createBuilder() {
     /** One triangle, with a shared face normal. Points are already in three space. */
     tri(a, b, c, normal, uvA, uvB, uvC) {
       positions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2])
-      for (let i = 0; i < 3; i++) normals.push(normal[0], normal[1], normal[2])
+      // A DEFORMED WALL'S NORMAL IS NOT THE ONE THE CALLER COMPUTED. Every caller
+      // works out the face normal from the undeformed plan, which is exact and
+      // cheap while the building is orthogonal - and wrong the moment a warp
+      // turns the wall. Rather than make each caller transform its own normal,
+      // the normal is re-derived from the triangle once a warp is in play, and
+      // kept in the hemisphere the caller asked for so an extreme warp cannot
+      // turn a wall inside out.
+      let face = normal
+      if (recomputeNormals) {
+        const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2]
+        const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]
+        let nx = uy * vz - uz * vy
+        let ny = uz * vx - ux * vz
+        let nz = ux * vy - uy * vx
+        const length = Math.hypot(nx, ny, nz)
+        if (length > 1e-12) {
+          nx /= length; ny /= length; nz /= length
+          const agrees = nx * normal[0] + ny * normal[1] + nz * normal[2] >= 0
+          face = agrees ? [nx, ny, nz] : [-nx, -ny, -nz]
+        }
+      }
+      for (let i = 0; i < 3; i++) normals.push(face[0], face[1], face[2])
       uvs.push(uvA[0], uvA[1], uvB[0], uvB[1], uvC[0], uvC[1])
     },
     get triangleCount() {
@@ -140,7 +179,7 @@ function createBuilder() {
  * a facade material is tiled, and normalising per face would stretch the same
  * brick to three different sizes on three different walls.
  */
-function addWalls(builder, ring, z0, z1, uOffset = 0) {
+function addWalls(builder, ring, z0, z1, uOffset = 0, place = toThree) {
   const n = ring.length
   if (n < 3) return uOffset
   let u = uOffset
@@ -159,10 +198,10 @@ function addWalls(builder, ring, z0, z1, uOffset = 0) {
     const nIr = [dy / length, -dx / length]
     const normal = [nIr[0], 0, -nIr[1]]
 
-    const A = toThree(a[0], a[1], z0)
-    const B = toThree(b[0], b[1], z0)
-    const C = toThree(b[0], b[1], z1)
-    const D = toThree(a[0], a[1], z1)
+    const A = place(a[0], a[1], z0)
+    const B = place(b[0], b[1], z0)
+    const C = place(b[0], b[1], z1)
+    const D = place(a[0], a[1], z1)
 
     const u0 = u
     const u1 = u + length
@@ -184,7 +223,7 @@ function addWalls(builder, ring, z0, z1, uOffset = 0) {
  * the triangulator, so a change in Earcut's output order cannot silently turn
  * every floor into a hole.
  */
-function addCap(builder, outer, holes, z, up) {
+function addCap(builder, outer, holes, z, up, place = toThree) {
   const faces = triangulate(outer, holes)
   if (faces.length === 0) return
 
@@ -204,9 +243,9 @@ function addCap(builder, outer, holes, z, up) {
     const [p, q, r] = flip ? [a, c, b] : [a, b, c]
 
     builder.tri(
-      toThree(p[0], p[1], z),
-      toThree(q[0], q[1], z),
-      toThree(r[0], r[1], z),
+      place(p[0], p[1], z),
+      place(q[0], q[1], z),
+      place(r[0], r[1], z),
       normal,
       // Caps are UV-mapped in plan metres, so a floor material tiles at the same
       // scale as the walls rather than being stretched to the building's bounds.
@@ -226,7 +265,12 @@ function addCap(builder, outer, holes, z, up) {
  * @returns {{geometry: THREE.BufferGeometry|null, triangleCount: number}}
  */
 export function buildBuildingGeometry(ir) {
-  const builder = createBuilder()
+  // The SAME warp the compiler used on the slots and the trim paths, built from
+  // the descriptor the IR carries. Walls are generated here from 2D polygons, so
+  // they have to be warped here; sharing the function is what keeps the windows
+  // on the wall rather than beside it.
+  const place = placer(ir)
+  const builder = createBuilder({ recomputeNormals: place !== toThree })
   if (!ir || !Array.isArray(ir.levels) || ir.levels.length === 0) {
     return { geometry: null, triangleCount: 0 }
   }
@@ -238,11 +282,11 @@ export function buildBuildingGeometry(ir) {
     const holes = (polygon.holes || []).map(unflatten)
     if (outer.length < 3) continue
 
-    let u = addWalls(builder, outer, level.z0, level.z1, 0)
-    for (const hole of holes) u = addWalls(builder, hole, level.z0, level.z1, u)
+    let u = addWalls(builder, outer, level.z0, level.z1, 0, place)
+    for (const hole of holes) u = addWalls(builder, hole, level.z0, level.z1, u, place)
 
-    addCap(builder, outer, holes, level.z1, true)
-    addCap(builder, outer, holes, level.z0, false)
+    addCap(builder, outer, holes, level.z1, true, place)
+    addCap(builder, outer, holes, level.z0, false, place)
   }
 
   if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
@@ -260,6 +304,7 @@ export function buildBuildingGeometry(ir) {
 export function buildLevelOutlines(ir) {
   const points = []
   if (!ir || !Array.isArray(ir.levels)) return null
+  const place = placer(ir)
 
   for (const level of ir.levels) {
     const polygon = ir.polygons[level.polygon]
@@ -272,7 +317,7 @@ export function buildLevelOutlines(ir) {
         const b = ring[(i + 1) % ring.length]
         // Drawn at the level's TOP: that is where a setback shows as a step and
         // where a terrace edge actually is.
-        points.push(...toThree(a[0], a[1], level.z1), ...toThree(b[0], b[1], level.z1))
+        points.push(...place(a[0], a[1], level.z1), ...place(b[0], b[1], level.z1))
       }
     }
   }
@@ -294,6 +339,9 @@ export function buildingBounds(ir) {
   const box = new THREE.Box3()
   let any = false
   if (!ir || !Array.isArray(ir.levels)) return null
+  // Warped too, or a leaning building frames off-centre and a tall twist can put
+  // its own top outside the camera.
+  const place = placer(ir)
 
   for (const level of ir.levels) {
     const polygon = ir.polygons[level.polygon]
@@ -302,7 +350,7 @@ export function buildingBounds(ir) {
       const x = polygon.outer[i]
       const y = polygon.outer[i + 1]
       for (const z of [level.z0, level.z1]) {
-        const [tx, ty, tz] = toThree(x, y, z)
+        const [tx, ty, tz] = place(x, y, z)
         box.expandByPoint(new THREE.Vector3(tx, ty, tz))
         any = true
       }
@@ -340,7 +388,8 @@ export function buildRoofGeometry(ir) {
     return { geometry: null, triangleCount: 0 }
   }
 
-  const builder = createBuilder()
+  const place = placer(ir)
+  const builder = createBuilder({ recomputeNormals: place !== toThree })
   const polygonAt = index => {
     const stored = ir.polygons[index]
     if (!stored) return null
@@ -365,8 +414,8 @@ export function buildRoofGeometry(ir) {
       // Straight up: the contour's own walls. Outward, because a riser is the
       // face of a step and is seen from outside.
       for (const polygon of lowerPolys) {
-        let u = addWalls(builder, polygon.outer, lower.z, upper.z, 0)
-        for (const hole of polygon.holes) u = addWalls(builder, hole, lower.z, upper.z, u)
+        let u = addWalls(builder, polygon.outer, lower.z, upper.z, 0, place)
+        for (const hole of polygon.holes) u = addWalls(builder, hole, lower.z, upper.z, u, place)
       }
       continue
     }
@@ -374,7 +423,7 @@ export function buildRoofGeometry(ir) {
 
     // Slope or tread: the annulus between the two contours.
     for (const band of differencePolygons(lowerPolys, upperPolys)) {
-      addRoofBand(builder, band, lower.z, upper.z, upperPolys)
+      addRoofBand(builder, band, lower.z, upper.z, upperPolys, place)
     }
   }
 
@@ -383,7 +432,7 @@ export function buildRoofGeometry(ir) {
   // the building has a hole where the sky is.
   const top = roof.rungs[roof.rungs.length - 1]
   for (const polygon of rungPolygons(top)) {
-    addCap(builder, polygon.outer, polygon.holes, top.z, true)
+    addCap(builder, polygon.outer, polygon.holes, top.z, true, place)
   }
 
   if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
@@ -399,7 +448,7 @@ export function buildRoofGeometry(ir) {
  * coordinates, quantised to its integer lattice, so the vertices are equal in
  * value but never the same objects.
  */
-function addRoofBand(builder, band, lowerZ, upperZ, upperPolys) {
+function addRoofBand(builder, band, lowerZ, upperZ, upperPolys, place = toThree) {
   const faces = triangulate(band.outer, band.holes)
   if (faces.length === 0) return
 
@@ -423,9 +472,9 @@ function addRoofBand(builder, band, lowerZ, upperZ, upperPolys) {
     const c = points[ic]
     if (!a || !b || !c) continue
 
-    const A = toThree(a[0], a[1], heights[ia])
-    const B = toThree(b[0], b[1], heights[ib])
-    const C = toThree(c[0], c[1], heights[ic])
+    const A = place(a[0], a[1], heights[ia])
+    const B = place(b[0], b[1], heights[ib])
+    const C = place(c[0], c[1], heights[ic])
 
     // The normal comes from the triangle itself rather than from the slope,
     // because a band may contain both sloping and flat parts where a contour
@@ -448,6 +497,130 @@ function addRoofBand(builder, band, lowerZ, upperZ, upperPolys) {
       flip ? [b[0], b[1]] : [c[0], c[1]],
     )
   }
+}
+
+/**
+ * The trim, swept along its runs.
+ *
+ * THE MITRE IS THE WHOLE JOB. Sweeping a section along a polyline is easy; the
+ * part that makes trim look like trim is what happens at a corner. At each
+ * station the section is placed along the BISECTOR of the two adjoining edges
+ * and scaled by 1/cos(half the turn), which is exactly the amount that makes the
+ * two straight runs meet in a clean mitre instead of leaving a notch on the
+ * outside and a fold on the inside. Doing it per face - a separate moulding on
+ * each wall - cannot produce that joint at all, which is why building/trim.js
+ * emits polylines and not faces.
+ *
+ * The miter scale is CLAMPED. A near-reversing corner (a very thin spur in the
+ * plan) sends 1/cos to infinity and would fire a spike of trim off into space;
+ * clamping trades a slightly open mitre on a pathological corner for geometry
+ * that stays inside the building.
+ *
+ * Paths arrive ALREADY DEFORMED - the compiler warps them when it builds the IR -
+ * so nothing here knows about deformation, and the bisectors are computed on the
+ * bent building, which is what makes a cornice follow a twisted wall.
+ */
+export function buildTrimGeometry(ir) {
+  const runs = (ir?.trims || []).filter(run => run.closed && run.path.length >= 9)
+  if (!runs.length) return { geometry: null, triangleCount: 0 }
+
+  // Normals come from the swept geometry itself: a moulding's section faces
+  // several directions at once and there is no single face normal to pass in.
+  const builder = createBuilder({ recomputeNormals: true })
+
+  for (const run of runs) {
+    const section = trimSection(run.profileId, run.projection, run.depth)
+    if (section.length < 3) continue
+
+    const count = Math.floor(run.path.length / 3)
+    const at = i => [run.path[i * 3], run.path[i * 3 + 1], run.path[i * 3 + 2]]
+
+    // One frame per station: an outward direction in plan, mitre-scaled.
+    const frames = []
+    let along = 0
+    for (let i = 0; i < count; i++) {
+      const previous = at((i - 1 + count) % count)
+      const point = at(i)
+      const next = at((i + 1) % count)
+
+      const inN = edgeNormal(previous, point)
+      const outN = edgeNormal(point, next)
+      if (!inN || !outN) { frames.push(null); continue }
+
+      let bx = inN[0] + outN[0]
+      let by = inN[1] + outN[1]
+      const bLen = Math.hypot(bx, by)
+      // A doubled-back edge cancels the bisector entirely; fall back to the
+      // outgoing edge's own normal rather than dividing by zero.
+      if (bLen < 1e-9) { bx = outN[0]; by = outN[1] } else { bx /= bLen; by /= bLen }
+
+      const cos = bx * outN[0] + by * outN[1]
+      const miter = cos > 0.25 ? 1 / cos : 4
+
+      frames.push({ point, nx: bx, ny: by, miter, along })
+      along += Math.hypot(next[0] - point[0], next[1] - point[1], next[2] - point[2])
+    }
+
+    // Station i to station i+1, one quad strip per section edge.
+    const sectionLengths = [0]
+    for (let k = 1; k <= section.length; k++) {
+      const a = section[k - 1]
+      const b = section[k % section.length]
+      sectionLengths.push(sectionLengths[k - 1] + Math.hypot(b[0] - a[0], b[1] - a[1]))
+    }
+
+    const placeSection = (frame, k) => {
+      const [out, up] = section[k]
+      const d = out * frame.miter
+      return toThree(
+        frame.point[0] + frame.nx * d,
+        frame.point[1] + frame.ny * d,
+        frame.point[2] + up,
+      )
+    }
+
+    for (let i = 0; i < count; i++) {
+      const a = frames[i]
+      const b = frames[(i + 1) % count]
+      if (!a || !b) continue
+
+      for (let k = 0; k < section.length; k++) {
+        const k2 = (k + 1) % section.length
+        const A = placeSection(a, k)
+        const B = placeSection(b, k)
+        const C = placeSection(b, k2)
+        const D = placeSection(a, k2)
+
+        // UVs run along the path and around the section, which is the layout a
+        // tileable trim sheet wants: one axis is metres of run.
+        const uA = [a.along, sectionLengths[k]]
+        const uB = [b.along, sectionLengths[k]]
+        const uC = [b.along, sectionLengths[k + 1]]
+        const uD = [a.along, sectionLengths[k + 1]]
+
+        // The seed normal only has to pick a hemisphere - the builder derives the
+        // real one from each triangle. Outward is right for the whole section
+        // except its back face, which is buried in the wall.
+        const seed = [a.nx, 0, -a.ny]
+        builder.tri(A, B, C, seed, uA, uB, uC)
+        builder.tri(A, C, D, seed, uA, uC, uD)
+      }
+    }
+  }
+
+  if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
+  return { geometry: builder.build(), triangleCount: builder.triangleCount }
+}
+
+/** The outward normal in plan of the edge a -> b, or null if it has no length. */
+function edgeNormal(a, b) {
+  const dx = b[0] - a[0]
+  const dy = b[1] - a[1]
+  const length = Math.hypot(dx, dy)
+  if (length < 1e-9) return null
+  // Same convention as the walls: for a ring walked as stored, (dy, -dx) points
+  // away from the solid on outer rings AND on holes.
+  return [dy / length, -dx / length]
 }
 
 /**

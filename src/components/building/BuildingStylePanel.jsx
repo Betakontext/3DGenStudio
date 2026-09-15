@@ -37,14 +37,16 @@ function Swatches({ palette }) {
 }
 
 export default function BuildingStylePanel({ doc, activeId, onApply }) {
-  // undefined = still asking, null = could not reach the library, [] = empty.
-  const [styles, setStyles] = useState(undefined)
+  // undefined = still asking, null = could not reach the library, otherwise
+  // { styles, skipped } - and an empty `styles` with a non-empty `skipped` is a
+  // third thing again: the packs are there and the server would not have them.
+  const [library, setLibrary] = useState(undefined)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
     let alive = true
-    fetchStylePacks().then(list => { if (alive) setStyles(list) })
+    fetchStylePacks().then(result => { if (alive) setLibrary(result) })
     return () => { alive = false }
   }, [])
 
@@ -74,7 +76,9 @@ export default function BuildingStylePanel({ doc, activeId, onApply }) {
 
   // Nothing at all while the first request is in flight - a panel that flashes
   // an error for 200ms on every page load is worse than one that appears late.
-  if (styles === undefined) return null
+  if (library === undefined) return null
+  const styles = library?.styles || []
+  const skipped = library?.skipped || []
 
   return (
     <div className="bstyle">
@@ -84,20 +88,29 @@ export default function BuildingStylePanel({ doc, activeId, onApply }) {
           reason for an empty library is a server started before the route
           existed. Rendering nothing here made the whole feature look unbuilt -
           which is exactly how it was first reported. */}
-      {styles === null && (
+      {library === null && (
         <p className="bstyle__error">
           Could not reach the style library. If you have just updated, restart
           the server - <code>/api/buildings/styles</code> is new.
         </p>
       )}
-      {styles?.length === 0 && (
+      {/* Rejected, not absent. Nearly always a server started before a node
+          type the packs use existed - the catalog is read once, at startup. */}
+      {library && !styles.length && skipped.length > 0 && (
+        <p className="bstyle__error">
+          {skipped.length} style {skipped.length === 1 ? 'pack was' : 'packs were'} rejected.
+          Restart the server if you have just updated. First problem:
+          {' '}<code>{skipped[0].id}</code> — {skipped[0].problem}
+        </p>
+      )}
+      {library && !styles.length && !skipped.length && (
         <p className="bstyle__note">
           No style packs are installed. They live in
           {' '}<code>resources/buildings/styles/</code>.
         </p>
       )}
       <ul className="bstyle__list">
-        {(styles || []).map(style => (
+        {styles.map(style => (
           <li key={style.id}>
             <button
               type="button"
@@ -120,7 +133,7 @@ export default function BuildingStylePanel({ doc, activeId, onApply }) {
           user who has just tuned a facade deserves to know that before clicking
           rather than after. Undo covers it, which is why this is a note and not
           a confirmation. */}
-      {Boolean(styles?.length) && (
+      {styles.length > 0 && (
         <p className="bstyle__note">
           Applying a style rebuilds the nodes between the Footprint and the Output.
           Your plan is kept. Undo restores the previous graph.

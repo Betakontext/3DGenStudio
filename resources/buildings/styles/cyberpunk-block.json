@@ -78,6 +78,16 @@
         "kind": "flat"
       },
       "props": {}
+    },
+    {
+      "type": "trim",
+      "modes": {
+        "where": "parapet"
+      },
+      "props": {
+        "projection": 0.25,
+        "depth": 1.1
+      }
     }
   ]
 }

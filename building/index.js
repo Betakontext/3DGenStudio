@@ -96,6 +96,22 @@ export {
 export { MAX_SLOTS, generateFacade } from './facade.js';
 
 export {
+  MAX_TRIM_RUNS,
+  TRIM_PROFILE,
+  TRIM_WHERE,
+  generateTrim,
+  trimSection,
+} from './trim.js';
+
+export {
+  DEFORM_MODE,
+  makeDeform,
+  makeWarp,
+  warpPath,
+  warpTransform,
+} from './deform.js';
+
+export {
   DEFAULT_PALETTE,
   PALETTE_SLOTS,
   RESERVED_STAGES,
