@@ -743,12 +743,23 @@ export function buildSlotInstances(ir) {
       // the basis explicitly rather than multiplying by a change-of-basis matrix
       // keeps the handedness argument in one place - see toThree.
       const t = slot.transform
+      // ALL THREE COLUMNS COME FROM THE TRANSFORM. `up` used to be hardcoded to
+      // straight up here, on the assumption that a wall is vertical - and that
+      // silently threw away everything building/deform.js does to it. A LEAN
+      // leaves `along` and `normal` alone and tilts only `up`, so the whole
+      // deformation lived in the one column this function was ignoring: the
+      // walls leaned and every window stayed bolt upright inside them, poking
+      // out of the wall it was supposed to lie in.
+      //
+      // For an undeformed building the column IS (0, 0, 1), so reading it costs
+      // nothing and cannot regress the ordinary case.
       const alongIr = [t[0], t[1], t[2]]
+      const upIr = [t[4], t[5], t[6]]
       const normalIr = [t[8], t[9], t[10]]
       const posIr = [t[12], t[13], t[14]]
 
       const along = toThree(alongIr[0], alongIr[1], alongIr[2])
-      const up = toThree(0, 0, 1)
+      const up = toThree(upIr[0], upIr[1], upIr[2])
       const normal = toThree(normalIr[0], normalIr[1], normalIr[2])
       const pos = toThree(posIr[0], posIr[1], posIr[2])
 

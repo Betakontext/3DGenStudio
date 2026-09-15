@@ -46,8 +46,27 @@ export const DEFORM_MODE = {
   SAG: 'sag',
 };
 
-/** How far apart the noise lattice points are, in metres. */
-const SAG_SCALE = 7;
+/**
+ * The wavelength of the sag field, in metres.
+ *
+ * NOT A FIXED NUMBER, and the fixed 7m it used to be is what made a large sag
+ * unusable. Settling is a STRUCTURAL deformation: an old frame racks as a whole,
+ * a floor droops across its span. A field whose wavelength is smaller than the
+ * building is not settling, it is melting - and worse, its GRADIENT grows with
+ * the amplitude, so at a few metres of sag the local frame stretched to 1.34x on
+ * one window and squashed to 0.75x on its neighbour. The walls still looked
+ * roughly like walls, because a four-corner quad averages the field over its
+ * whole width; the windows each sampled it at a point and came out as a
+ * different wrong shape each.
+ *
+ * Tying the wavelength to the building AND to the amplitude fixes both at once:
+ * the field stays coherent across a wall, so every window on it agrees with the
+ * wall and with its neighbours, and the ratio amplitude/wavelength - which IS
+ * the deformation gradient - stays bounded however large the amount gets.
+ */
+function sagScale(amount, height) {
+  return Math.max(height || 0, Math.abs(amount) * 4, 6);
+}
 
 /** The step used for the numeric Jacobian, in metres. */
 const EPSILON = 1e-3;
@@ -116,6 +135,7 @@ export function makeWarp(descriptor) {
   const [cx, cy] = d.centre;
   const dirX = Math.cos(d.axis * DEG);
   const dirY = Math.sin(d.axis * DEG);
+  const scale = sagScale(d.amount, d.height);
 
   const warp = (x, y, z) => {
     // t is 0 at the ground and 1 at the top. Held at 1 above rather than
@@ -140,8 +160,8 @@ export function makeWarp(descriptor) {
         return [x + dirX * d.amount * k, y + dirY * d.amount * k, z];
       }
       case DEFORM_MODE.SAG: {
-        const n = noise2(x / SAG_SCALE, y / SAG_SCALE, d.seed) - 0.5;
-        const m = noise2(y / SAG_SCALE + 19.7, x / SAG_SCALE - 4.3, d.seed ^ 0x9e37) - 0.5;
+        const n = noise2(x / scale, y / scale, d.seed) - 0.5;
+        const m = noise2(y / scale + 19.7, x / scale - 4.3, d.seed ^ 0x9e37) - 0.5;
         // Settling ACCUMULATES with height: the top of an old timber frame is
         // further out of true than its sill, because everything below it has
         // moved too. Scaling by t is what makes it read as age rather than as a
@@ -178,26 +198,39 @@ export function makeWarp(descriptor) {
   return { isIdentity: false, warp, basis };
 }
 
-const len = v => Math.hypot(v[0], v[1], v[2]);
-const scale = (v, s) => [v[0] * s, v[1] * s, v[2] * s];
-const cross = (a, b) => [
-  a[1] * b[2] - a[2] * b[1],
-  a[2] * b[0] - a[0] * b[2],
-  a[0] * b[1] - a[1] * b[0],
-];
-
 /**
  * Warp one slot transform.
  *
- * ROTATION ONLY, NOT THE FULL JACOBIAN. A warp generally shears and stretches,
- * and feeding that straight into an instance matrix would skew the window mesh
- * along with the wall. A real window does not shear; it is a rigid object hung
- * on a wall that has moved. So the warped axes are re-orthonormalised - the
- * outward normal is trusted, the along-wall direction is made perpendicular to
- * it, and up is their cross product.
+ * THE FULL JACOBIAN, SHEAR INCLUDED - and the first version of this function got
+ * that wrong in a way worth recording, because the reasoning that produced the
+ * bug is superficially convincing.
  *
- * The transform is the 16-number column-major matrix makeSlot stores:
- * columns are along-wall, up, outward, translation.
+ * The argument was: a warp shears, a real window does not, so re-orthonormalise
+ * the warped axes and keep only the rotation. That sounds right and is wrong,
+ * because it mistakes what these warps DO. A LEAN is not a rigid tilt of the
+ * building - the base stays put and the top slides, which is a SHEAR:
+ *
+ *     [1 0 kx]
+ *     [0 1 ky]      k = amount / height
+ *     [0 0 1 ]
+ *
+ * Under it a wall's vertical edges tilt while the wall stays planar, so an
+ * opening in that wall genuinely becomes a PARALLELOGRAM. There is no rotation
+ * that produces a parallelogram, so squaring the axes up threw the lean away
+ * entirely on any wall running along it, and the building leaned while every
+ * window stood bolt upright inside it.
+ *
+ * Worse, it failed ASYMMETRICALLY: on a wall across the lean the shear moves the
+ * wall out of its own plane, so orthonormalising kept the tilt there. Half the
+ * windows followed and half did not, which reads as a rendering glitch rather
+ * than as a modelling decision.
+ *
+ * So the instance takes the whole Jacobian and shears with its wall. A style
+ * pack's window mesh is skewed by a leaning building exactly as the wall around
+ * it is, which is what a sheared building means.
+ *
+ * The transform is the 16-number column-major matrix makeSlot stores: columns
+ * are along-wall, up, outward, translation.
  */
 export function warpTransform(warp, transform) {
   if (warp.isIdentity) return transform;
@@ -206,29 +239,27 @@ export function warpTransform(warp, transform) {
   const z = transform[14];
   const [wx, wy, wz] = warp.warp(x, y, z);
 
-  let normal = warp.basis(x, y, z, transform[8], transform[9], transform[10]);
-  let along = warp.basis(x, y, z, transform[0], transform[1], transform[2]);
+  const along = warp.basis(x, y, z, transform[0], transform[1], transform[2]);
+  const up = warp.basis(x, y, z, transform[4], transform[5], transform[6]);
+  const normal = warp.basis(x, y, z, transform[8], transform[9], transform[10]);
 
-  const nLen = len(normal);
-  const aLen = len(along);
-  // A degenerate Jacobian - possible only if a warp collapses a direction
-  // entirely - leaves the instance where it was rather than producing NaNs that
-  // would silently delete the whole InstancedMesh.
-  if (!(nLen > 1e-9) || !(aLen > 1e-9)) {
+  // A COLLAPSED OR MIRRORED BASIS IS THE ONE THING TO REFUSE, and POSITIVE is
+  // the test, not merely non-zero. A determinant of zero flattens the instance
+  // to nothing; a NEGATIVE one turns it inside out, so its faces point into the
+  // wall and it lights as a black hole. Both are reachable only by a warp far
+  // past anything architectural - forty metres of sag on a ten metre building -
+  // and leaving such an instance unwarped is a much better failure than a
+  // building whose windows vanish or invert.
+  const determinant = along[0] * (up[1] * normal[2] - up[2] * normal[1])
+    - along[1] * (up[0] * normal[2] - up[2] * normal[0])
+    + along[2] * (up[0] * normal[1] - up[1] * normal[0]);
+  if (!Number.isFinite(determinant) || determinant < 1e-9) {
     return [...transform.slice(0, 12), wx, wy, wz, 1];
   }
-  normal = scale(normal, 1 / nLen);
-  along = scale(along, 1 / aLen);
-
-  const up = cross(normal, along);
-  const uLen = len(up);
-  if (!(uLen > 1e-9)) return [...transform.slice(0, 12), wx, wy, wz, 1];
-  const upUnit = scale(up, 1 / uLen);
-  const alongUnit = cross(upUnit, normal);
 
   return [
-    alongUnit[0], alongUnit[1], alongUnit[2], 0,
-    upUnit[0], upUnit[1], upUnit[2], 0,
+    along[0], along[1], along[2], 0,
+    up[0], up[1], up[2], 0,
     normal[0], normal[1], normal[2], 0,
     wx, wy, wz, 1,
   ];

@@ -134,31 +134,142 @@ test('a twisted wall turns its windows with it', () => {
   // The outward normal started at (0,-1,0) and should have turned a full 90.
   close(out.normal, [1, 0, 0], 1e-3, 'normal');
   close(out.along, [0, 1, 0], 1e-3, 'along the wall');
-  close(out.up, [0, 0, 1], 1e-3, 'up');
 });
 
-test('the warped axes stay orthonormal, so no instance is skewed', () => {
-  // A window is a rigid object hung on a wall that moved; it does not shear.
-  const warp = makeWarp({ mode: DEFORM_MODE.SAG, amount: 1.2, height: 10, seed: 11 });
-  for (const [x, y, z] of [[2, 3, 7], [11, 1, 9], [-4, 6, 3]]) {
-    const { along, up, normal } = axesOf(warpTransform(warp, slotAt(x, y, z)));
-    for (const [name, v] of [['along', along], ['up', up], ['normal', normal]]) {
-      assert.ok(near(Math.hypot(...v), 1, 1e-6), `${name} is not unit at ${x},${y},${z}`);
-    }
-    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    assert.ok(near(dot(along, up), 0, 1e-6), 'along and up are not perpendicular');
-    assert.ok(near(dot(along, normal), 0, 1e-6), 'along and normal are not perpendicular');
-    assert.ok(near(dot(up, normal), 0, 1e-6), 'up and normal are not perpendicular');
+test('a twisted wall SHEARS, and its windows shear with it', () => {
+  // A twist is a rotation that varies with height, so a wall's vertical edges
+  // spiral rather than staying vertical - and a window built into that wall is
+  // a parallelogram, not a rectangle. Measured at mid-height, away from the
+  // clamp at the top where the rate is a half-step.
+  const warp = makeWarp({ mode: DEFORM_MODE.TWIST, amount: 90, height: 10, centre: [0, 0] });
+  const { up } = axesOf(warpTransform(warp, slotAt(5, 0, 5)));
+  // Tangential speed at radius 5 with 90 degrees over 10m.
+  const expected = 5 * ((90 * Math.PI) / 180) / 10;
+  assert.ok(Math.abs(Math.hypot(up[0], up[1]) - expected) < 1e-3,
+    `up leans ${Math.hypot(up[0], up[1]).toFixed(4)}, expected ${expected.toFixed(4)}`);
+  assert.ok(near(up[2], 1, 1e-6), 'up should still rise one metre per metre');
+});
+
+test('THE LEAN BUG: windows tilt with the wall on EVERY orientation', () => {
+  // Reported from a screenshot: the walls leaned and the windows stood bolt
+  // upright inside them. The cause was re-orthonormalising the warped axes,
+  // which cannot represent a parallelogram - so a wall running ALONG the lean
+  // lost the tilt completely while a wall across it kept it, and half the
+  // windows followed while half did not.
+  const amount = 5;
+  const height = 10;
+  const warp = makeWarp({ mode: DEFORM_MODE.LEAN, amount, height, axis: 0 });
+  const expected = amount / height;
+
+  for (const [name, transform] of [
+    // along the lean: the shear acts INSIDE the wall plane.
+    ['east-west wall', [1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 3, 0, 5, 1]],
+    // across it: the shear moves the wall out of its own plane.
+    ['north-south wall', [0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 3, 0, 5, 1]],
+  ]) {
+    const { up } = axesOf(warpTransform(warp, transform));
+    assert.ok(Math.abs(up[0] - expected) < 1e-6,
+      `${name}: up leans ${up[0].toFixed(4)} east, expected ${expected}`);
+    assert.ok(near(up[2], 1, 1e-6), `${name}: up no longer rises`);
   }
 });
 
-test('a lean moves windows without turning them', () => {
-  // A pure translation has an identity Jacobian, so nothing should rotate - and
-  // a numeric derivative that drifted would show up here first.
+test('the warped basis stays right-handed and non-degenerate', () => {
+  // Orthonormal it is NOT - see warpTransform - but a collapsed or mirrored
+  // basis would make an instance invisible or inside-out, which is the one
+  // failure worth refusing.
+  const det = ([a, u, n]) => a[0] * (u[1] * n[2] - u[2] * n[1])
+    - a[1] * (u[0] * n[2] - u[2] * n[0])
+    + a[2] * (u[0] * n[1] - u[1] * n[0]);
+
+  // Amounts that MEAN something per mode: 40 is degrees for a twist and metres
+  // for everything else, and forty metres of sag on a ten metre building is not
+  // a building, it is a guard test - which the case below covers instead.
+  for (const [mode, amount] of [
+    [DEFORM_MODE.TWIST, 40], [DEFORM_MODE.LEAN, 4],
+    [DEFORM_MODE.BEND, 4], [DEFORM_MODE.SAG, 0.5],
+  ]) {
+    const warp = makeWarp({ mode, amount, height: 10, seed: 11 });
+    for (const [x, y, z] of [[2, 3, 7], [11, 1, 9], [-4, 6, 3]]) {
+      const { along, up, normal } = axesOf(warpTransform(warp, slotAt(x, y, z)));
+      const d = det([along, up, normal]);
+      assert.ok(d > 1e-6, `${mode} at ${x},${y},${z} has determinant ${d.toFixed(6)}`);
+      for (const [label, v] of [['along', along], ['up', up], ['normal', normal]]) {
+        assert.ok(Number.isFinite(Math.hypot(...v)) && Math.hypot(...v) > 1e-6,
+          `${mode}: ${label} collapsed`);
+      }
+    }
+  }
+});
+
+test('SAG STAYS COHERENT ACROSS A WALL, however large the amount', () => {
+  // The reported bug: with a few metres of sag every window came out a
+  // different wrong shape - one squashed to 0.75 of its width, its neighbour
+  // stretched to 1.34. The walls looked roughly right because a four-corner
+  // quad averages the field over its whole width; each window sampled it at a
+  // point.
+  //
+  // The cause was a FIXED 7m wavelength. A field finer than the building is not
+  // settling, and its gradient - which is amplitude over wavelength, and IS the
+  // distortion - grew without limit as the amount rose. Tying the wavelength to
+  // the building and to the amplitude bounds it by construction.
+  const slot = (x, y, z) => [1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, x, y, z, 1];
+  for (const amount of [1, 6, 20, 80]) {
+    const warp = makeWarp({ mode: DEFORM_MODE.SAG, amount, height: 10, seed: 12345 });
+    let low = Infinity;
+    let high = 0;
+    // Along one wall, at the spacing windows actually sit at.
+    for (let x = 0; x <= 12; x += 1.2) {
+      const { along } = axesOf(warpTransform(warp, slot(x, 0, 7)));
+      const length = Math.hypot(...along);
+      low = Math.min(low, length);
+      high = Math.max(high, length);
+    }
+    assert.ok(high / low < 1.25,
+      `at ${amount}m of sag, windows on one wall vary ${(high / low).toFixed(2)}x in width`);
+    assert.ok(low > 0.5, `at ${amount}m of sag a window collapsed to ${low.toFixed(2)}`);
+  }
+});
+
+test('sag still settles by the amount it was asked for', () => {
+  // The coherence fix changes the field's WAVELENGTH, not its amplitude. A
+  // building that stopped sagging would be a worse bug than one that sagged
+  // messily.
+  for (const amount of [0.5, 3]) {
+    const warp = makeWarp({ mode: DEFORM_MODE.SAG, amount, height: 10, seed: 7 });
+    let drop = 0;
+    for (let x = 0; x <= 30; x += 1.3) {
+      for (let y = 0; y <= 30; y += 1.7) drop = Math.max(drop, 10 - warp.warp(x, y, 10)[2]);
+    }
+    assert.ok(drop > amount * 0.05, `${amount}m of sag dropped only ${drop.toFixed(3)}m`);
+    assert.ok(drop <= amount * 0.31, `${amount}m of sag dropped ${drop.toFixed(3)}m, too much`);
+  }
+});
+
+test('a warp that collapses the basis leaves the instance where it was', () => {
+  // Not reachable from any shipped mode, but a NaN basis silently deletes the
+  // whole InstancedMesh rather than one window, so it is guarded rather than
+  // trusted.
+  const broken = {
+    isIdentity: false,
+    warp: (x, y, z) => [x, y, z],
+    basis: () => [0, 0, 0],
+  };
+  const out = warpTransform(broken, slotAt(1, 2, 3));
+  close(out.slice(0, 3), [1, 0, 0], 1e-9, 'along was mangled');
+  close(out.slice(12, 15), [1, 2, 3], 1e-9, 'position');
+});
+
+test('a lean carries its windows sideways as well as tilting them', () => {
+  // The position half of the fix, which was never wrong: a window 10m up on a
+  // 5m lean over 10m moves the full 5m. The NORMAL is unchanged here because a
+  // shear in z leaves horizontal directions alone; it is `up` that tilts, which
+  // the test above measures.
   const warp = makeWarp({ mode: DEFORM_MODE.LEAN, amount: 5, height: 10 });
   const out = axesOf(warpTransform(warp, slotAt(0, 0, 10)));
   close(out.pos, [5, 0, 10], 1e-6, 'position');
   close(out.normal, [0, -1, 0], 1e-6, 'normal');
+  close(out.along, [1, 0, 0], 1e-6, 'along the wall');
 });
 
 test('the identity warp hands the transform back untouched', () => {

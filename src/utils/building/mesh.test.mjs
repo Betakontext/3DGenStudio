@@ -12,9 +12,10 @@ import { createNode } from '../../../building/catalog.js'
 import { normalizeBuildingDoc } from '../../../building/doc.js'
 import { MASS_PROFILE } from '../../../building/mass.js'
 import {
-  buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildTrimGeometry,
-  buildingBounds, toThree,
+  buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildSlotInstances,
+  buildTrimGeometry, buildingBounds, toThree,
 } from './mesh.js'
+import { sideOfNormal } from '../../../building/sides.js'
 
 let passed = 0
 function test(name, fn) {
@@ -518,6 +519,113 @@ test('the camera bounds follow a leaning building', () => {
     { type: 'deform', modes: { mode: 'lean' }, props: { amount: 6, axis: 0 } },
   ], { shape: SQUARE, mass: { props: { levelCount: 4 } } })))
   assert.ok(leaning.max.x > upright.max.x + 5, 'a leaning building would frame off-centre')
+})
+
+// --- the instance basis -----------------------------------------------------
+//
+// THE GAP THAT LET A BUG THROUGH TWICE. building/deform.test.mjs checks what
+// warpTransform returns; nothing checked that the mesher USES it. It did not:
+// `up` was hardcoded to straight up here, so a lean - which tilts only that one
+// column - was discarded at the meshing boundary, and a fix to warpTransform
+// changed precisely nothing on screen. These tests span the boundary.
+
+/** The three basis columns of instance `n`, unscaled. */
+function instanceBasis(group, n = 0) {
+  const m = group.matrices
+  const col = k => [m[n * 16 + k * 4], m[n * 16 + k * 4 + 1], m[n * 16 + k * 4 + 2]]
+  const unit = v => {
+    const length = Math.hypot(...v)
+    return length > 1e-9 ? v.map(c => c / length) : v
+  }
+  return { along: unit(col(0)), up: unit(col(1)), normal: unit(col(2)), pos: col(3) }
+}
+
+const windowsOf = ir => buildSlotInstances(ir).find(group => group.type === 'window')
+
+test('an instance reads ALL THREE columns of its IR transform', () => {
+  // Not two and an assumption. The check is per column against the IR, mapped
+  // into three space the one way toThree defines.
+  const ir = irOf(graphWith([{ type: 'facade' }],
+    { shape: SQUARE, mass: { props: { levelCount: 2 } } }))
+  const group = windowsOf(ir)
+  assert.ok(group, 'the fixture produced no windows')
+
+  const slot = ir.slots.find(s => s.type === 'window')
+  const basis = instanceBasis(group, ir.slots.filter(s => s.type === 'window').indexOf(slot))
+  const t = slot.transform
+  for (const [name, irCol, got] of [
+    ['along', [t[0], t[1], t[2]], basis.along],
+    ['up', [t[4], t[5], t[6]], basis.up],
+    ['normal', [t[8], t[9], t[10]], basis.normal],
+  ]) {
+    const want = toThree(irCol[0], irCol[1], irCol[2])
+    const length = Math.hypot(...want) || 1
+    const unit = want.map(c => c / length)
+    assert.ok(got.every((c, i) => Math.abs(c - unit[i]) < 1e-5),
+      `${name}: instance has [${got.map(c => c.toFixed(3))}], IR says [${unit.map(c => c.toFixed(3))}]`)
+  }
+})
+
+test('an undeformed window stands exactly upright', () => {
+  // The ordinary case must not move: reading the column instead of assuming it
+  // has to cost nothing when the column is (0, 0, 1).
+  const ir = irOf(graphWith([{ type: 'facade' }],
+    { shape: SQUARE, mass: { props: { levelCount: 2 } } }))
+  const { up } = instanceBasis(windowsOf(ir))
+  assert.ok(Math.abs(Math.abs(up[1]) - 1) < 1e-9, `up is [${up.map(c => c.toFixed(4))}]`)
+})
+
+test('THE LEAN BUG, END TO END: instances tilt by the wall shear angle', () => {
+  // Reported twice from screenshots. The first fix corrected warpTransform and
+  // changed nothing visible, because this function threw the result away.
+  const amount = 6
+  const ir = irOf(graphWith([
+    { type: 'facade' },
+    { type: 'deform', modes: { mode: 'lean' }, props: { amount, axis: 0 } },
+  ], { shape: SQUARE, mass: { props: { levelCount: 3 } } }))
+
+  const height = Math.max(...ir.levels.map(l => l.z1))
+  const expected = (Math.atan(amount / height) * 180) / Math.PI
+  assert.ok(expected > 20, `the fixture leans only ${expected.toFixed(1)} degrees`)
+
+  const group = windowsOf(ir)
+  let checked = 0
+  for (let n = 0; n < group.count; n++) {
+    const { up } = instanceBasis(group, n)
+    const tilt = (Math.acos(Math.min(1, Math.abs(up[1]))) * 180) / Math.PI
+    assert.ok(Math.abs(tilt - expected) < 0.5,
+      `instance ${n} tilts ${tilt.toFixed(2)}deg, the wall shears ${expected.toFixed(2)}deg`)
+    checked += 1
+  }
+  // EVERY instance, not just the ones on one pair of walls: the original bug
+  // failed asymmetrically, so a test that sampled one window could pass while
+  // half the building was wrong.
+  assert.ok(checked >= 8, `only ${checked} instances checked`)
+})
+
+test('a leaning building tilts its windows on every wall orientation', () => {
+  // Grouped by which way each window faces, so the asymmetry the first bug had
+  // cannot hide inside an average.
+  const ir = irOf(graphWith([
+    { type: 'facade' },
+    { type: 'deform', modes: { mode: 'lean' }, props: { amount: 6, axis: 0 } },
+  ], { shape: SQUARE, mass: { props: { levelCount: 3 } } }))
+  const group = windowsOf(ir)
+
+  const tiltsBySide = new Map()
+  const slots = ir.slots.filter(s => s.type === 'window')
+  for (let n = 0; n < group.count; n++) {
+    const side = sideOfNormal(slots[n].transform[8], slots[n].transform[9])
+    const { up } = instanceBasis(group, n)
+    const tilt = (Math.acos(Math.min(1, Math.abs(up[1]))) * 180) / Math.PI
+    if (!tiltsBySide.has(side)) tiltsBySide.set(side, [])
+    tiltsBySide.get(side).push(tilt)
+  }
+  assert.equal(tiltsBySide.size, 4, `windows on ${tiltsBySide.size} sides, expected 4`)
+  for (const [side, tilts] of tiltsBySide) {
+    const worst = Math.min(...tilts)
+    assert.ok(worst > 20, `${side} windows tilt only ${worst.toFixed(2)}deg`)
+  }
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)
