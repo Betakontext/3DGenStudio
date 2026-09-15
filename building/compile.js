@@ -41,7 +41,11 @@ import { MAX_TRIM_RUNS, TRIM_WHERE, generateTrim } from './trim.js';
 import { DEFORM_MODE, makeDeform, makeWarp, warpPath, warpTransform } from './deform.js';
 import { MAX_SLOTS, generateFacade } from './facade.js';
 import { isFlatCurve } from './param.js';
-import { PALETTE_SLOTS, paletteOf } from './stylepack.js';
+import {
+  FACADE_TEXTURE_SLOTS, PALETTE_SLOTS, TRIM_TEXTURE_SLOT, nodeTextureKey, paletteOf,
+  textureKey,
+} from './stylepack.js';
+import { SIDE_ORDER } from './sides.js';
 import { normalizeBuildingDoc } from './doc.js';
 import { normalizePolygon, polygonArea, validateRing } from './poly.js';
 
@@ -201,7 +205,9 @@ export function compileBuilding(document) {
     }
     if (missing) continue;
 
-    values.set(node.id, evaluateNode(node, def, inputValue, diagnostics, doc.building.seed));
+    values.set(node.id, evaluateNode(
+      node, def, inputValue, diagnostics, doc.building.seed, doc.references,
+    ));
   }
 
   // --- phase 4: emit -------------------------------------------------------
@@ -244,8 +250,69 @@ export function compileBuilding(document) {
     ir.slots.push(makeSlot({ ...slot, transform: warpTransform(warp, slot.transform) }));
   }
 
+  ir.polygons = polygons.all();
+  ir.solids = [makeSolid({ levels: levelIndices, name: doc.name || 'building' })];
+
+  // The palette travels into the IR as material slots, ALWAYS - defaulted when
+  // no style has been applied - so a consumer never has to know whether this
+  // building has a style and never has to carry its own fallback colours.
+  const palette = paletteOf(doc);
+  for (const slot of PALETTE_SLOTS) {
+    // The texture, if this slot has one bound. Resolved THROUGH THE REFERENCE
+    // TABLE rather than read off a node - invariant 3 in doc.js - so bundling,
+    // import remapping and "what is missing" all have one place to look.
+    const entry = doc.references[textureKey(slot)];
+    ir.materials.push(makeMaterial({
+      slot,
+      color: palette[slot],
+      ref: entry?.ref || '',
+      tile: entry?.tileMetres || 0,
+    }));
+  }
+
+  // Then the per-facade and per-side overrides, which are MORE SPECIFIC and win
+  // by resolveMaterialIndex's scoring rather than by being later in the list.
+  // They carry the same palette colour as the slot they override: a texture
+  // tints its colour, and an override that reset the tint to white would make
+  // one storey of a coloured building suddenly grey.
+  for (const override of result.materialOverrides || []) {
+    ir.materials.push(makeMaterial({
+      slot: override.slot,
+      color: palette[override.slot],
+      ref: override.ref,
+      tile: override.tile || 0,
+      fromFloor: override.fromFloor,
+      toFloor: override.toFloor,
+      side: override.side,
+    }));
+  }
+
+  // A TRIM NODE THAT BINDS ITS OWN TEXTURE GETS ITS OWN MATERIAL. Trims
+  // accumulate - a plinth, a string course and a cornice are three nodes - so
+  // one shared trim material would make them impossible to tell apart. Nodes
+  // that bind nothing all share the building-wide trim entry, so the common case
+  // still costs one material and one draw call.
+  const trimMaterialBySource = new Map();
+  const buildingTrim = ir.materials.findIndex(material => material.slot === 'trim');
   for (const run of result.trims || []) {
-    ir.trims.push(makeTrim({ ...run, path: warpPath(warp, run.path) }));
+    if (!run.source || trimMaterialBySource.has(run.source)) continue;
+    const entry = doc.references[nodeTextureKey(run.source, TRIM_TEXTURE_SLOT)];
+    if (!entry?.ref) continue;
+    trimMaterialBySource.set(run.source, ir.materials.length);
+    ir.materials.push(makeMaterial({
+      slot: 'trim',
+      color: palette.trim,
+      ref: entry.ref,
+      tile: entry.tileMetres || 0,
+    }));
+  }
+
+  for (const run of result.trims || []) {
+    ir.trims.push(makeTrim({
+      ...run,
+      path: warpPath(warp, run.path),
+      material: trimMaterialBySource.get(run.source) ?? buildingTrim,
+    }));
   }
 
   if (result.roof && result.roof.rungs?.length) {
@@ -262,17 +329,6 @@ export function compileBuilding(document) {
         z: rung.z,
       })),
     };
-  }
-
-  ir.polygons = polygons.all();
-  ir.solids = [makeSolid({ levels: levelIndices, name: doc.name || 'building' })];
-
-  // The palette travels into the IR as material slots, ALWAYS - defaulted when
-  // no style has been applied - so a consumer never has to know whether this
-  // building has a style and never has to carry its own fallback colours.
-  const palette = paletteOf(doc);
-  for (const slot of PALETTE_SLOTS) {
-    ir.materials.push(makeMaterial({ slot, color: palette[slot] }));
   }
 
   // References travel into the IR so a consumer resolves textures through one
@@ -328,7 +384,7 @@ function finish(ir, diagnostics) {
  * rule 1 in catalog.js. The switch is deliberately flat: a registry of functions
  * would be tidier and would also hide the fact that there are only a handful.
  */
-function evaluateNode(node, def, inputValue, diagnostics, seed) {
+function evaluateNode(node, def, inputValue, diagnostics, seed, references = {}) {
   switch (node.type) {
     case 'footprint': {
       const raw = readProp(node, 'shape');
@@ -541,8 +597,37 @@ function evaluateNode(node, def, inputValue, diagnostics, seed) {
       // The alternative - appending - would put two windows in every bay of any
       // storey two facades both covered, which is a silently wrong building
       // rather than an obviously wrong one.
+      // PER-FACADE TEXTURE OVERRIDES, collected here because this is the only
+      // place that knows which storeys this node claims. They are recorded as
+      // SELECTORS rather than applied now - the material table is assembled once,
+      // after every node has run, so a later facade's override can win over an
+      // earlier one by the ordinary rule.
+      const overrides = [];
+      if (facade.claimed.size) {
+        const from = Math.min(...facade.claimed);
+        const to = Math.max(...facade.claimed);
+        for (const slot of FACADE_TEXTURE_SLOTS) {
+          // The facade-wide binding first, then any per-side ones. Both are
+          // optional and independent: a facade can have a side override with no
+          // facade-wide texture at all, in which case the other sides fall
+          // through to the building-wide slot.
+          for (const side of ['', ...SIDE_ORDER]) {
+            const entry = references[nodeTextureKey(node.id, slot, side)];
+            if (entry?.ref) {
+              overrides.push({
+                slot, fromFloor: from, toFloor: to, side, ref: entry.ref, tile: entry.tileMetres,
+              });
+            }
+          }
+        }
+      }
+
       const kept = (building.slots || []).filter(slot => !facade.claimed.has(slot.floorIndex));
-      return { ...building, slots: [...kept, ...facade.slots] };
+      return {
+        ...building,
+        slots: [...kept, ...facade.slots],
+        materialOverrides: [...(building.materialOverrides || []), ...overrides],
+      };
     }
 
     case 'roof': {
@@ -643,6 +728,7 @@ function evaluateNode(node, def, inputValue, diagnostics, seed) {
         includeHoles: readProp(node, 'includeHoles'),
         projection: readProp(node, 'projection'),
         depth: readProp(node, 'depth'),
+        source: node.id,
       });
 
       if (!runs.length) {

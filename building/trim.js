@@ -107,10 +107,13 @@ function ringsOf(polygon, includeHoles) {
   return rings;
 }
 
-function runFromRing(ring, z, profileId, level, projection, depth) {
+function runFromRing(ring, z, profileId, level, projection, depth, source) {
   const path = [];
   for (const point of ring) path.push(point[0], point[1], z);
-  return { profileId, path, closed: true, level, projection, depth };
+  // `source` is the node that emitted the run. Carried because trims ACCUMULATE
+  // - a plinth, a string course and a cornice are three nodes on one building -
+  // so "which trim is this" is not answerable from the run's shape alone.
+  return { profileId, path, closed: true, level, projection, depth, source };
 }
 
 /**
@@ -146,6 +149,7 @@ export function generateTrim({
   includeHoles = true,
   projection = 0.35,
   depth = 0.4,
+  source = '',
 } = {}) {
   const runs = [];
   const solid = levels.filter(level => polygonArea(level.polygon) > MIN_TRIM_AREA);
@@ -154,7 +158,7 @@ export function generateTrim({
   const push = (polygon, z, level) => {
     for (const ring of ringsOf(polygon, includeHoles)) {
       if (runs.length >= MAX_TRIM_RUNS) return;
-      runs.push(runFromRing(ring, z, where, level, projection, depth));
+      runs.push(runFromRing(ring, z, where, level, projection, depth, source));
     }
   };
 

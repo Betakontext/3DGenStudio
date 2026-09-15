@@ -25,11 +25,16 @@ import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import BuildingViewport from '../components/building/BuildingViewport'
 import BuildingStylePanel from '../components/building/BuildingStylePanel'
+import BuildingTextures from '../components/building/BuildingTextures'
+import BuildingAiPanel from '../components/building/BuildingAiPanel'
 import BuildingPlanEditor from '../components/building/BuildingPlanEditor'
 import BuildingInspector from '../components/building/BuildingInspector'
 import useBuildingDocument from '../hooks/useBuildingDocument'
 import useBuildingCompile from '../hooks/useBuildingCompile'
-import { MAX_SEED } from '../../building/doc.js'
+import {
+  MAX_SEED, REFERENCE_KIND, clearReference, setReference,
+} from '../../building/doc.js'
+import { buildingTextureRows } from '../utils/building/textureRows'
 import { CATALOG, CATALOG_ORDER, getNodeDef } from '../../building/catalog.js'
 import { SEVERITY } from '../../building/diagnostics.js'
 import {
@@ -70,6 +75,12 @@ const TABS = [
 export default function BuildingGenPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [showSettings, setShowSettings] = useState(false)
+  // Which texture slot the generate dialog is open for, or null.
+  // { refKey, guideSlot } while the generate dialog is open, or null.
+  const [generating, setGenerating] = useState(null)
+  const onGenerateTexture = useCallback(
+    (refKey, guideSlot) => setGenerating({ refKey, guideSlot }), [],
+  )
   const [message, setMessage] = useState(null)
   const [tab, setTab] = useState('preview')
   const [selectedId, setSelectedId] = useState(null)
@@ -204,6 +215,29 @@ export default function BuildingGenPage() {
     setMessage({ tone: 'ok', text: `${label} applied. Undo restores the previous graph.` })
   }, [commit])
 
+  // Binding a texture writes ONE reference-table entry - invariant 3 in doc.js -
+  // and nothing else. No node changes, so the geometry does not even recompile;
+  // only the material slot in the IR differs.
+  const onBindTexture = useCallback((refKey, asset) => {
+    commit(
+      current => setReference(current, refKey, {
+        kind: REFERENCE_KIND.IMAGE,
+        // The string form, never a bare number: this is what makes a .3dgp
+        // export carry the building's textures with no walker changes.
+        ref: `asset:${asset.assetId}`,
+        name: asset.name || '',
+        colorSpace: 'srgb',
+        tileMetres: asset.tile,
+      }),
+      { undoLabel: 'Set Texture' },
+    )
+    setMessage({ tone: 'ok', text: `${asset.name} bound.` })
+  }, [commit])
+
+  const onClearTexture = useCallback(refKey => {
+    commit(current => clearReference(current, refKey), { undoLabel: 'Clear Texture' })
+  }, [commit])
+
   // --- save ----------------------------------------------------------------
 
   const handleSave = useCallback(async ({ forkNew = false } = {}) => {
@@ -262,6 +296,20 @@ export default function BuildingGenPage() {
         </div>
       )}
 
+      {generating && (
+        <BuildingAiPanel
+          // Keyed by the reference key so switching rows REMOUNTS it. The
+          // prompt, tile size and result all default from the slot, and
+          // resetting them in an effect would be a cascading render for
+          // something a remount does for free - see react-hooks/set-state-in-effect.
+          key={generating.refKey}
+          slot={generating.guideSlot}
+          refKey={generating.refKey}
+          onGenerated={(refKey, asset) => onBindTexture(refKey, asset)}
+          onClose={() => setGenerating(null)}
+        />
+      )}
+
       {message && (
         <div className={`buildinggen__banner buildinggen__banner--${message.tone}`}>
           <span className="material-symbols-outlined">
@@ -315,6 +363,18 @@ export default function BuildingGenPage() {
             doc={doc}
             activeId={doc.building.stylePackId}
             onApply={onApplyStyle}
+          />
+
+          <BuildingTextures
+            doc={doc}
+            title="Textures"
+            rows={buildingTextureRows()}
+            onBind={onBindTexture}
+            onClear={onClearTexture}
+            onGenerate={onGenerateTexture}
+            note={'A texture tints the slot’s palette colour rather than replacing it, '
+              + 'and tiles by metres. A Facade node can override the wall and windows on '
+              + 'the storeys it covers.'}
           />
 
           <h2 className="buildinggen__title">Nodes</h2>
@@ -526,6 +586,9 @@ export default function BuildingGenPage() {
             openCurve={openCurve && openCurve.startsWith(`${selected}:`)
               ? openCurve.slice(String(selected).length + 1)
               : null}
+            onBindTexture={onBindTexture}
+            onClearTexture={onClearTexture}
+            onGenerateTexture={onGenerateTexture}
           />
         </aside>
       </div>

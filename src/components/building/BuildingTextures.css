@@ -1,0 +1,102 @@
+.btex {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.btex__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.btex__slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+}
+
+.btex__slot:hover {
+  background: var(--surface-container-high);
+}
+
+/* A square chip rather than a thumbnail: the image lives in the library and
+   fetching five previews to decorate a sidebar is a lot of round trips for
+   something the 3D view shows properly a moment later. */
+.btex__chip {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--outline-variant);
+  color: var(--on-surface-variant);
+}
+
+.btex__chip .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.btex__chip--on {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.btex__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.btex__label {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.btex__state {
+  font-size: 10px;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btex__buttons {
+  display: flex;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+
+.btex__buttons button {
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 3px;
+}
+
+.btex__buttons button:hover {
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+}
+
+.btex__buttons .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.btex__note {
+  margin: 2px 2px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--on-surface-variant);
+}

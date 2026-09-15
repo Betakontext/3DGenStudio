@@ -18,6 +18,10 @@
 //   so instead of offering a field whose value the compiler ignores.
 
 import { getNodeDef, propApplies, readMode, readProp } from '../../../building/catalog.js'
+import BuildingTextures from './BuildingTextures'
+import {
+  facadeTextureRows, hasSideOverrides, trimTextureRows,
+} from '../../utils/building/textureRows'
 import { PROP_TYPE } from '../../../building/catalog.js'
 // The VFX curve editor, unchanged. A profile curve is the same object a VFX
 // curve is - see building/param.js - so this is 743 lines of tested canvas
@@ -26,7 +30,7 @@ import { PROP_TYPE } from '../../../building/catalog.js'
 // value, and `domainLabel` because the horizontal axis here is height, not a
 // particle's age.
 import VfxCurveEditor from '../vfx/VfxCurveEditor'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './BuildingInspector.css'
 
 /**
@@ -95,9 +99,18 @@ export default function BuildingInspector({
   onEditPlan,
   onEditCurve,
   openCurve = null,
+  onBindTexture,
+  onClearTexture,
+  onGenerateTexture,
 }) {
   const node = doc?.nodes?.find(candidate => candidate.id === selectedId) || null
   const def = node ? getNodeDef(node.type) : null
+  // Opened by default when this facade ALREADY has a per-side binding: a
+  // collapsed disclosure hiding a setting that is doing something is how a
+  // building ends up with a texture nobody can find.
+  const [sidesOpen, setSidesOpen] = useState(
+    () => Boolean(node && doc && hasSideOverrides(doc, node.id)),
+  )
 
   if (!node || !def) {
     return (
@@ -240,6 +253,55 @@ export default function BuildingInspector({
           <summary>More</summary>
           <section className="binspect__section">{advanced.map(renderProp)}</section>
         </details>
+      )}
+
+      {/* PER-FACADE TEXTURES, on the Facade node rather than in the sidebar,
+          because they apply to the storeys THIS node covers and there is nowhere
+          else that fact is visible. Leaving every row empty is the normal case:
+          the building-wide slots then dress the whole thing, which is what a
+          building usually wants. */}
+      {/* A Trim node's own material. One row, no sides: a run is one mitred loop
+          - see stylepack.js TRIM_TEXTURE_SLOT. Left empty it uses the
+          building-wide trim slot, so a plinth and a cornice match by default and
+          differ only when asked. */}
+      {node.type === 'trim' && onBindTexture && (
+        <section className="binspect__section binspect__section--textures">
+          <BuildingTextures
+            doc={doc}
+            title="Texture"
+            rows={trimTextureRows(doc, node.id)}
+            onBind={onBindTexture}
+            onClear={onClearTexture}
+            onGenerate={onGenerateTexture}
+            note="Each Trim node can carry its own; empty uses the building-wide trim."
+          />
+        </section>
+      )}
+
+      {node.type === 'facade' && onBindTexture && (
+        <section className="binspect__section binspect__section--textures">
+          <BuildingTextures
+            doc={doc}
+            title="Textures"
+            rows={facadeTextureRows(doc, node.id, { expanded: sidesOpen })}
+            onBind={onBindTexture}
+            onClear={onClearTexture}
+            onGenerate={onGenerateTexture}
+            note={sidesOpen
+              ? 'A side overrides this facade, which overrides the building.'
+              : 'Empty rows use the building-wide texture.'}
+          />
+          <button
+            type="button"
+            className="binspect__sides-toggle"
+            onClick={() => setSidesOpen(open => !open)}
+          >
+            <span className="material-symbols-outlined">
+              {sidesOpen ? 'expand_less' : 'expand_more'}
+            </span>
+            {sidesOpen ? 'Hide sides' : 'Different texture per side'}
+          </button>
+        </section>
       )}
     </div>
   )

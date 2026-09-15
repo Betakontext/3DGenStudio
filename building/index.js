@@ -96,6 +96,15 @@ export {
 export { MAX_SLOTS, generateFacade } from './facade.js';
 
 export {
+  SIDE,
+  SIDE_LABEL,
+  SIDE_ORDER,
+  isSide,
+  sideOfEdge,
+  sideOfNormal,
+} from './sides.js';
+
+export {
   MAX_TRIM_RUNS,
   TRIM_PROFILE,
   TRIM_WHERE,
@@ -113,18 +122,23 @@ export {
 
 export {
   DEFAULT_PALETTE,
+  FACADE_TEXTURE_SLOTS,
   PALETTE_SLOTS,
   RESERVED_STAGES,
   STYLE_PACK_FORMAT,
   STYLE_PACK_ID_PATTERN,
+  TEXTURE_SLOTS,
+  TRIM_TEXTURE_SLOT,
   VOCABULARY_KIND,
   VOCABULARY_SLOTS,
   applyStylePack,
   createStylePack,
+  nodeTextureKey,
   normalizeStylePack,
   packAssetNeeds,
   paletteOf,
   stylePackSummary,
+  textureKey,
   validateStylePack,
 } from './stylepack.js';
 
@@ -177,6 +191,7 @@ export {
   makeSolid,
   makeTrim,
   quantize,
+  resolveMaterialIndex,
   unflattenRing,
   validateIrJson,
 } from './ir.js';

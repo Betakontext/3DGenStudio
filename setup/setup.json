@@ -727,7 +727,38 @@
 					]
 				}
 			]
-		}	
+		},
+		{
+			"Name": "MiniMax H3",
+			"DiffusionModels": {
+				"BF16":   { "FileName": "minimax_h3_fl2va_pruned_bf16.safetensors",   "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_bf16.safetensors?download=true",   "Size": 40.2 },
+				"INT8":   { "FileName": "minimax_h3_fl2va_int8_convrot.safetensors",   "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors?download=true",   "Size": 34.0 },
+				"PRUNED INT8":   { "FileName": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors?download=true", "Size": 21.0  },
+				"PRUNDED FP8":   { "FileName": "minimax_h3_fl2va_pruned_fp8_scaled.safetensors", "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors?download=true", "Size": 21.0  }
+			},
+			"VAE":         [
+				{ "FileName": "minimax_h3_video_vae_fp16.safetensors",            "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors?download=true",                          "Size": 5.21 },
+				{ "FileName": "minimax_h3_audio_vae_fp32.safetensors",            "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors?download=true",                          "Size": 0.6 }
+			],
+			"LoRA":[        				
+				{ "FileName": "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_resized_avg_rank_64_bf16.safetensors", "Url": "https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/main/minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_resized_avg_rank_64_bf16.safetensors?download=true", "Size": 0.97 }
+			],			
+			"TextEncoder": { "FileName": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors?download=true",          "Size": 15.7 },
+			"Workflows": [
+				{
+					"Name": "Gen MultiView Images with MiniMax H3",
+					"File": "setup/MiniMax H3 - MultiView Subject.json",
+					"Inputs": [
+						{ "Node": "145", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+						{ "Node": "105:15",  "Input": "noise_seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "115",  "Input": "megapixels", "Name": "Maga Pixels",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "154", "Name": "Save Images", "Type": "Image" }
+					]
+				}
+			]
+		}		
 	],
 	"OtherWorkflows":[
 		{

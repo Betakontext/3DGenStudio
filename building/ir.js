@@ -251,8 +251,68 @@ export function makeRoofRung({ polygons = [], z = 0 }) {
  * them want this file's opinion about roughness curves. `color` is what the
  * preview draws when `ref` is empty, which is every shipped style pack today.
  */
-export function makeMaterial({ slot, color = '', ref = '' }) {
-  return { slot: String(slot || ''), color: String(color || ''), ref: String(ref || '') };
+export function makeMaterial({
+  slot, color = '', ref = '', tile = 0, fromFloor = -1, toFloor = -1, side = '',
+}) {
+  return {
+    slot: String(slot || ''),
+    color: String(color || ''),
+    ref: String(ref || ''),
+    // Metres per tile. Zero means "no texture bound", which is not the same as
+    // a tile size of zero and is why this is not defaulted to 2 here.
+    tile: quantize(tile),
+    // WHAT THIS ENTRY APPLIES TO, as a selector rather than as an expanded list.
+    // -1 and '' are WILDCARDS: "any storey", "any side". A 40-storey building
+    // with one brick has one entry, not 160, and adding a storey does not
+    // rewrite the material table.
+    fromFloor: fromFloor | 0,
+    toFloor: toFloor | 0,
+    side: String(side || ''),
+  };
+}
+
+/**
+ * How specific a material entry is. Higher wins.
+ *
+ * A side-and-storey entry beats a storey entry beats the building-wide one, so
+ * the author's chain reads the way they set it up: a global brick, a stone
+ * ground floor, and a rendered rear wall on that ground floor. Ties cannot
+ * happen between different specificities; between equals the LAST entry wins,
+ * which is the same "later overrides earlier" rule the facade nodes follow.
+ */
+function materialSpecificity(entry) {
+  return (entry.side ? 2 : 0) + (entry.fromFloor >= 0 ? 1 : 0);
+}
+
+/**
+ * The index of the material an element should draw with.
+ *
+ * EXPORTED SO THE MESHER AND THE TESTS RESOLVE IDENTICALLY - the same reason
+ * roof.js exports rungKind. A consumer that re-implemented this would drift, and
+ * the symptom would be one wall of a building wearing the wrong material.
+ *
+ * @param {object} ir
+ * @param {string} slot        'wall', 'opening', ...
+ * @param {number} floorIndex  counted from the ground; -1 for things with no storey
+ * @param {string} side        a SIDE, or '' when it does not matter
+ * @returns {number} an index into ir.materials, or -1
+ */
+export function resolveMaterialIndex(ir, slot, floorIndex = -1, side = '') {
+  const materials = ir?.materials || [];
+  let best = -1;
+  let bestScore = -1;
+  for (let i = 0; i < materials.length; i++) {
+    const entry = materials[i];
+    if (entry.slot !== slot) continue;
+    if (entry.side && entry.side !== side) continue;
+    if (entry.fromFloor >= 0 && (floorIndex < entry.fromFloor || floorIndex > entry.toFloor)) {
+      continue;
+    }
+    const score = materialSpecificity(entry);
+    // >= so a later entry of equal specificity wins - see above.
+    if (score >= bestScore) { best = i; bestScore = score; }
+  }
+  return best;
 }
 
 /**
@@ -264,6 +324,7 @@ export function makeMaterial({ slot, color = '', ref = '' }) {
  */
 export function makeTrim({
   profileId = '', path = [], closed = false, level = 0, projection = 0, depth = 0,
+  material = 0,
 }) {
   return {
     profileId: String(profileId || ''),
@@ -276,6 +337,12 @@ export function makeTrim({
     // different sizes are ordinary on one building.
     projection: quantize(projection),
     depth: quantize(depth),
+    // AN INDEX INTO ir.materials, resolved by the compiler rather than selected
+    // by the consumer. Walls and openings are derived from level polygons and
+    // have no node to point at, so they need the selector in the material entry;
+    // a trim RUN is a discrete thing emitted by one node, and indexing a table
+    // is what the rest of the IR already does everywhere else.
+    material: material | 0,
   };
 }
 

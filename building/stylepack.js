@@ -57,6 +57,56 @@ export const STYLE_PACK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;
  */
 export const PALETTE_SLOTS = ['wall', 'trim', 'roof', 'opening', 'door', 'accent'];
 
+/**
+ * The palette slots a TEXTURE can be bound to, and the reference key each uses.
+ *
+ * `accent` is absent on purpose: it colours the storey outlines, which are lines
+ * and cannot carry an image. Offering a slot that silently does nothing is the
+ * failure this whole feature keeps having to fix.
+ */
+export const TEXTURE_SLOTS = ['wall', 'trim', 'roof', 'opening', 'door'];
+
+/** The doc.references key a BUILDING-WIDE texture slot binds through. Invariant 3. */
+export function textureKey(slot) {
+  return `tex_${slot}`;
+}
+
+/**
+ * The key a per-node texture binds through, optionally for one side.
+ *
+ * KEYED ON THE NODE ID, which is the house pattern - vfx/doc.js invariant 3 does
+ * the same for a block's own assets. It means deleting the node leaves its
+ * texture keys behind, which is exactly what danglingReferences is for and is
+ * far better than the alternative: keying on what the node covers, where editing
+ * "floors 2-4" to "floors 2-5" would silently drop the binding.
+ *
+ * Reads as `<nodeId>.wall`, `<nodeId>.opening.north`, `<nodeId>.trim`.
+ */
+export function nodeTextureKey(nodeId, slot, side = '') {
+  return side ? `${nodeId}.${slot}.${side}` : `${nodeId}.${slot}`;
+}
+
+/**
+ * The slots a Facade node can override.
+ *
+ * Only two, and not the other three: a Facade node claims STOREYS and dresses
+ * their openings, so a wall and an opening are things it can speak for. A roof
+ * and a plinth are not - they belong to the Roof and Trim nodes, and offering
+ * them here would be a control that silently does nothing.
+ */
+export const FACADE_TEXTURE_SLOTS = ['wall', 'opening'];
+
+/**
+ * What a Trim node can override: its own run, and only as a whole.
+ *
+ * NO PER-SIDE VARIANT, unlike a facade, and for a geometric reason rather than a
+ * scoping one. A trim run is ONE closed loop that mitres at every corner - see
+ * trim.js - so a material change part-way round would fall in the middle of a
+ * mitred joint, where two sections meet as one solid. Splitting a facade by side
+ * is clean because walls already end at the corners; splitting a cornice is not.
+ */
+export const TRIM_TEXTURE_SLOT = 'trim';
+
 /** Which vocabulary slots a pack may declare. Mirrors ir.js SLOT_TYPE plus trim. */
 export const VOCABULARY_SLOTS = [
   'window', 'door', 'pillar', 'cornice', 'roof_edge', 'wall', 'sign',

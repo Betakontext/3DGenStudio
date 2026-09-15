@@ -241,3 +241,57 @@
   grid-column: 1 / -1;
   margin: 6px -6px 2px;
 }
+
+/* The per-facade texture section. Set apart from the props above it with a rule,
+   because it edits the reference table rather than the node's own properties and
+   reading it as another property would be misleading. */
+.binspect__section--textures {
+  border-top: 1px solid var(--outline-variant);
+  padding-top: 10px;
+  gap: 4px;
+}
+
+.binspect__sides-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 3px 6px 3px 3px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.binspect__sides-toggle:hover {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+}
+
+.binspect__sides-toggle .material-symbols-outlined {
+  font-size: 16px;
+}
+
+/* A per-side row is subordinate to the facade row above it, and the indent is
+   what says so - four rows called North/East/South/West at the same level as
+   "Wall" would read as four more materials rather than as one split four ways. */
+.btex__slot--sub {
+  padding-left: 22px;
+}
+
+.btex__slot--sub .btex__chip {
+  width: 20px;
+  height: 20px;
+}
+
+.btex__slot--sub .btex__chip .material-symbols-outlined {
+  font-size: 13px;
+}
+
+.btex__slot--sub .btex__label {
+  font-size: 12px;
+}

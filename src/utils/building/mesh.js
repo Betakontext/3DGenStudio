@@ -36,6 +36,8 @@ import * as THREE from 'three'
 import { differencePolygons } from '../../../building/clip.js'
 import { rungKind } from '../../../building/roof.js'
 import { makeWarp } from '../../../building/deform.js'
+import { resolveMaterialIndex } from '../../../building/ir.js'
+import { sideOfEdge, sideOfNormal } from '../../../building/sides.js'
 import { trimSection } from '../../../building/trim.js'
 
 /**
@@ -120,13 +122,26 @@ function unflatten(flat) {
  * walls, which is what keeps the UVs independent per face.
  */
 function createBuilder({ recomputeNormals = false } = {}) {
-  const positions = []
-  const normals = []
-  const uvs = []
+  // ONE BUCKET PER MATERIAL, concatenated at build time into one geometry with
+  // draw GROUPS. A building with a stone ground floor and brick above is two
+  // materials and therefore two draw calls whatever happens; putting them in one
+  // buffer with two groups is the cheap way to have that, and it keeps every
+  // caller writing triangles in whatever order suits it rather than having to
+  // emit them material by material.
+  const buckets = new Map()
+  const bucketFor = group => {
+    let bucket = buckets.get(group)
+    if (!bucket) {
+      bucket = { positions: [], normals: [], uvs: [] }
+      buckets.set(group, bucket)
+    }
+    return bucket
+  }
 
   return {
     /** One triangle, with a shared face normal. Points are already in three space. */
-    tri(a, b, c, normal, uvA, uvB, uvC) {
+    tri(a, b, c, normal, uvA, uvB, uvC, group = 0) {
+      const { positions, normals, uvs } = bucketFor(group)
       positions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2])
       // A DEFORMED WALL'S NORMAL IS NOT THE ONE THE CALLER COMPUTED. Every caller
       // works out the face normal from the undeformed plan, which is exact and
@@ -153,16 +168,40 @@ function createBuilder({ recomputeNormals = false } = {}) {
       uvs.push(uvA[0], uvA[1], uvB[0], uvB[1], uvC[0], uvC[1])
     },
     get triangleCount() {
-      return positions.length / 9
+      let total = 0
+      for (const bucket of buckets.values()) total += bucket.positions.length / 9
+      return total
     },
+    /**
+     * @returns {{geometry: THREE.BufferGeometry, groups: Array<number>}}
+     *   `groups[i]` is the ir.materials index that geometry group i draws with.
+     */
     build() {
+      const positions = []
+      const normals = []
+      const uvs = []
+      const groups = []
       const geometry = new THREE.BufferGeometry()
+
+      // Sorted, so the same building always produces the same group order and a
+      // golden test of the geometry is possible at all - Map iteration is
+      // insertion order, which depends on which wall happened to be built first.
+      for (const group of [...buckets.keys()].sort((a, b) => a - b)) {
+        const bucket = buckets.get(group)
+        const start = positions.length / 3
+        positions.push(...bucket.positions)
+        normals.push(...bucket.normals)
+        uvs.push(...bucket.uvs)
+        geometry.addGroup(start, bucket.positions.length / 3, groups.length)
+        groups.push(group)
+      }
+
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
       geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
       geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
       geometry.computeBoundingSphere()
       geometry.computeBoundingBox()
-      return geometry
+      return { geometry, groups }
     },
   }
 }
@@ -179,7 +218,7 @@ function createBuilder({ recomputeNormals = false } = {}) {
  * a facade material is tiled, and normalising per face would stretch the same
  * brick to three different sizes on three different walls.
  */
-function addWalls(builder, ring, z0, z1, uOffset = 0, place = toThree) {
+function addWalls(builder, ring, z0, z1, uOffset = 0, place = toThree, groupFor = null) {
   const n = ring.length
   if (n < 3) return uOffset
   let u = uOffset
@@ -208,8 +247,13 @@ function addWalls(builder, ring, z0, z1, uOffset = 0, place = toThree) {
     const v0 = z0
     const v1 = z1
 
-    builder.tri(A, B, C, normal, [u0, v0], [u1, v0], [u1, v1])
-    builder.tri(A, C, D, normal, [u0, v0], [u1, v1], [u0, v1])
+    // WHICH SIDE THIS WALL IS ON, from the edge itself. The caller supplies the
+    // storey; this is the other half of the material selector, and computing it
+    // here means no consumer has to carry per-edge material data in the IR.
+    const group = groupFor ? groupFor(sideOfEdge(a, b)) : 0
+
+    builder.tri(A, B, C, normal, [u0, v0], [u1, v0], [u1, v1], group)
+    builder.tri(A, C, D, normal, [u0, v0], [u1, v1], [u0, v1], group)
     u = u1
   }
   return u
@@ -223,7 +267,7 @@ function addWalls(builder, ring, z0, z1, uOffset = 0, place = toThree) {
  * the triangulator, so a change in Earcut's output order cannot silently turn
  * every floor into a hole.
  */
-function addCap(builder, outer, holes, z, up, place = toThree) {
+function addCap(builder, outer, holes, z, up, place = toThree, group = 0) {
   const faces = triangulate(outer, holes)
   if (faces.length === 0) return
 
@@ -250,6 +294,7 @@ function addCap(builder, outer, holes, z, up, place = toThree) {
       // Caps are UV-mapped in plan metres, so a floor material tiles at the same
       // scale as the walls rather than being stretched to the building's bounds.
       [p[0], p[1]], [q[0], q[1]], [r[0], r[1]],
+      group,
     )
   }
 }
@@ -282,15 +327,23 @@ export function buildBuildingGeometry(ir) {
     const holes = (polygon.holes || []).map(unflatten)
     if (outer.length < 3) continue
 
-    let u = addWalls(builder, outer, level.z0, level.z1, 0, place)
-    for (const hole of holes) u = addWalls(builder, hole, level.z0, level.z1, u, place)
+    // The wall material for THIS STOREY, as a function of which side each edge
+    // faces. Resolved per edge rather than per level because a facade can
+    // override one side and leave the rest to the building-wide slot.
+    const wallFor = side => resolveMaterialIndex(ir, 'wall', level.index, side)
+    // A cap has no side - it is horizontal - so it takes the storey's
+    // side-agnostic wall material.
+    const capGroup = wallFor('')
 
-    addCap(builder, outer, holes, level.z1, true, place)
-    addCap(builder, outer, holes, level.z0, false, place)
+    let u = addWalls(builder, outer, level.z0, level.z1, 0, place, wallFor)
+    for (const hole of holes) u = addWalls(builder, hole, level.z0, level.z1, u, place, wallFor)
+
+    addCap(builder, outer, holes, level.z1, true, place, capGroup)
+    addCap(builder, outer, holes, level.z0, false, place, capGroup)
   }
 
   if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
-  return { geometry: builder.build(), triangleCount: builder.triangleCount }
+  return { ...builder.build(), triangleCount: builder.triangleCount }
 }
 
 /**
@@ -390,6 +443,9 @@ export function buildRoofGeometry(ir) {
 
   const place = placer(ir)
   const builder = createBuilder({ recomputeNormals: place !== toThree })
+  // A roof is one material for the whole surface: it has no storeys and its
+  // sides are not walls, so neither part of the selector applies to it.
+  const roofGroup = resolveMaterialIndex(ir, 'roof', -1, '')
   const polygonAt = index => {
     const stored = ir.polygons[index]
     if (!stored) return null
@@ -414,8 +470,10 @@ export function buildRoofGeometry(ir) {
       // Straight up: the contour's own walls. Outward, because a riser is the
       // face of a step and is seen from outside.
       for (const polygon of lowerPolys) {
-        let u = addWalls(builder, polygon.outer, lower.z, upper.z, 0, place)
-        for (const hole of polygon.holes) u = addWalls(builder, hole, lower.z, upper.z, u, place)
+        let u = addWalls(builder, polygon.outer, lower.z, upper.z, 0, place, () => roofGroup)
+        for (const hole of polygon.holes) {
+          u = addWalls(builder, hole, lower.z, upper.z, u, place, () => roofGroup)
+        }
       }
       continue
     }
@@ -423,7 +481,7 @@ export function buildRoofGeometry(ir) {
 
     // Slope or tread: the annulus between the two contours.
     for (const band of differencePolygons(lowerPolys, upperPolys)) {
-      addRoofBand(builder, band, lower.z, upper.z, upperPolys, place)
+      addRoofBand(builder, band, lower.z, upper.z, upperPolys, place, roofGroup)
     }
   }
 
@@ -432,11 +490,11 @@ export function buildRoofGeometry(ir) {
   // the building has a hole where the sky is.
   const top = roof.rungs[roof.rungs.length - 1]
   for (const polygon of rungPolygons(top)) {
-    addCap(builder, polygon.outer, polygon.holes, top.z, true, place)
+    addCap(builder, polygon.outer, polygon.holes, top.z, true, place, roofGroup)
   }
 
   if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
-  return { geometry: builder.build(), triangleCount: builder.triangleCount }
+  return { ...builder.build(), triangleCount: builder.triangleCount }
 }
 
 /**
@@ -448,7 +506,7 @@ export function buildRoofGeometry(ir) {
  * coordinates, quantised to its integer lattice, so the vertices are equal in
  * value but never the same objects.
  */
-function addRoofBand(builder, band, lowerZ, upperZ, upperPolys, place = toThree) {
+function addRoofBand(builder, band, lowerZ, upperZ, upperPolys, place = toThree, group = 0) {
   const faces = triangulate(band.outer, band.holes)
   if (faces.length === 0) return
 
@@ -495,6 +553,7 @@ function addRoofBand(builder, band, lowerZ, upperZ, upperPolys, place = toThree)
       [a[0], a[1]],
       flip ? [c[0], c[1]] : [b[0], b[1]],
       flip ? [b[0], b[1]] : [c[0], c[1]],
+      group,
     )
   }
 }
@@ -529,6 +588,14 @@ export function buildTrimGeometry(ir) {
   const builder = createBuilder({ recomputeNormals: true })
 
   for (const run of runs) {
+    // EACH RUN CARRIES ITS OWN MATERIAL. Trims accumulate - a plinth, a string
+    // course and a cornice are three nodes - and the compiler has already
+    // resolved which entry each one draws with, so there is nothing to select
+    // here. A run from before per-trim materials existed has index 0; falling
+    // back to the trim slot keeps such an IR looking right.
+    const trimGroup = run.material >= 0
+      ? run.material
+      : resolveMaterialIndex(ir, 'trim', -1, '')
     const section = trimSection(run.profileId, run.projection, run.depth)
     if (section.length < 3) continue
 
@@ -602,14 +669,14 @@ export function buildTrimGeometry(ir) {
         // real one from each triangle. Outward is right for the whole section
         // except its back face, which is buried in the wall.
         const seed = [a.nx, 0, -a.ny]
-        builder.tri(A, B, C, seed, uA, uB, uC)
-        builder.tri(A, C, D, seed, uA, uC, uD)
+        builder.tri(A, B, C, seed, uA, uB, uC, trimGroup)
+        builder.tri(A, C, D, seed, uA, uC, uD, trimGroup)
       }
     }
   }
 
   if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
-  return { geometry: builder.build(), triangleCount: builder.triangleCount }
+  return { ...builder.build(), triangleCount: builder.triangleCount }
 }
 
 /** The outward normal in plan of the edge a -> b, or null if it has no length. */
@@ -644,17 +711,29 @@ function edgeNormal(a, b) {
 export function buildSlotInstances(ir) {
   if (!ir || !Array.isArray(ir.slots) || ir.slots.length === 0) return []
 
-  const byType = new Map()
+  // GROUPED BY TYPE *AND* MATERIAL, not by type alone. An InstancedMesh draws
+  // every instance with one material, so a ground-floor shopfront in one glass
+  // and the upper windows in another are two meshes however they are counted -
+  // and a facade that overrides only its north side splits again. The key is
+  // built from both so the split falls out of the grouping rather than needing a
+  // second pass.
+  const byGroup = new Map()
   for (const slot of ir.slots) {
-    if (!byType.has(slot.type)) byType.set(slot.type, [])
-    byType.get(slot.type).push(slot)
+    // A door resolves against the door slot, everything else against openings -
+    // the same two palette slots the viewport has always drawn them with.
+    const materialSlot = slot.type === 'door' ? 'door' : 'opening'
+    const side = sideOfNormal(slot.transform[8], slot.transform[9])
+    const material = resolveMaterialIndex(ir, materialSlot, slot.floorIndex, side)
+    const key = `${slot.type}#${material}`
+    if (!byGroup.has(key)) byGroup.set(key, { type: slot.type, material, slots: [] })
+    byGroup.get(key).slots.push(slot)
   }
 
   const out = []
   // Sorted, so the draw order - and therefore anything comparing two builds -
   // does not depend on which slot happened to be emitted first.
-  for (const type of [...byType.keys()].sort()) {
-    const slots = byType.get(type)
+  for (const key of [...byGroup.keys()].sort()) {
+    const { type, material, slots } = byGroup.get(key)
     const matrices = new Float32Array(slots.length * 16)
     const matrix = new THREE.Matrix4()
     const local = new THREE.Matrix4()
@@ -686,7 +765,11 @@ export function buildSlotInstances(ir) {
     })
 
     out.push({
+      // The key, not the type, because two groups can share a type and React
+      // needs them to be distinguishable.
+      key,
       type,
+      material,
       count: slots.length,
       geometry: new THREE.BoxGeometry(1, 1, 1),
       matrices,

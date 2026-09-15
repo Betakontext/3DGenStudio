@@ -235,3 +235,45 @@ export async function fetchStylePack(id) {
   if (!response.ok) throw new Error(payload?.error || 'Could not load the style pack')
   return payload.style
 }
+
+// --- textures ----------------------------------------------------------------
+
+/**
+ * Asset id -> image URL, cached for the session.
+ *
+ * The IR stores 'asset:<id>' strings - invariant 4 - which is exactly what makes
+ * a .3dgp export carry a building's textures, and exactly what a renderer cannot
+ * use. One round trip to the record route turns it into a URL, and the cache
+ * matters because a five-slot building re-resolves on every recompile otherwise.
+ *
+ * Failures are cached as null rather than retried: a deleted asset would
+ * otherwise re-request on every frame the preview rebuilds.
+ */
+const textureUrlCache = new Map()
+
+export async function resolveAssetImageUrl(reference) {
+  const match = /^asset:(\d+)$/.exec(String(reference || ''))
+  if (!match) return null
+  const id = match[1]
+  if (textureUrlCache.has(id)) return textureUrlCache.get(id)
+
+  const promise = (async () => {
+    try {
+      const response = await fetch(`${API_BASE}/assets/record?assetId=${id}`)
+      if (!response.ok) return null
+      return buildingFileUrl(await response.json())
+    } catch {
+      return null
+    }
+  })()
+  textureUrlCache.set(id, promise)
+  const url = await promise
+  textureUrlCache.set(id, url)
+  return url
+}
+
+/** Forget a cached URL, for when an asset has just been replaced in place. */
+export function forgetAssetImageUrl(reference) {
+  const match = /^asset:(\d+)$/.exec(String(reference || ''))
+  if (match) textureUrlCache.delete(match[1])
+}

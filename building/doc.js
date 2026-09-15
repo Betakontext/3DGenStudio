@@ -175,6 +175,15 @@ function normalizeReferenceEntry(entry) {
   if (kind === REFERENCE_KIND.IMAGE && (entry.colorSpace === 'srgb' || entry.colorSpace === 'linear')) {
     out.colorSpace = entry.colorSpace;
   }
+  // HOW MANY METRES ONE TILE COVERS, and it belongs on the reference rather than
+  // on a node: wall UVs are already in metres (see mesh.js), so this is the only
+  // number that turns an image into masonry at the right scale - and brickwork,
+  // roof tiles and a timber board all want different ones. A texture with no
+  // stated tile is 2m, which is about one storey's worth of brick.
+  if (kind === REFERENCE_KIND.IMAGE) {
+    const tile = Number(entry.tileMetres);
+    out.tileMetres = Number.isFinite(tile) && tile > 0 ? Math.min(tile, 100) : 2;
+  }
   return out;
 }
 

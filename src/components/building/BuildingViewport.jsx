@@ -15,7 +15,7 @@
 // though: a live preview churns a real GPU buffer on every slider drag, and
 // leaking those is how a long session ends up out of memory.
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import { Grid } from '@react-three/drei'
 import * as THREE from 'three'
@@ -27,6 +27,12 @@ import {
   buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildSlotInstances,
   buildTrimGeometry, buildingBounds, irPalette,
 } from '../../utils/building/mesh'
+import {
+  disposeTextures, loadBuildingTextures, textureKeyOf,
+} from '../../utils/building/textures'
+import {
+  buildMaterials, disposeMaterials, materialsForGroups,
+} from '../../utils/building/materials'
 
 /**
  * Frames the camera, and makes left-drag orbit.
@@ -159,18 +165,28 @@ export default function BuildingViewport({
   //
   // Switching back to Preview rebuilds once, which is what an unmounted viewport
   // did anyway - so this costs nothing and removes the whole hidden cost.
-  const { geometry, roofGeometry, trimGeometry, outlines, box, slots } = useMemo(() => {
+  const {
+    geometry, groups, roofGeometry, roofGroups, trimGeometry, trimGroups,
+    outlines, box, slots,
+  } = useMemo(() => {
     if (!active) {
       return {
-        geometry: null, roofGeometry: null, trimGeometry: null, outlines: null,
-        box: null, slots: [],
+        geometry: null, groups: [], roofGeometry: null, roofGroups: [],
+        trimGeometry: null, trimGroups: [], outlines: null, box: null, slots: [],
       }
     }
     const built = buildBuildingGeometry(ir)
+    const roof = buildRoofGeometry(ir)
+    const trim = buildTrimGeometry(ir)
     return {
       geometry: built.geometry,
-      roofGeometry: buildRoofGeometry(ir).geometry,
-      trimGeometry: buildTrimGeometry(ir).geometry,
+      // Which ir.materials entry each draw group uses. The building's walls are
+      // one geometry with several groups once a facade overrides a material.
+      groups: built.groups || [],
+      roofGeometry: roof.geometry,
+      roofGroups: roof.groups || [],
+      trimGeometry: trim.geometry,
+      trimGroups: trim.groups || [],
       outlines: buildLevelOutlines(ir),
       box: buildingBounds(ir),
       slots: buildSlotInstances(ir),
@@ -190,16 +206,52 @@ export default function BuildingViewport({
   // palette the compiler did not actually use.
   const palette = useMemo(() => irPalette(ir), [ir])
 
-  const slotMeshes = useMemo(() => slots.map(group => {
-    const material = new THREE.MeshStandardMaterial({
-      // Doors read warmer than windows in every default palette, purely so the
-      // front of the building is findable at a glance.
-      color: group.type === 'door' ? palette.door : palette.opening,
-      roughness: 0.4,
-      metalness: 0.1,
+  // THE TEXTURES, KEYED ON THE BINDINGS AND NOT ON THE IR. A slider drag
+  // recompiles the whole document many times a second; reloading five images at
+  // that rate would swamp the network and churn the GPU for no visible change,
+  // so the load only re-runs when a slot's asset or tile size actually differs.
+  const textureKey = useMemo(() => textureKeyOf(ir), [ir])
+  const [textures, setTextures] = useState({})
+  useEffect(() => {
+    if (!active) return undefined
+    let alive = true
+    let loaded = null
+    loadBuildingTextures(ir).then(result => {
+      // Disposed rather than kept if the effect lost the race: an await that
+      // resolves after unmount would otherwise leak every texture it loaded.
+      if (!alive) { disposeTextures(result); return }
+      loaded = result
+      setTextures(result)
     })
+    return () => {
+      alive = false
+      disposeTextures(loaded)
+      setTextures({})
+    }
+    // ir is deliberately not a dependency - textureKey is its texture-relevant
+    // projection, and depending on ir would defeat the whole point.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textureKey, active])
+
+  // ONE MATERIAL PER ir.materials ENTRY, built here and indexed by the draw
+  // groups. Declaring them as JSX stopped working when a facade could override a
+  // surface: the count is a property of the document now, not of this file.
+  const materials = useMemo(() => buildMaterials(ir, textures), [ir, textures])
+  const materialsRef = useRef(materials)
+  useEffect(() => {
+    const previous = materialsRef.current
+    materialsRef.current = materials
+    if (previous && previous !== materials) disposeMaterials(previous)
+  }, [materials])
+  useEffect(() => () => disposeMaterials(materialsRef.current), [])
+
+  const slotMeshes = useMemo(() => slots.map(group => {
+    // Already resolved by buildSlotInstances, which split the instances by
+    // material in the first place - so a ground-floor shopfront and the upper
+    // windows arrive here as two groups pointing at two entries.
+    const material = materials[group.material] || materials[0]
     const mesh = new THREE.InstancedMesh(group.geometry, material, group.count)
-    mesh.name = group.type
+    mesh.name = group.key
     mesh.instanceMatrix.set(group.matrices)
     mesh.instanceMatrix.needsUpdate = true
     // The bounding sphere three computes for an InstancedMesh ignores the
@@ -207,7 +259,7 @@ export default function BuildingViewport({
     // building's own origin left the frustum.
     mesh.frustumCulled = false
     return mesh
-  }), [slots, palette.door, palette.opening])
+  }), [slots, materials])
 
   const slotsRef = useRef(slotMeshes)
   useEffect(() => {
@@ -216,14 +268,17 @@ export default function BuildingViewport({
     if (previous && previous !== slotMeshes) {
       for (const mesh of previous) {
         mesh.geometry?.dispose?.()
-        mesh.material?.dispose?.()
+        // NOT the material: it belongs to the shared materials array, which has
+        // its own disposal above. Disposing it here would free a material three
+        // other meshes are still drawing with.
+        mesh.dispose?.()
       }
     }
   }, [slotMeshes])
   useEffect(() => () => {
     for (const mesh of slotsRef.current || []) {
       mesh.geometry?.dispose?.()
-      mesh.material?.dispose?.()
+      mesh.dispose?.()
     }
   }, [])
 
@@ -304,12 +359,12 @@ export default function BuildingViewport({
 
       <group position={viewOffset}>
       {geometry && (
-        <mesh geometry={geometry}>
-          {/* The style pack's wall colour, or a neutral grey when there is no
-              style: a flat pale surface is the one that makes a setback or a
-              batter readable as geometry rather than as shading. */}
-          <meshStandardMaterial color={palette.wall} roughness={0.85} metalness={0.0} />
-        </mesh>
+        /* THE MATERIAL IS AN ARRAY, one per draw group, because a building is no
+           longer one surface: a facade can override its storeys' walls, and again
+           on one side of them, so mesh.js emits a group per material and this
+           indexes into the shared table. A single material here would draw the
+           whole building in whichever one happened to be first. */
+        <mesh geometry={geometry} material={materialsForGroups(groups, materials)} />
       )}
 
       {/* The roof gets its own material, a shade darker than the walls. Not
@@ -317,18 +372,20 @@ export default function BuildingViewport({
           indistinguishable from it under flat lighting, and the eave line is
           what tells you whether the roof is the shape you asked for. */}
       {roofGeometry && (
-        <mesh geometry={roofGeometry}>
-          <meshStandardMaterial color={palette.roof} roughness={0.9} metalness={0} />
-        </mesh>
+        /* The roof gets its own material, a shade darker than the walls by
+           default. Not decoration: a hip roof meeting a wall at a shallow pitch
+           is almost indistinguishable from it under flat lighting, and the eave
+           line is what tells you whether the roof is the shape you asked for. */
+        <mesh geometry={roofGeometry} material={materialsForGroups(roofGroups, materials)} />
       )}
 
       {/* Trim gets the palette's trim colour and a slightly shinier finish than
           the wall: a cornice is the one element whose whole job is to catch the
           light, and at the same roughness as the wall it disappears into it. */}
       {trimGeometry && (
-        <mesh geometry={trimGeometry}>
-          <meshStandardMaterial color={palette.trim} roughness={0.6} metalness={0.05} />
-        </mesh>
+        /* Trim is shinier than the wall on purpose - a cornice's whole job is to
+           catch the light, and at the wall's roughness it disappears into it. */
+        <mesh geometry={trimGeometry} material={materialsForGroups(trimGroups, materials)} />
       )}
 
       {/* The openings. One InstancedMesh per slot type, so a tower's thousand
