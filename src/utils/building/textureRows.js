@@ -21,10 +21,13 @@
 // only has to describe it truthfully.
 
 import {
-  FACADE_TEXTURE_SLOTS, TEXTURE_SLOTS, TRIM_TEXTURE_SLOT, nodeTextureKey, textureKey,
+  FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, FACADE_TEXTURE_SLOTS, MESH_SLOTS,
+  TEXTURE_SLOTS, TRIM_TEXTURE_SLOT,
+  meshKey, nodeTextureKey, textureKey,
 } from '../../../building/stylepack.js'
+import { referenceListKeys } from '../../../building/doc.js'
 import { SIDE_LABEL, SIDE_ORDER } from '../../../building/sides.js'
-import { SLOT_GUIDE } from './textureSlots'
+import { SLOT_GUIDE } from './textureSlots.js'
 
 /** The building-wide slots, which everything else falls back to. */
 export function buildingTextureRows() {
@@ -48,7 +51,7 @@ export function facadeTextureRows(doc, nodeId, { expanded = false } = {}) {
   for (const slot of FACADE_TEXTURE_SLOTS) {
     const guide = SLOT_GUIDE[slot] || {}
     const facadeKey = nodeTextureKey(nodeId, slot)
-    const hasFacade = Boolean(doc.references[facadeKey]?.ref)
+    const hasFacade = referenceListKeys(doc.references, facadeKey).length > 0
     rows.push({
       refKey: facadeKey,
       guideSlot: slot,
@@ -74,11 +77,69 @@ export function facadeTextureRows(doc, nodeId, { expanded = false } = {}) {
   return rows
 }
 
+/**
+ * One Facade node's opening MODELS: its own list, plus four optional sides.
+ *
+ * The same shape as its texture overrides and the same chain - a side beats the
+ * facade beats the building-wide list for the tag. Not keyed on the tag, so
+ * switching the Facade from Window to Arch keeps the binding; see
+ * FACADE_MESH_SLOT for why.
+ */
+export function facadeMeshRows(doc, nodeId, { expanded = false, balconies = false } = {}) {
+  const group = (slot, label, what, idle = '', warn = '') => {
+    const hasFacade = referenceListKeys(doc.references, nodeTextureKey(nodeId, slot)).length > 0
+    const rows = [{
+      refKey: nodeTextureKey(nodeId, slot),
+      guideSlot: 'opening',
+      assetType: 'mesh',
+      label,
+      hint: `The model placed on this facade’s ${what}, on every side.`,
+      fallback: idle || 'same as the building',
+      warn,
+    }]
+    if (!expanded) return rows
+    for (const side of SIDE_ORDER) {
+      rows.push({
+        refKey: nodeTextureKey(nodeId, slot, side),
+        guideSlot: 'opening',
+        assetType: 'mesh',
+        label: SIDE_LABEL[side],
+        indent: true,
+        hint: `The model on the ${SIDE_LABEL[side].toLowerCase()} side of this facade only.`,
+        fallback: idle || (hasFacade ? 'same as this facade' : 'same as the building'),
+      })
+    }
+    return rows
+  }
+
+  // BOTH GROUPS, ALWAYS. A facade places openings AND balconies, so it binds two
+  // models, and the first version of this hid the balcony group whenever the
+  // Balconies mode was None - which is its default. That read as the feature not
+  // existing rather than as a setting being off, and it is the failure the user
+  // reported. An idle row that SAYS why it is idle teaches; a missing one does
+  // not, and the row is still bindable, so a model chosen now is waiting when
+  // the mode is turned on.
+  return [
+    ...group(FACADE_MESH_SLOT, 'Opening model', 'openings'),
+    ...group(FACADE_BALCONY_SLOT, 'Balcony model', 'balconies',
+      balconies ? '' : 'nothing to place yet',
+      // SAID EVEN WHEN A MODEL IS BOUND, unlike `fallback`, which only speaks
+      // for an empty slot. Binding a balcony model to a facade whose Balconies
+      // are off puts a name on the row and nothing on the building, which is the
+      // same silence in a different disguise.
+      balconies ? '' : 'This facade places no balconies — set Balconies above.'),
+  ]
+}
+
 /** Whether a Facade node has any per-side binding at all, so the UI can open. */
 export function hasSideOverrides(doc, nodeId) {
-  for (const slot of FACADE_TEXTURE_SLOTS) {
+  for (const slot of [...FACADE_TEXTURE_SLOTS, FACADE_MESH_SLOT, FACADE_BALCONY_SLOT]) {
     for (const side of SIDE_ORDER) {
-      if (doc.references[nodeTextureKey(nodeId, slot, side)]?.ref) return true
+      // A LIST, so ask whether the list has anything - a bare key has not
+      // existed since reference slots became lists.
+      if (referenceListKeys(doc.references, nodeTextureKey(nodeId, slot, side)).length) {
+        return true
+      }
     }
   }
   return false
@@ -101,4 +162,34 @@ export function trimTextureRows(doc, nodeId) {
     hint: 'This run only. Other Trim nodes keep their own.',
     fallback: 'same as the building',
   }]
+}
+
+/**
+ * The opening MODELS a document can bind, one row per opening kind.
+ *
+ * Keyed on the TAG a Facade node gives its openings - window, shopfront, arch,
+ * balcony, louvre - rather than on the slot type, because the tag is the thing
+ * an author chose and the type is only ever `window` or `door`. A shopfront and
+ * an arch are different models on the same building; binding by type would give
+ * them one.
+ */
+export function slotMeshRows() {
+  const LABELS = {
+    window: 'Window', shopfront: 'Shopfront', arch: 'Arch',
+    balcony: 'Balcony', louvre: 'Louvre', door: 'Door',
+  }
+  return MESH_SLOTS.map(tag => ({
+    refKey: meshKey(tag),
+    guideSlot: tag === 'door' ? 'door' : 'opening',
+    assetType: 'mesh',
+    label: LABELS[tag] || tag,
+    hint: `The model placed in every ${LABELS[tag] || tag} opening. Scaled to the `
+      + 'bay the grammar worked out, so one model fits any wall.',
+    fallback: 'a plain box',
+  }))
+}
+
+/** Whether any opening model is bound, so the section can stay collapsed. */
+export function hasSlotMeshes(doc) {
+  return MESH_SLOTS.some(tag => referenceListKeys(doc.references, meshKey(tag)).length > 0)
 }

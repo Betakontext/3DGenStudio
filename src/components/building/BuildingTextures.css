@@ -100,3 +100,66 @@
   line-height: 1.4;
   color: var(--on-surface-variant);
 }
+
+/* A slot is a group now: the row, then its entries when there is more than one
+   to tell apart. */
+.btex__group {
+  display: flex;
+  flex-direction: column;
+}
+
+.btex__entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px 1px 34px;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.btex__entry-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btex__entry button {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+}
+
+.btex__entry button:hover {
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+}
+
+.btex__entry .material-symbols-outlined {
+  font-size: 14px;
+}
+
+/* A single binding gets a plain Clear rather than a named row - the name is
+   already on the row above it. */
+.btex__entry--only {
+  padding-left: 30px;
+}
+
+/* Why a slot does nothing, said even when something is bound to it - a model in
+   a slot the graph never places would otherwise look like it had taken. */
+.btex__warn {
+  margin: 0 2px 4px 34px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--primary);
+  opacity: 0.85;
+}

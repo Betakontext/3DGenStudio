@@ -34,9 +34,9 @@ import BuildingInspector from '../components/building/BuildingInspector'
 import useBuildingDocument from '../hooks/useBuildingDocument'
 import useBuildingCompile from '../hooks/useBuildingCompile'
 import {
-  MAX_SEED, REFERENCE_KIND, clearReference, setReference,
+  MAX_SEED, REFERENCE_KIND, appendReference, clearReference,
 } from '../../building/doc.js'
-import { buildingTextureRows } from '../utils/building/textureRows'
+import { buildingTextureRows, slotMeshRows } from '../utils/building/textureRows'
 import { CATALOG, CATALOG_ORDER, getNodeDef } from '../../building/catalog.js'
 import { SEVERITY } from '../../building/diagnostics.js'
 import {
@@ -225,24 +225,36 @@ export default function BuildingGenPage() {
   // Binding a texture writes ONE reference-table entry - invariant 3 in doc.js -
   // and nothing else. No node changes, so the geometry does not even recompile;
   // only the material slot in the IR differs.
-  const onBindTexture = useCallback((refKey, asset) => {
+  // Adding to a slot APPENDS to its list - invariant 3, and the list is what the
+  // seeded pick draws from. One entry is a choice; several are a roll.
+  const onAddTexture = useCallback((refKey, assets) => {
     commit(
-      current => setReference(current, refKey, {
-        kind: REFERENCE_KIND.IMAGE,
+      current => assets.reduce((doc_, asset) => appendReference(doc_, refKey, {
+        // A model and a texture go through the SAME table with different kinds,
+        // so bundling, import remapping and dangling-key reporting all still
+        // have one place to look.
+        kind: asset.kind === 'mesh' ? REFERENCE_KIND.MESH : REFERENCE_KIND.IMAGE,
         // The string form, never a bare number: this is what makes a .3dgp
-        // export carry the building's textures with no walker changes.
+        // export carry the building's assets with no walker changes.
         ref: `asset:${asset.assetId}`,
         name: asset.name || '',
+        // Only an image has a colour space or a tile size; normalizeReferenceEntry
+        // drops both on a mesh rather than storing numbers nothing reads.
         colorSpace: 'srgb',
         tileMetres: asset.tile,
-      }),
-      { undoLabel: 'Set Texture' },
+      }), current),
+      { undoLabel: assets.length > 1 ? `Add ${assets.length} Assets` : 'Add Asset' },
     )
-    setMessage({ tone: 'ok', text: `${asset.name} bound.` })
+    setMessage({
+      tone: 'ok',
+      text: assets.length > 1
+        ? `${assets.length} added. One is picked per building from the seed.`
+        : `${assets[0].name} bound.`,
+    })
   }, [commit])
 
-  const onClearTexture = useCallback(refKey => {
-    commit(current => clearReference(current, refKey), { undoLabel: 'Clear Texture' })
+  const onRemoveTexture = useCallback(entryKey => {
+    commit(current => clearReference(current, entryKey), { undoLabel: 'Remove Asset' })
   }, [commit])
 
   // --- save ----------------------------------------------------------------
@@ -334,7 +346,7 @@ export default function BuildingGenPage() {
           key={generating.refKey}
           slot={generating.guideSlot}
           refKey={generating.refKey}
-          onGenerated={(refKey, asset) => onBindTexture(refKey, asset)}
+          onGenerated={(refKey, asset) => onAddTexture(refKey, [asset])}
           onClose={() => setGenerating(null)}
         />
       )}
@@ -398,12 +410,27 @@ export default function BuildingGenPage() {
             doc={doc}
             title="Textures"
             rows={buildingTextureRows()}
-            onBind={onBindTexture}
-            onClear={onClearTexture}
+            onAdd={onAddTexture}
+            onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
             note={'A texture tints the slot’s palette colour rather than replacing it, '
               + 'and tiles by metres. A Facade node can override the wall and windows on '
               + 'the storeys it covers.'}
+          />
+
+          {/* The openings' own geometry. Separate from the Textures list above
+              because a model and a material are different decisions - a
+              shopfront and an arch are different SHAPES, and no texture makes
+              one out of the other. */}
+          <BuildingTextures
+            doc={doc}
+            title="Openings"
+            rows={slotMeshRows()}
+            onAdd={onAddTexture}
+            onRemove={onRemoveTexture}
+            onGenerate={onGenerateTexture}
+            note={'A model is scaled to the bay the grammar worked out, so one fits any '
+              + 'wall. Empty slots stay plain boxes.'}
           />
 
           <h2 className="buildinggen__title">Nodes</h2>
@@ -615,8 +642,8 @@ export default function BuildingGenPage() {
             openCurve={openCurve && openCurve.startsWith(`${selected}:`)
               ? openCurve.slice(String(selected).length + 1)
               : null}
-            onBindTexture={onBindTexture}
-            onClearTexture={onClearTexture}
+            onAddTexture={onAddTexture}
+            onRemoveTexture={onRemoveTexture}
             onGenerateTexture={onGenerateTexture}
           />
         </aside>

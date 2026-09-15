@@ -64,6 +64,18 @@ export const LEVEL_KIND = {
 export const SLOT_TYPE = {
   WINDOW: 'window',
   DOOR: 'door',
+  /**
+   * A balcony: an ATTACHMENT in front of an opening, not an opening itself.
+   *
+   * It is its own type rather than another `opening` tag because everything
+   * about it is different in kind. It stands PROUD of the wall instead of being
+   * recessed into it, its depth is a real dimension the author sets rather than
+   * the fixed token depth a flat opening gets, it sits on the opening's sill
+   * rather than centred in the band, and it coexists with the window behind it -
+   * tagging an opening `balcony` would put a balustrade WHERE the window goes,
+   * which is not what a balcony is.
+   */
+  BALCONY: 'balcony',
   PILLAR: 'pillar',
   CORNICE: 'cornice',
   ROOF_EDGE: 'roof_edge',
@@ -216,8 +228,8 @@ export function makeSolid({ levels = [], name = '' } = {}) {
  * that re-derived it from (face, floor, bay) would silently undo the deformation.
  */
 export function makeSlot({
-  type, transform, styleSlot = '', cellW = 0, cellH = 0,
-  faceIndex = 0, floorIndex = 0, bayIndex = 0, seedKey = 0,
+  type, transform, styleSlot = '', cellW = 0, cellH = 0, cellD = 0,
+  faceIndex = 0, floorIndex = 0, bayIndex = 0, seedKey = 0, variant = 0, meshSlot = '',
 }) {
   return {
     type,
@@ -225,10 +237,25 @@ export function makeSlot({
     transform: transform.map(quantize),
     cellW: quantize(cellW),
     cellH: quantize(cellH),
+    // HOW FAR IT STANDS OFF THE WALL, and ZERO MEANS "the consumer's own rule".
+    // An opening has no authored depth - nothing in the grammar says how thick a
+    // window is - so it keeps the token depth the mesher has always given it. A
+    // balcony's projection is a real dimension the author set, and it has to
+    // travel in the IR or a headless export would draw it as a flat panel.
+    cellD: quantize(cellD),
     faceIndex: faceIndex | 0,
     floorIndex: floorIndex | 0,
     bayIndex: bayIndex | 0,
     seedKey: seedKey >>> 0,
+    // WHICH LIST this opening draws its model from, as the reference PREFIX the
+    // compiler resolved - `mesh_window`, or `fc1.openingMesh.north` when a
+    // facade overrode one side. Resolved here rather than in the renderer so a
+    // headless export and the preview agree, and stored as the prefix rather
+    // than as a scope the consumer would have to re-derive.
+    meshSlot: String(meshSlot || ''),
+    // WHICH MODEL OF THAT LIST it wears. Also resolved by the compiler, from the
+    // document's seed and the opening's own identity.
+    variant: variant | 0,
   };
 }
 
@@ -241,6 +268,23 @@ export function makeSlot({
  */
 export function makeRoofRung({ polygons = [], z = 0 }) {
   return { polygons: polygons.map(n => n | 0), z: quantize(z) };
+}
+
+/**
+ * One vertical end wall of a gable or shed roof.
+ *
+ * STORED AS 3D POINTS, not as an index into the polygon table, and that is the
+ * one place this IR breaks its own rule. Everything else is a plan at a height,
+ * which is why the table works; a gable end is VERTICAL, so it has no single
+ * height and no plan. Forcing it into the table would mean storing a polygon in
+ * a rotated frame plus the frame - more data and a second convention - to save
+ * a handful of points on the two roofs that have them.
+ *
+ * Wound so the face points away from the building. `path` is flat [x, y, z, ...]
+ * like a trim run, for the same reason: one polyline convention, not two.
+ */
+export function makeGable({ path = [] }) {
+  return { path: path.map(quantize) };
 }
 
 /**

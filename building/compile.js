@@ -32,21 +32,25 @@ import { getNodeDef, readMode, readProp } from './catalog.js';
 import { CODE, createDiagnostics, fix, metres } from './diagnostics.js';
 import {
   BUILDING_IR_FORMAT, LEVEL_KIND, createBuildingIr, createPolygonTable,
-  makeLevel, makeMaterial, makeRoofRung, makeSlot, makeSolid, makeTrim,
+  makeGable, makeLevel, makeMaterial, makeRoofRung, makeSlot, makeSolid, makeTrim,
 } from './ir.js';
 import { JOIN } from './clip.js';
 import { MASS_PROFILE, stackMass, topOfStack } from './mass.js';
-import { ROOF_KIND, generateRoof, roofIsCapped, roofTop, stackRoofs } from './roof.js';
+import {
+  RIDGE, ROOF_KIND, generateRoof, roofIsCapped, roofTop, stackRoofs,
+} from './roof.js';
 import { MAX_TRIM_RUNS, TRIM_WHERE, generateTrim } from './trim.js';
 import { DEFORM_MODE, makeDeform, makeWarp, warpPath, warpTransform } from './deform.js';
 import { MAX_SLOTS, generateFacade } from './facade.js';
 import { isFlatCurve } from './param.js';
 import {
-  FACADE_TEXTURE_SLOTS, PALETTE_SLOTS, TRIM_TEXTURE_SLOT, nodeTextureKey, paletteOf,
-  textureKey,
+  FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, FACADE_TEXTURE_SLOTS, PALETTE_SLOTS,
+  TRIM_TEXTURE_SLOT, meshKey,
+  nodeTextureKey, paletteOf, textureKey,
 } from './stylepack.js';
-import { SIDE_ORDER } from './sides.js';
-import { normalizeBuildingDoc } from './doc.js';
+import { SIDE_ORDER, sideOfNormal } from './sides.js';
+import { normalizeBuildingDoc, referenceListKeys } from './doc.js';
+import { slotId, weightedPick } from './random.js';
 import { normalizePolygon, polygonArea, validateRing } from './poly.js';
 
 /** Below this a footprint is almost certainly a mis-drag rather than a plan. */
@@ -246,8 +250,68 @@ export function compileBuilding(document) {
     ir.deform = makeDeform(result.deform);
   }
 
+  // WHICH MODEL EACH OPENING WEARS. A tag binds a LIST, and every opening rolls
+  // its own choice from its own identity - so one building gets a mix of window
+  // models and re-rolling the seed gives a different mix rather than the same
+  // building in a different order. Hashing the SLOT's identity, never a position
+  // in a stream, is what stops adding a storey reshuffling the windows below it.
+  const listSizes = new Map();
+  const listSize = prefix => {
+    if (!listSizes.has(prefix)) {
+      listSizes.set(prefix, referenceCount(doc.references, prefix));
+    }
+    return listSizes.get(prefix);
+  };
+
+  /**
+   * Which list an opening draws its model from: MOST SPECIFIC WINS, the same
+   * chain the materials follow. A facade can override one side of the storeys it
+   * claims, then all of them, and otherwise the building-wide list for the tag
+   * stands. A door skips the facade rungs entirely - see FACADE_MESH_SLOT.
+   */
+  const resolveMeshSlot = slot => {
+    const tag = slot.styleSlot || slot.type;
+    // WHICH facade slot, if any. A balcony has its own - it is placed alongside
+    // the window rather than instead of it, so sharing one list would roll a
+    // balustrade into the hole. A door has none at all.
+    const facadeSlot = slot.type === 'balcony' ? FACADE_BALCONY_SLOT
+      : slot.type === 'door' ? '' : FACADE_MESH_SLOT;
+    const candidates = [];
+    if (slot.source && facadeSlot) {
+      const side = sideOfNormal(slot.transform[8], slot.transform[9]);
+      candidates.push(nodeTextureKey(slot.source, facadeSlot, side));
+      candidates.push(nodeTextureKey(slot.source, facadeSlot));
+    }
+    candidates.push(meshKey(tag));
+    for (const prefix of candidates) if (listSize(prefix) > 0) return prefix;
+    return '';
+  };
+
   for (const slot of result.slots || []) {
-    ir.slots.push(makeSlot({ ...slot, transform: warpTransform(warp, slot.transform) }));
+    const meshSlot = resolveMeshSlot(slot);
+    const count = meshSlot ? listSize(meshSlot) : 0;
+    // THE IDENTITY IS THE OBJECT, not the pre-hashed seedKey. randomAt hashes
+    // {face, floor, bay, sub} itself - handing it the number instead reads every
+    // field as undefined, so every opening in the building hashes identically
+    // and wears the same model. It looked deterministic, because it was; it was
+    // just the same answer 41 times.
+    const variant = count > 1
+      ? weightedPick(doc.building.seed, slotId('openingMesh', meshSlot), {
+        face: slot.faceIndex,
+        floor: slot.floorIndex,
+        bay: slot.bayIndex,
+        // Matches facade.js's seedKey: window 0, door 1, balcony 2. A balcony
+        // and the window it hangs on must not roll in lockstep, or every model-3
+        // window would carry a model-3 balustrade.
+        sub: slot.type === 'door' ? 1 : slot.type === 'balcony' ? 2 : 0,
+      }, new Array(count).fill(1))
+      : 0;
+    ir.slots.push(makeSlot({
+      ...slot,
+      meshSlot,
+      variant: variant >= 0 ? variant : 0,
+      transform: warpTransform(warp, slot.transform),
+    }));
   }
 
   ir.polygons = polygons.all();
@@ -261,7 +325,7 @@ export function compileBuilding(document) {
     // The texture, if this slot has one bound. Resolved THROUGH THE REFERENCE
     // TABLE rather than read off a node - invariant 3 in doc.js - so bundling,
     // import remapping and "what is missing" all have one place to look.
-    const entry = doc.references[textureKey(slot)];
+    const entry = pickReference(doc.references, textureKey(slot), doc.building.seed);
     ir.materials.push(makeMaterial({
       slot,
       color: palette[slot],
@@ -296,7 +360,9 @@ export function compileBuilding(document) {
   const buildingTrim = ir.materials.findIndex(material => material.slot === 'trim');
   for (const run of result.trims || []) {
     if (!run.source || trimMaterialBySource.has(run.source)) continue;
-    const entry = doc.references[nodeTextureKey(run.source, TRIM_TEXTURE_SLOT)];
+    const entry = pickReference(
+      doc.references, nodeTextureKey(run.source, TRIM_TEXTURE_SLOT), doc.building.seed,
+    );
     if (!entry?.ref) continue;
     trimMaterialBySource.set(run.source, ir.materials.length);
     ir.materials.push(makeMaterial({
@@ -327,6 +393,11 @@ export function compileBuilding(document) {
       rungs: result.roof.rungs.map(rung => makeRoofRung({
         polygons: rung.polygons.map(polygon => polygons.intern(polygon)),
         z: rung.z,
+      })),
+      // Deformed like everything else that travels as coordinates - a gable end
+      // on a leaning building has to lean with it.
+      gables: (result.roof.gables || []).map(points => makeGable({
+        path: warpPath(warp, points.flat()),
       })),
     };
   }
@@ -547,6 +618,11 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
           doorWidth: readProp(node, 'doorWidth'),
           doorHeight: readProp(node, 'doorHeight'),
           includeCourtyards: readProp(node, 'includeCourtyards'),
+          balcony: readMode(node, 'balcony'),
+          balconyDepth: readProp(node, 'balconyDepth'),
+          balconyWidth: readProp(node, 'balconyWidth'),
+          balconyHeight: readProp(node, 'balconyHeight'),
+          balconyChance: readProp(node, 'balconyChance'),
         },
       });
 
@@ -612,7 +688,9 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
           // facade-wide texture at all, in which case the other sides fall
           // through to the building-wide slot.
           for (const side of ['', ...SIDE_ORDER]) {
-            const entry = references[nodeTextureKey(node.id, slot, side)];
+            const entry = pickReference(
+              references, nodeTextureKey(node.id, slot, side), seed,
+            );
             if (entry?.ref) {
               overrides.push({
                 slot, fromFloor: from, toFloor: to, side, ref: entry.ref, tile: entry.tileMetres,
@@ -672,6 +750,8 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
         stepRise: readProp(node, 'stepRise'),
         overhang: kind === ROOF_KIND.TIERED ? readProp(node, 'overhang') : 0,
         maxHeight: readProp(node, 'maxHeight'),
+        ridge: readMode(node, 'ridge'),
+        ridgeAngle: readProp(node, 'ridgeAngle'),
       });
 
       if (roof.fallback === 'too-small') {
@@ -820,6 +900,36 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
     default:
       return undefined;
   }
+}
+
+/**
+ * One entry from a reference slot's list, chosen by the document's seed.
+ *
+ * A SLOT HOLDS A LIST so that one building can be re-rolled into another - give
+ * a style three bricks and three window models and a street of them stops
+ * looking like one building copied. The pick is seeded by the slot's KEY and by
+ * the caller's identity, never by a position in a stream, so adding a fourth
+ * brick does not reshuffle the windows (building/random.js says why at length).
+ *
+ * Weights are uniform: a reference entry is an asset id and a name, and the
+ * per-entry weight the style-pack vocabulary carries has nowhere to live here
+ * yet. Uniform is the honest default rather than a silent 1-in-n that pretends
+ * to be weighted.
+ */
+function pickReference(references, prefix, seed, identity = 0) {
+  const entries = referenceListKeys(references, prefix)
+    .map(key => references[key])
+    .filter(entry => entry?.ref);
+  if (!entries.length) return null;
+  if (entries.length === 1) return entries[0];
+  const index = weightedPick(seed, slotId('reference', prefix), identity, entries.map(() => 1));
+  return entries[index >= 0 ? index : 0];
+}
+
+/** How many usable entries a slot's list has. */
+function referenceCount(references, prefix) {
+  return referenceListKeys(references, prefix)
+    .filter(key => references[key]?.ref).length;
 }
 
 /** Total length of a flat [x, y, z, ...] polyline, closing the loop if asked. */

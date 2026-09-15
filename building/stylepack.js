@@ -87,6 +87,48 @@ export function nodeTextureKey(nodeId, slot, side = '') {
 }
 
 /**
+ * The opening kinds a real MESH can be bound to, and the key each uses.
+ *
+ * KEYED ON THE OPENING TAG, not on the slot type. facade.js emits every opening
+ * as type `window` or `door` and tags it with what the Facade node called it -
+ * window, shopfront, arch, balcony, louvre - and that tag is the thing an author
+ * is choosing between. Binding on the type instead would mean one mesh for every
+ * opening in the building, which is the placeholder box with extra steps.
+ */
+export const MESH_SLOTS = ['window', 'shopfront', 'arch', 'balcony', 'louvre', 'door'];
+
+/** The BUILDING-WIDE key an opening mesh binds through. Invariant 3 in doc.js. */
+export function meshKey(tag) {
+  return `mesh_${tag}`;
+}
+
+/**
+ * The slot a Facade node overrides its openings' MODEL through.
+ *
+ * NOT KEYED ON THE TAG, unlike the building-wide one, and the difference is the
+ * point. A Facade node has one `opening` mode, so its override can only ever
+ * apply to that tag - and keying on it would orphan the binding the moment the
+ * author switched the mode from Window to Arch. `<node>.openingMesh` survives
+ * that, and reads as what it is: this facade's opening model.
+ *
+ * DOORS ARE EXCLUDED. A facade places one door, and a per-facade door model is
+ * finer-grained than anyone needs; a door resolves to the building-wide
+ * `mesh_door` and nothing else.
+ */
+export const FACADE_MESH_SLOT = 'openingMesh';
+
+/**
+ * The slot a Facade node overrides its BALCONIES' model through.
+ *
+ * A second slot rather than a second entry in one list, because a balcony and
+ * the window behind it are placed together and are never alternatives: rolling
+ * one list for both would put a balustrade in the hole and a window on the
+ * bracket. Same per-side chain as the opening one - `<node>.balconyMesh.north`
+ * beats `<node>.balconyMesh` beats the building-wide `mesh_balcony`.
+ */
+export const FACADE_BALCONY_SLOT = 'balconyMesh';
+
+/**
  * The slots a Facade node can override.
  *
  * Only two, and not the other three: a Facade node claims STOREYS and dresses

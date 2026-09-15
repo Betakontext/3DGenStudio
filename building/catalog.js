@@ -392,6 +392,52 @@ export const CATALOG = {
         step: 0.05,
         unit: 'm',
       },
+      balconyDepth: {
+        type: PROP_TYPE.NUMBER,
+        label: 'Balcony depth',
+        default: 1,
+        min: 0.2,
+        max: 6,
+        step: 0.05,
+        unit: 'm',
+        basic: true,
+        hint: 'How far it stands out from the wall.',
+        showFor: { balcony: ['upper', 'all', 'scattered'] },
+      },
+      balconyWidth: {
+        type: PROP_TYPE.NUMBER,
+        label: 'Balcony width',
+        default: 2,
+        min: 0.4,
+        max: 30,
+        step: 0.05,
+        unit: 'm',
+        basic: true,
+        hint: 'Clamped to the bay, so two neighbours never grow into each other.',
+        showFor: { balcony: ['upper', 'all', 'scattered'] },
+      },
+      balconyHeight: {
+        type: PROP_TYPE.NUMBER,
+        label: 'Balustrade',
+        default: 1.05,
+        min: 0.2,
+        max: 4,
+        step: 0.05,
+        unit: 'm',
+        hint: 'Railing height above the sill it stands on.',
+        showFor: { balcony: ['upper', 'all', 'scattered'] },
+      },
+      balconyChance: {
+        type: PROP_TYPE.NUMBER,
+        label: 'How many',
+        default: 0.5,
+        min: 0.05,
+        max: 1,
+        step: 0.05,
+        basic: true,
+        hint: 'The share of openings that get one, rolled from the seed per opening.',
+        showFor: { balcony: ['scattered'] },
+      },
       includeCourtyards: {
         type: PROP_TYPE.BOOL,
         label: 'Dress courtyards',
@@ -440,8 +486,33 @@ export const CATALOG = {
                  + 'as glazing rather than as windows.',
           },
           { value: 'arch', label: 'Arch', teach: 'Arcades, loggias, Roman ground floors.' },
-          { value: 'balcony', label: 'Balcony' },
           { value: 'louvre', label: 'Louvre', teach: 'Plant rooms, industrial and utility floors.' },
+        ],
+      },
+      balcony: {
+        label: 'Balconies',
+        default: 'none',
+        basic: true,
+        teach: 'A balcony is an ATTACHMENT, not an opening: it stands in front of '
+             + 'the window and the window stays. That is why it lives here rather '
+             + 'than in the Opening list above - picking it there would put a '
+             + 'balustrade in the hole and leave nothing to step out of. It sits '
+             + 'on the opening’s sill and carries its own model slot, so one '
+             + 'facade can have iron railings and another stone.',
+        options: [
+          { value: 'none', label: 'None' },
+          {
+            value: 'upper',
+            label: 'Above the ground',
+            teach: 'What a real building does. A balcony at pavement level is a step.',
+          },
+          { value: 'all', label: 'Every opening', teach: 'Including the ground floor.' },
+          {
+            value: 'scattered',
+            label: 'Scattered',
+            teach: 'A seeded share of the openings, so a facade reads as lived in '
+                 + 'rather than as a grid. Re-rolling the seed moves them.',
+          },
         ],
       },
     },
@@ -469,7 +540,11 @@ export const CATALOG = {
         type: PROP_TYPE.NUMBER, label: 'Pitch', default: 35, min: 1, max: 85, step: 1,
         unit: 'deg', basic: true,
         hint: 'Degrees from horizontal. Steeper is taller over the same plan.',
-        showFor: { kind: ['hip', 'mansard'] },
+        // Gable and shed are driven by it too: both were added after this list
+        // was written, and a greyed-out Pitch on a roof whose whole shape it
+        // decides is exactly the "control that lies" failure showFor exists to
+        // prevent.
+        showFor: { kind: ['hip', 'mansard', 'gable', 'shed'] },
       },
       upperPitch: {
         type: PROP_TYPE.NUMBER, label: 'Upper pitch', default: 12, min: 0, max: 85, step: 1,
@@ -500,6 +575,12 @@ export const CATALOG = {
             + 'a little makes an Asian roof.',
         showFor: { kind: ['tiered'] },
       },
+      ridgeAngle: {
+        type: PROP_TYPE.NUMBER, label: 'Ridge angle', default: 0, min: 0, max: 180, step: 5,
+        unit: 'deg', basic: true,
+        hint: 'Which way the ridge points, in plan. 0 runs it east-west.',
+        showFor: { ridge: ['custom'] },
+      },
       maxHeight: {
         type: PROP_TYPE.NUMBER, label: 'Height cap', default: 0, min: 0, max: 200, step: 0.5,
         unit: 'm',
@@ -508,6 +589,29 @@ export const CATALOG = {
       },
     },
     modes: {
+      ridge: {
+        label: 'Ridge',
+        default: 'long',
+        basic: true,
+        showFor: { kind: ['gable', 'shed'] },
+        options: [
+          {
+            value: 'long', label: 'Along the building',
+            teach: 'The ridge runs the length of the plan. What a house does, and '
+                 + 'right almost every time.',
+          },
+          {
+            value: 'across', label: 'Across it',
+            teach: 'Turned ninety degrees, so the gable faces the long side. What a '
+                 + 'terrace of houses does onto the street.',
+          },
+          {
+            value: 'custom', label: 'A set angle',
+            teach: 'Point the ridge yourself, for a plan whose long axis is not the '
+                 + 'one you want to roof along.',
+          },
+        ],
+      },
       kind: {
         label: 'Shape',
         default: 'hip',
@@ -530,6 +634,19 @@ export const CATALOG = {
           {
             value: 'tiered', label: 'Tiered',
             teach: 'Stepped, with each tier oversailing the one below. Asian eaves.',
+          },
+          {
+            value: 'gable', label: 'Gable',
+            teach: 'Two slopes to a ridge, with vertical walls at the ends. The '
+                 + 'ordinary house roof, and the one shape that is NOT the offset '
+                 + 'walk - the plan is cut down across the ridge instead, which is '
+                 + 'why the ends stay upright.',
+          },
+          {
+            value: 'shed', label: 'Shed',
+            teach: 'One slope, from a low edge to a high one. Lean-tos, outbuildings '
+                 + 'and modern boxes. Pitch is measured over the whole width, so it '
+                 + 'climbs about twice as high as a gable at the same angle.',
           },
         ],
       },
@@ -790,6 +907,25 @@ export function readMode(node, key) {
 export function propApplies(node, key) {
   const def = getNodeDef(node?.type);
   const spec = def?.props?.[key];
+  if (!spec?.showFor) return true;
+  return Object.entries(spec.showFor).every(([modeKey, allowed]) => {
+    const current = readMode(node, modeKey);
+    return Array.isArray(allowed) ? allowed.includes(current) : allowed === current;
+  });
+}
+
+/**
+ * Whether a MODE applies given the node's other modes.
+ *
+ * The same rule propApplies enforces for properties, and it needs to exist for
+ * modes too the moment one mode depends on another - the Ridge only means
+ * anything on a Gable or a Shed. Without it the control shows on every roof and
+ * does nothing on five of them, which is the exact failure the greying-out
+ * convention exists to prevent.
+ */
+export function modeApplies(node, key) {
+  const def = getNodeDef(node?.type);
+  const spec = def?.modes?.[key];
   if (!spec?.showFor) return true;
   return Object.entries(spec.showFor).every(([modeKey, allowed]) => {
     const current = readMode(node, modeKey);

@@ -179,42 +179,42 @@ test('INVARIANT 4: a bare-number ref is rejected', () => {
   // a .3dgp export would silently omit the texture.
   const doc = normalizeBuildingDoc({
     references: {
-      good: { kind: 'image', ref: 'asset:12', name: 'Stucco' },
-      bad: { kind: 'image', ref: 12, name: 'Bare' },
-      alsoBad: { kind: 'image', ref: '12', name: 'String but bare' },
+      'good.0': { kind: 'image', ref: 'asset:12', name: 'Stucco' },
+      'bad.0': { kind: 'image', ref: 12, name: 'Bare' },
+      'alsoBad.0': { kind: 'image', ref: '12', name: 'String but bare' },
     },
   });
-  assert.deepEqual(Object.keys(doc.references), ['good']);
+  assert.deepEqual(Object.keys(doc.references), ['good.0']);
 });
 
 test('INVARIANT 3: an EMPTY ref is kept as a declared-but-unfilled slot', () => {
   // Dropping it would lose the slot, and the editor would have nothing to show
   // as "needs a texture".
   const doc = normalizeBuildingDoc({
-    references: { tex_facade: { kind: 'image', ref: '', name: 'Facade' } },
+    references: { 'tex_facade.0': { kind: 'image', ref: '', name: 'Facade' } },
   });
-  assert.equal(doc.references.tex_facade.ref, '');
-  assert.deepEqual(danglingReferences(doc), [{ key: 'tex_facade', kind: 'image', name: 'Facade' }]);
+  assert.equal(doc.references['tex_facade.0'].ref, '');
+  assert.deepEqual(danglingReferences(doc), [{ key: 'tex_facade.0', kind: 'image', name: 'Facade' }]);
 });
 
 test('an unknown reference kind falls back to image', () => {
   const doc = normalizeBuildingDoc({
-    references: { k: { kind: 'hologram', ref: 'asset:1' } },
+    references: { 'k.0': { kind: 'hologram', ref: 'asset:1' } },
   });
-  assert.equal(doc.references.k.kind, REFERENCE_KIND.IMAGE);
+  assert.equal(doc.references['k.0'].kind, REFERENCE_KIND.IMAGE);
 });
 
 test('colorSpace is kept only for images and only when valid', () => {
   const doc = normalizeBuildingDoc({
     references: {
-      a: { kind: 'image', ref: 'asset:1', colorSpace: 'srgb' },
-      b: { kind: 'image', ref: 'asset:2', colorSpace: 'banana' },
-      c: { kind: 'mesh', ref: 'asset:3', colorSpace: 'srgb' },
+      'a.0': { kind: 'image', ref: 'asset:1', colorSpace: 'srgb' },
+      'b.0': { kind: 'image', ref: 'asset:2', colorSpace: 'banana' },
+      'c.0': { kind: 'mesh', ref: 'asset:3', colorSpace: 'srgb' },
     },
   });
-  assert.equal(doc.references.a.colorSpace, 'srgb');
-  assert.equal('colorSpace' in doc.references.b, false);
-  assert.equal('colorSpace' in doc.references.c, false);
+  assert.equal(doc.references['a.0'].colorSpace, 'srgb');
+  assert.equal('colorSpace' in doc.references['b.0'], false);
+  assert.equal('colorSpace' in doc.references['c.0'], false);
 });
 
 test('collectReferenceIds returns sorted unique numbers', () => {
@@ -231,17 +231,20 @@ test('collectReferenceIds returns sorted unique numbers', () => {
 
 test('setReference and clearReference are pure', () => {
   const base = createBuildingDoc();
-  const withRef = setReference(base, 'tex', { kind: 'image', ref: 'asset:7', name: 'Brick' });
+  // A key is a LIST POSITION now: `tex` alone is migrated to `tex.0`, so the
+  // pure-ness this test is about is asserted on the shape the document really
+  // stores rather than on the one the caller happened to type.
+  const withRef = setReference(base, 'tex.0', { kind: 'image', ref: 'asset:7', name: 'Brick' });
   assert.deepEqual(base.references, {}, 'the original must not be mutated');
-  assert.equal(withRef.references.tex.ref, 'asset:7');
-  assert.deepEqual(clearReference(withRef, 'tex').references, {});
+  assert.equal(withRef.references['tex.0'].ref, 'asset:7');
+  assert.deepEqual(clearReference(withRef, 'tex.0').references, {});
   // Clearing a slot that is not there returns an equivalent document.
   assert.deepEqual(clearReference(base, 'nope').references, {});
 });
 
 test('setReference rejects a malformed entry rather than storing it', () => {
   const base = createBuildingDoc();
-  assert.deepEqual(setReference(base, 'tex', { kind: 'image', ref: 99 }).references, {});
+  assert.deepEqual(setReference(base, 'tex.0', { kind: 'image', ref: 99 }).references, {});
 });
 
 // --- serialise / parse ------------------------------------------------------

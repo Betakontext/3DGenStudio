@@ -235,5 +235,172 @@ test('a battered tower still gets windows on every storey', () => {
   assert.equal(new Set(out.slots.map(s => s.floorIndex)).size, 5);
 });
 
+// --- balconies ---------------------------------------------------------------
+//
+// A balcony is an ATTACHMENT, not an opening: the window stays and a balustrade
+// stands in front of it. Everything below tests that distinction, because the
+// tempting implementation - another value in the `opening` list - would pass a
+// count check and produce a facade with balustrades where the glass should be.
+
+const balconies = out => out.slots.filter(s => s.type === SLOT_TYPE.BALCONY);
+const windows = out => out.slots.filter(s => s.type === SLOT_TYPE.WINDOW);
+const at = slot => `${slot.faceIndex}:${slot.floorIndex}:${slot.bayIndex}`;
+
+test('balconies are OFF by default', () => {
+  assert.equal(balconies(build(SQUARE)).length, 0);
+});
+
+test('a balcony does not replace the window it hangs on', () => {
+  const plain = build(SQUARE);
+  const withBalconies = build(SQUARE, {}, { balcony: 'all' });
+  assert.equal(windows(withBalconies).length, windows(plain).length,
+    'turning balconies on removed openings - it is an attachment, not an opening');
+  assert.equal(balconies(withBalconies).length, windows(plain).length);
+});
+
+test('every balcony sits on an opening, one for one', () => {
+  const out = build(SQUARE, {}, { balcony: 'all' });
+  const openings = new Set(windows(out).map(at));
+  for (const slot of balconies(out)) {
+    assert.ok(openings.has(at(slot)), `a balcony at ${at(slot)} with no opening behind it`);
+  }
+});
+
+test('"above the ground" skips the ground floor and nothing else', () => {
+  const out = build(SQUARE, {}, { balcony: 'upper' });
+  const floors = new Set(balconies(out).map(s => s.floorIndex));
+  assert.deepEqual([...floors].sort(), [1, 2]);
+  // ...and the ground floor still has its windows.
+  assert.ok(windows(out).some(s => s.floorIndex === 0));
+});
+
+test('a balcony STANDS OUT of the wall, the opposite of an opening', () => {
+  const out = build(SQUARE, {}, { balcony: 'all', balconyDepth: 1.2 });
+  for (const slot of balconies(out)) {
+    // Its centre is half its depth along the outward normal from the wall, so
+    // the slab starts at the face and projects forward rather than being half
+    // buried in the masonry.
+    const window = windows(out).find(w => at(w) === at(slot));
+    const n = normalOf(slot);
+    const dx = positionOf(slot)[0] - positionOf(window)[0];
+    const dy = positionOf(slot)[1] - positionOf(window)[1];
+    assert.ok(Math.abs(dx * n[0] + dy * n[1] - 0.6) < 1e-6,
+      'a balcony is not standing half its depth proud of its wall');
+  }
+  assert.ok(balconies(out).every(s => s.cellD === 1.2), 'the projection did not reach the slot');
+});
+
+test('a balcony stands ON THE SILL, not centred in the opening', () => {
+  const out = build(SQUARE, {}, { balcony: 'upper', balconyHeight: 1, sillHeight: 0.9 });
+  for (const slot of balconies(out)) {
+    const window = windows(out).find(w => at(w) === at(slot));
+    // The balcony's own floor - its centre less half the balustrade - is the
+    // bottom of the hole: the window's centre less half its height.
+    const balconyFloor = positionOf(slot)[2] - slot.cellH / 2;
+    const openingFoot = positionOf(window)[2] - window.cellH / 2;
+    assert.ok(Math.abs(balconyFloor - openingFoot) < 1e-6,
+      `balcony floor ${balconyFloor} vs sill ${openingFoot}`);
+  }
+});
+
+test('a balcony is clamped to its bay, so two neighbours cannot interpenetrate', () => {
+  const out = build(SQUARE, {}, { balcony: 'all', bayWidth: 3, balconyWidth: 99 });
+  const list = balconies(out);
+  assert.ok(list.length > 0);
+  // Every one is at most its bay wide; the 12m wall makes four 3m bays.
+  assert.ok(list.every(s => s.cellW <= 3 + 1e-9), 'a balcony grew past its bay');
+  // Neighbours on one wall, sorted along it, must not overlap.
+  const wall = list.filter(s => s.faceIndex === 0 && s.floorIndex === 1)
+    .sort((a, b) => a.bayIndex - b.bayIndex);
+  for (let i = 1; i < wall.length; i++) {
+    const gap = positionOf(wall[i])[0] - positionOf(wall[i - 1])[0];
+    assert.ok(gap >= (wall[i].cellW + wall[i - 1].cellW) / 2 - 1e-6,
+      'two balconies on one wall overlap');
+  }
+});
+
+test('the front door never gets a balcony across it', () => {
+  const out = build(SQUARE, {}, { balcony: 'all', placeDoor: true });
+  assert.equal(out.doorCount, 1);
+  const door = out.slots.find(s => s.type === SLOT_TYPE.DOOR);
+  assert.ok(!balconies(out).some(s => at(s) === at(door)));
+});
+
+test('a courtyard gets no balconies projecting into its light well', () => {
+  const out = generateFacade({
+    levels: stackMass({ footprint: COURTYARD, levelCount: 3 }).levels,
+    seed: 12345,
+    nodeId: 'facade-1',
+    rule: { balcony: 'all' },
+  });
+  // The courtyard ring's faces come after the outer ring's four.
+  assert.ok(out.slots.some(s => s.faceIndex >= 4), 'the courtyard was not dressed at all');
+  assert.ok(!balconies(out).some(s => s.faceIndex >= 4),
+    'a balcony is projecting into the courtyard');
+});
+
+test('scattered gives SOME of the openings one, and the seed moves them', () => {
+  const run = seed => generateFacade({
+    levels: stackMass({ footprint: SQUARE, levelCount: 4 }).levels,
+    seed,
+    nodeId: 'facade-1',
+    rule: { balcony: 'scattered', balconyChance: 0.5 },
+  });
+  const a = run(12345);
+  const all = windows(a).filter(s => s.floorIndex > 0).length;
+  const some = balconies(a).length;
+  assert.ok(some > 0 && some < all, `${some} of ${all} - scattered is behaving like all or none`);
+  // Deterministic...
+  assert.deepEqual(balconies(run(12345)).map(at), balconies(a).map(at));
+  // ...but a different seed puts them somewhere else.
+  assert.notDeepEqual(balconies(run(999)).map(at), balconies(a).map(at));
+});
+
+test('ADDING A STOREY does not move the balconies below it', () => {
+  const run = levelCount => generateFacade({
+    levels: stackMass({ footprint: SQUARE, levelCount }).levels,
+    seed: 4242,
+    nodeId: 'facade-1',
+    rule: { balcony: 'scattered', balconyChance: 0.4 },
+  });
+  const below = out => balconies(out).filter(s => s.floorIndex < 3).map(at).sort();
+  assert.deepEqual(below(run(6)), below(run(3)));
+});
+
+test('turning balconies on does not re-roll which model the windows wear', () => {
+  // Separate compile-time slots, so an unrelated setting cannot reshuffle the
+  // facade. The rule building/random.js exists to enforce.
+  const plain = build(SQUARE).slots.filter(s => s.type === SLOT_TYPE.WINDOW)
+    .map(s => s.seedKey).join(',');
+  const withBalconies = build(SQUARE, {}, { balcony: 'all' })
+    .slots.filter(s => s.type === SLOT_TYPE.WINDOW).map(s => s.seedKey).join(',');
+  assert.equal(withBalconies, plain);
+});
+
+test('a balcony and the window it hangs on do not roll in lockstep', () => {
+  const out = build(SQUARE, {}, { balcony: 'all' });
+  const byWindow = new Map(windows(out).map(s => [at(s), s.seedKey]));
+  assert.ok(balconies(out).some(s => byWindow.get(at(s)) !== s.seedKey),
+    'every balcony shares its opening seed - they would wear matching variants');
+});
+
+test('a balcony carries the facade that made it, so it can be overridden per node', () => {
+  const out = build(SQUARE, {}, { balcony: 'all' });
+  assert.ok(balconies(out).every(s => s.source === 'facade-1' && s.styleSlot === 'balcony'));
+});
+
+test('MAX_SLOTS counts balconies too', () => {
+  // The cap is a guarantee that a slider cannot wedge the tab, so a second slot
+  // per opening must not let a facade quietly emit twice it.
+  const out = generateFacade({
+    levels: stackMass({ footprint: SQUARE, levelCount: 200 }).levels,
+    seed: 1,
+    nodeId: 'f',
+    rule: { balcony: 'all', bayWidth: 0.6 },
+  });
+  assert.ok(out.truncated);
+  assert.ok(out.slots.length <= MAX_SLOTS, `${out.slots.length} slots past the cap`);
+});
+
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`);
 else console.log(`facade.test.mjs: ${passed} passed`);

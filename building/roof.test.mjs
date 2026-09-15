@@ -6,8 +6,8 @@
 
 import assert from 'node:assert/strict';
 import {
-  MAX_ROOF_STEPS, ROOF_KIND, bandBetween, generateRoof, roofIsCapped, roofTop, rungKind,
-  stackRoofs,
+  MAX_ROOF_STEPS, RIDGE, ROOF_KIND, bandBetween, generateRoof, longestAxis, ridgeDirection,
+  roofIsCapped, roofTop, rungKind, stackRoofs,
 } from './roof.js';
 import { polygonArea } from './poly.js';
 
@@ -341,6 +341,164 @@ test('a stacked ladder still classifies rung by rung', () => {
     assert.notEqual(rungKind(rungs[i - 1], rungs[i]), 'none',
       `rungs ${i - 1} and ${i} are the same surface twice`);
   }
+});
+
+// --- gable and shed ---------------------------------------------------------
+//
+// The two shapes Phase 3 deliberately left out, because they are NOT the offset
+// walk: the plan is cut down across the ridge instead of inset on every side,
+// and the vertical end walls are not between any two contours.
+
+const wide = rect(20, 10);
+const tall = rect(10, 20);
+
+test('the ridge runs along the building, measured by the NARROWEST perpendicular', () => {
+  // Not by the longest extent: on a 20x10 rectangle the longest extent is the
+  // DIAGONAL at 22.4m, which would put the ridge across the corners and made a
+  // 45-degree gable 8.1m tall instead of 5m.
+  const near = (got, want) => got.every((v, i) => Math.abs(v - want[i]) < 1e-9);
+  assert.ok(near(ridgeDirection([wide]), [1, 0]), `20x10 gave [${ridgeDirection([wide])}]`);
+  assert.ok(near(ridgeDirection([tall]), [0, 1]), `10x20 gave [${ridgeDirection([tall])}]`);
+});
+
+test('across turns the ridge ninety degrees, custom points it', () => {
+  // Compared with a tolerance rather than rounded: Math.round of a tiny negative
+  // is -0, and deepEqual holds that -0 is not 0.
+  const near = (got, want) => got.every((v, i) => Math.abs(v - want[i]) < 1e-9);
+  assert.ok(near(ridgeDirection([wide], RIDGE.ACROSS), [0, 1]),
+    `across gave [${ridgeDirection([wide], RIDGE.ACROSS)}]`);
+  assert.ok(near(ridgeDirection([wide], RIDGE.CUSTOM, 90), [0, 1]),
+    `custom 90 gave [${ridgeDirection([wide], RIDGE.CUSTOM, 90)}]`);
+  assert.ok(near(ridgeDirection([wide], RIDGE.CUSTOM, 0), [1, 0]));
+});
+
+test('a gable closes over HALF the width, a shed over all of it', () => {
+  // The whole difference between them, and the reason a shed at the same pitch
+  // climbs about twice as high.
+  for (const pitch of [25, 40, 60]) {
+    const gable = roofOf(wide, { kind: ROOF_KIND.GABLE, pitch });
+    const shed = roofOf(wide, { kind: ROOF_KIND.SHED, pitch });
+    const tan = Math.tan((pitch * Math.PI) / 180);
+    assert.ok(Math.abs(gable.height - 5 * tan) < 0.01,
+      `gable at ${pitch}deg is ${gable.height.toFixed(3)}, expected ${(5 * tan).toFixed(3)}`);
+    assert.ok(Math.abs(shed.height - 10 * tan) < 0.01,
+      `shed at ${pitch}deg is ${shed.height.toFixed(3)}, expected ${(10 * tan).toFixed(3)}`);
+  }
+});
+
+test('THE RIDGE IS REACHED, not stopped a step short', () => {
+  // The walk cannot go to exactly the full span - the slab has zero width there
+  // and the contour vanishes - so it stops a hair short deliberately. A whole
+  // step short instead was an eight per cent height error nobody would have
+  // attributed to the step count.
+  const roof = roofOf(wide, { kind: ROOF_KIND.GABLE, pitch: 45 });
+  assert.ok(Math.abs(roof.height - 5) < 0.005,
+    `the ridge reached ${roof.height.toFixed(4)}m, expected 5m`);
+  assert.equal(roof.closed, true);
+});
+
+test('a gable has TWO vertical end walls and a hip has none', () => {
+  // The part the contour ladder cannot say, and the reason these were deferred.
+  assert.equal(roofOf(wide, { kind: ROOF_KIND.GABLE, pitch: 40 }).gables.length, 2);
+  assert.equal(roofOf(wide, { kind: ROOF_KIND.SHED, pitch: 40 }).gables.length, 2);
+  for (const kind of [ROOF_KIND.HIP, ROOF_KIND.MANSARD, ROOF_KIND.STEPPED, ROOF_KIND.FLAT]) {
+    assert.deepEqual(roofOf(wide, { kind, pitch: 40 }).gables, [], kind);
+  }
+});
+
+test('the end walls sit at the ends, span the full width, and reach the ridge', () => {
+  const roof = generateRoof({ polygons: [wide], baseZ: 3, kind: ROOF_KIND.GABLE, pitch: 45 });
+  assert.equal(roof.gables.length, 2);
+  const ends = new Set();
+  for (const wall of roof.gables) {
+    const xs = wall.map(p => p[0]);
+    const ys = wall.map(p => p[1]);
+    const zs = wall.map(p => p[2]);
+    // Vertical: every point of one wall is at the same x.
+    assert.ok(Math.max(...xs) - Math.min(...xs) < 1e-6, 'an end wall is not vertical');
+    ends.add(Math.round(Math.max(...xs)));
+    assert.ok(Math.abs(Math.min(...ys)) < 1e-6 && Math.abs(Math.max(...ys) - 10) < 1e-6,
+      `the wall spans y ${Math.min(...ys)}..${Math.max(...ys)}, expected 0..10`);
+    assert.ok(Math.abs(Math.min(...zs) - 3) < 1e-6, 'the wall does not start at the eaves');
+    assert.ok(Math.abs(Math.max(...zs) - 8) < 0.01, 'the wall does not reach the ridge');
+  }
+  assert.deepEqual([...ends].sort((a, b) => a - b), [0, 20], 'both walls are at the same end');
+});
+
+test('a shed leans the way the pitch points, both ends still walled', () => {
+  // A shed has no ridge, so both ends are right-angled triangles rather than
+  // symmetric ones - the same walls, a different outline.
+  const roof = generateRoof({ polygons: [wide], baseZ: 0, kind: ROOF_KIND.SHED, pitch: 45 });
+  assert.equal(roof.gables.length, 2);
+  for (const wall of roof.gables) {
+    const zs = wall.map(p => p[2]);
+    assert.ok(Math.abs(Math.min(...zs)) < 1e-6);
+    assert.ok(Math.abs(Math.max(...zs) - 10) < 0.01, `the high edge reached ${Math.max(...zs)}`);
+  }
+});
+
+test('the ridge direction turns the roof with it', () => {
+  // Same plan, ridge across instead of along: the span it closes over is now the
+  // 20m one, so the same pitch gives a much taller roof.
+  const along = roofOf(wide, { kind: ROOF_KIND.GABLE, pitch: 45 });
+  const across = roofOf(wide, { kind: ROOF_KIND.GABLE, pitch: 45, ridge: RIDGE.ACROSS });
+  assert.ok(Math.abs(along.height - 5) < 0.01);
+  assert.ok(Math.abs(across.height - 10) < 0.02, `across gave ${across.height.toFixed(3)}`);
+});
+
+test('a height cap stops a gable on a flat deck, and it is not closed', () => {
+  const roof = roofOf(wide, { kind: ROOF_KIND.GABLE, pitch: 70, maxHeight: 3 });
+  assert.ok(Math.abs(roof.height - 3) < 1e-6, `capped at ${roof.height}`);
+  assert.equal(roof.closed, false);
+  // The end walls stop at the deck too, rather than carrying on to a ridge that
+  // is not there.
+  for (const wall of roof.gables) {
+    // roofOf builds at baseZ 10, so the cap is at 13 in world terms - `height`
+    // is relative to the eaves and the wall's points are not.
+    assert.ok(Math.max(...wall.map(p => p[2])) <= 13 + 1e-3,
+      `a wall reached ${Math.max(...wall.map(p => p[2]))}, cap is 13`);
+    assert.ok(Math.abs(Math.min(...wall.map(p => p[2])) - 10) < 1e-6,
+      'a wall does not start at the eaves');
+  }
+});
+
+test('a gable works on an L-plan and on a plan with a courtyard', () => {
+  // The offset walk handles these because Clipper does; the slab cut has to as
+  // well, or "gable" would be a rectangle-only shape.
+  for (const [name, plan] of [['L', L_SHAPE], ['courtyard', COURTYARD]]) {
+    const roof = generateRoof({ polygons: [plan], baseZ: 0, kind: ROOF_KIND.GABLE, pitch: 35 });
+    assert.ok(roof.rungs.length > 2, `${name}: only ${roof.rungs.length} rungs`);
+    assert.ok(roof.height > 0, `${name}: no height`);
+    assert.notEqual(roof.kind, ROOF_KIND.FLAT, `${name} fell back to flat`);
+  }
+});
+
+test('a tiny plan gets a tiny gable, and a degenerate one falls back', () => {
+  // The same premise that was wrong for hip roofs in Phase 3, and wrong here for
+  // the same reason: "too small" means the walk produced NOTHING, not that the
+  // result is small. A 2cm plan legitimately gets a 6mm roof - and unlike the
+  // offset walk, the slab cut never runs out on a real plan, so the fallback
+  // fires only when there is no span at all.
+  const tiny = roofOf(rect(0.02, 0.02), { kind: ROOF_KIND.GABLE, pitch: 40 });
+  assert.equal(tiny.kind, ROOF_KIND.GABLE);
+  assert.ok(tiny.height > 0 && tiny.height < 0.02, `a 2cm plan got a ${tiny.height}m roof`);
+
+  // A zero-area plan has nothing to roof, and produces no rungs rather than
+  // throwing. Not reachable through the compiler - a mass with no area stops
+  // earlier - but generateRoof is exported and a caller may hand it anything.
+  const degenerate = generateRoof({
+    polygons: [{ outer: [[0, 0], [10, 0], [10, 0]], holes: [] }],
+    baseZ: 0, kind: ROOF_KIND.GABLE, pitch: 40,
+  });
+  assert.deepEqual(degenerate.rungs, []);
+  assert.equal(degenerate.height, 0);
+  assert.deepEqual(degenerate.gables, []);
+});
+
+test('a gable is deterministic', () => {
+  const a = generateRoof({ polygons: [L_SHAPE], baseZ: 2, kind: ROOF_KIND.GABLE, pitch: 38 });
+  const b = generateRoof({ polygons: [L_SHAPE], baseZ: 2, kind: ROOF_KIND.GABLE, pitch: 38 });
+  assert.equal(JSON.stringify(a), JSON.stringify(b));
 });
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`);

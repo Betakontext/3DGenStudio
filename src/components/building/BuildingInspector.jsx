@@ -17,10 +17,12 @@
 //   A DRIVEN INPUT IS SHOWN AS DRIVEN. When an edge feeds a port, the row says
 //   so instead of offering a field whose value the compiler ignores.
 
-import { getNodeDef, propApplies, readMode, readProp } from '../../../building/catalog.js'
+import {
+  getNodeDef, modeApplies, propApplies, readMode, readProp,
+} from '../../../building/catalog.js'
 import BuildingTextures from './BuildingTextures'
 import {
-  facadeTextureRows, hasSideOverrides, trimTextureRows,
+  facadeMeshRows, facadeTextureRows, hasSideOverrides, trimTextureRows,
 } from '../../utils/building/textureRows'
 import { PROP_TYPE } from '../../../building/catalog.js'
 // The VFX curve editor, unchanged. A profile curve is the same object a VFX
@@ -99,8 +101,8 @@ export default function BuildingInspector({
   onEditPlan,
   onEditCurve,
   openCurve = null,
-  onBindTexture,
-  onClearTexture,
+  onAddTexture,
+  onRemoveTexture,
   onGenerateTexture,
 }) {
   const node = doc?.nodes?.find(candidate => candidate.id === selectedId) || null
@@ -232,14 +234,26 @@ export default function BuildingInspector({
           {Object.entries(def.modes).map(([key, spec]) => {
             const value = activeMode(key)
             const option = (spec.options || []).find(candidate => candidate.value === value)
+            // Greyed rather than hidden, the same as a property that does not
+            // apply: a control that has disappeared but is still affecting the
+            // result is the worse of the two failures.
+            const applies = modeApplies(node, key)
             return (
-              <div key={key} className="binspect__row binspect__row--mode">
+              <div
+                key={key}
+                className={`binspect__row binspect__row--mode ${applies ? '' : 'binspect__row--muted'}`}
+              >
                 <span className="binspect__label">{spec.label}</span>
                 <ModeField spec={spec} value={value} onCommit={next => onMode(node.id, key, next)} />
                 {/* The teach line for the SELECTED option, not for the node.
                     This is where an author learns that Batter is what makes an
                     Egyptian pylon, at the moment they are choosing it. */}
-                {option?.teach && <span className="binspect__note">{option.teach}</span>}
+                {applies && option?.teach && <span className="binspect__note">{option.teach}</span>}
+                {!applies && (
+                  <span className="binspect__note">
+                    not used by the {readMode(node, Object.keys(spec.showFor)[0])} setting
+                  </span>
+                )}
               </div>
             )
           })}
@@ -264,28 +278,36 @@ export default function BuildingInspector({
           - see stylepack.js TRIM_TEXTURE_SLOT. Left empty it uses the
           building-wide trim slot, so a plinth and a cornice match by default and
           differ only when asked. */}
-      {node.type === 'trim' && onBindTexture && (
+      {node.type === 'trim' && onAddTexture && (
         <section className="binspect__section binspect__section--textures">
           <BuildingTextures
             doc={doc}
             title="Texture"
             rows={trimTextureRows(doc, node.id)}
-            onBind={onBindTexture}
-            onClear={onClearTexture}
+            onAdd={onAddTexture}
+            onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
             note="Each Trim node can carry its own; empty uses the building-wide trim."
           />
         </section>
       )}
 
-      {node.type === 'facade' && onBindTexture && (
+      {node.type === 'facade' && onAddTexture && (
         <section className="binspect__section binspect__section--textures">
           <BuildingTextures
             doc={doc}
             title="Textures"
-            rows={facadeTextureRows(doc, node.id, { expanded: sidesOpen })}
-            onBind={onBindTexture}
-            onClear={onClearTexture}
+            rows={[
+              ...facadeTextureRows(doc, node.id, { expanded: sidesOpen }),
+              ...facadeMeshRows(doc, node.id, {
+                expanded: sidesOpen,
+                // The balcony rows appear only once this facade actually places
+                // balconies - see facadeMeshRows.
+                balconies: activeMode('balcony') !== 'none',
+              }),
+            ]}
+            onAdd={onAddTexture}
+            onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
             note={sidesOpen
               ? 'A side overrides this facade, which overrides the building.'

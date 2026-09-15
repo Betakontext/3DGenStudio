@@ -6,7 +6,8 @@ import { CODE, SEVERITY } from './diagnostics.js';
 import { BUILDING_IR_FORMAT, LEVEL_KIND, irDigest, validateIrJson } from './ir.js';
 import { createNode } from './catalog.js';
 import { MASS_PROFILE } from './mass.js';
-import { normalizeBuildingDoc } from './doc.js';
+import { appendReference, normalizeBuildingDoc } from './doc.js';
+import { FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, meshKey, nodeTextureKey } from './stylepack.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -280,7 +281,10 @@ test('references travel into the IR and an empty slot warns', () => {
     },
   });
   const result = compileBuilding(withRefs);
-  assert.equal(result.ir.references.tex_wall, 'asset:12');
+  // A slot holds a LIST now, stored as numbered keys, and a bare key from an
+  // older document is migrated to index 0 - which is what it always meant.
+  assert.equal(result.ir.references['tex_wall.0'], 'asset:12');
+  assert.equal(result.ir.references.tex_wall, undefined, 'the bare key survived migration');
   assert.ok(has(result, CODE.W_MISSING_ASSET));
   assert.match(result.diagnostics.find(d => d.code === CODE.W_MISSING_ASSET).message, /Cornice/);
 });
@@ -291,6 +295,93 @@ test('stats describe the building', () => {
   assert.equal(ir.stats.levelCount, 5);
   assert.ok(Math.abs(ir.stats.footprintArea - 96) < 1e-6, `${ir.stats.footprintArea}`);
   assert.ok(Math.abs(ir.stats.floorArea - 96 * 5) < 1e-6);
+});
+
+// --- balconies, end to end ---------------------------------------------------
+//
+// A balcony carries its OWN model slot, with the same per-facade / per-side
+// chain the openings follow. Sharing the openings' list would roll a balustrade
+// into the hole, which is exactly the mistake the separate slot exists to stop.
+
+function balconyGraph({ balcony = 'all', seed = 12345 } = {}) {
+  const fp = createNode('footprint', 'fp');
+  const ms = createNode('mass', 'ms');
+  ms.props.levelCount = 4;
+  const fc = createNode('facade', 'fc');
+  fc.modes.balcony = balcony;
+  const out = createNode('output', 'out');
+  return normalizeBuildingDoc({
+    building: { seed },
+    nodes: [fp, ms, fc, out],
+    edges: [
+      { from: { node: 'fp', port: 'out' }, to: { node: 'ms', port: 'shape' } },
+      { from: { node: 'ms', port: 'out' }, to: { node: 'fc', port: 'building' } },
+      { from: { node: 'fc', port: 'out' }, to: { node: 'out', port: 'building' } },
+    ],
+  });
+}
+
+// Every list bound, so a comparison between two balcony settings differs only in
+// the setting - a doc with no bindings at all would only prove that an unbound
+// window has no meshSlot, which was never in doubt.
+function balconyDoc(balcony) {
+  const mesh = ref => ({ kind: 'mesh', ref });
+  let d = balconyGraph({ balcony });
+  d = appendReference(d, meshKey('window'), mesh('asset:1'));
+  d = appendReference(d, meshKey('balcony'), mesh('asset:2'));
+  d = appendReference(d, nodeTextureKey('fc', FACADE_BALCONY_SLOT), mesh('asset:3'));
+  d = appendReference(d, nodeTextureKey('fc', FACADE_BALCONY_SLOT), mesh('asset:4'));
+  d = appendReference(d, nodeTextureKey('fc', FACADE_BALCONY_SLOT, 'north'), mesh('asset:5'));
+  d = appendReference(d, nodeTextureKey('fc', FACADE_MESH_SLOT, 'east'), mesh('asset:6'));
+  return d;
+}
+
+const slotsOf = (ir, type) => ir.slots.filter(s => s.type === type);
+const whereAt = s => `${s.faceIndex}:${s.floorIndex}:${s.bayIndex}`;
+
+test('a balcony resolves its model through its OWN chain, not the openings', () => {
+  const ir = compileBuilding(balconyDoc('all')).ir;
+  const used = type => [...new Set(slotsOf(ir, type).map(s => s.meshSlot))].sort();
+  // Most specific first: a side beats the facade beats the building-wide list.
+  assert.deepEqual(used('balcony'), ['fc.balconyMesh', 'fc.balconyMesh.north']);
+  // The openings are untouched by any of that - they followed their own chain.
+  assert.deepEqual(used('window'), ['fc.openingMesh.east', 'mesh_window']);
+  // And a door still skips the facade rungs entirely.
+  assert.deepEqual(used('door'), ['']);
+});
+
+test('a balcony and the window behind it do not wear matching variants', () => {
+  const ir = compileBuilding(balconyDoc('all')).ir;
+  const byWindow = new Map(slotsOf(ir, 'window').map(s => [whereAt(s), s.variant]));
+  assert.ok(slotsOf(ir, 'balcony').some(s => byWindow.get(whereAt(s)) !== s.variant),
+    'every balcony rolled its window’s variant - the two lists are in lockstep');
+});
+
+test('turning balconies on leaves every window exactly where it was', () => {
+  // The whole point of a separate compile-time slot. An unrelated setting that
+  // reshuffles the facade is the failure building/random.js exists to prevent.
+  const print = ir => slotsOf(ir, 'window')
+    .map(s => `${whereAt(s)}#${s.meshSlot}#${s.variant}`).join(' ');
+  assert.equal(
+    print(compileBuilding(balconyDoc('none')).ir),
+    print(compileBuilding(balconyDoc('all')).ir),
+  );
+});
+
+test('a balcony carries a real depth into the IR and an opening does not', () => {
+  const ir = compileBuilding(balconyDoc('all')).ir;
+  // cellD is 0 for an opening, meaning "the consumer's token depth". A balcony's
+  // projection is authored, so it has to survive into a headless export or it
+  // would be drawn flat against the wall.
+  assert.deepEqual([...new Set(slotsOf(ir, 'window').map(s => s.cellD))], [0]);
+  assert.deepEqual([...new Set(slotsOf(ir, 'balcony').map(s => s.cellD))], [1]);
+});
+
+test('no balconies means no balcony slots, and the IR is still clean', () => {
+  const result = compileBuilding(balconyDoc('none'));
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  assert.equal(slotsOf(result.ir, 'balcony').length, 0);
+  assert.equal(validateIrJson(result.ir).length, 0);
 });
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`);

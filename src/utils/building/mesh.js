@@ -396,19 +396,41 @@ export function buildingBounds(ir) {
   // its own top outside the camera.
   const place = placer(ir)
 
+  const add = (x, y, z) => {
+    const [tx, ty, tz] = place(x, y, z)
+    box.expandByPoint(new THREE.Vector3(tx, ty, tz))
+    any = true
+  }
+
   for (const level of ir.levels) {
     const polygon = ir.polygons[level.polygon]
     if (!polygon) continue
     for (let i = 0; i + 1 < polygon.outer.length; i += 2) {
-      const x = polygon.outer[i]
-      const y = polygon.outer[i + 1]
-      for (const z of [level.z0, level.z1]) {
-        const [tx, ty, tz] = place(x, y, z)
-        box.expandByPoint(new THREE.Vector3(tx, ty, tz))
-        any = true
+      for (const z of [level.z0, level.z1]) add(polygon.outer[i], polygon.outer[i + 1], z)
+    }
+  }
+
+  // THE ROOF COUNTS TOO. Framing on the levels alone worked while every roof was
+  // shorter than the building under it - and then a 45-degree SHED over an 8m
+  // span rose 8m, taller than the two storeys it sat on, and the preview cut the
+  // top off. The roof looked broken when only the camera was.
+  for (const rung of ir.roof?.rungs || []) {
+    for (const index of rung.polygons) {
+      const polygon = ir.polygons[index]
+      if (!polygon) continue
+      for (let i = 0; i + 1 < polygon.outer.length; i += 2) {
+        add(polygon.outer[i], polygon.outer[i + 1], rung.z)
       }
     }
   }
+  // Gable ends reach the ridge and can oversail nothing, but they are cheap to
+  // include and a shed's high wall is the tallest thing on some buildings.
+  for (const gable of ir.roof?.gables || []) {
+    for (let i = 0; i + 2 < gable.path.length; i += 3) {
+      add(gable.path[i], gable.path[i + 1], gable.path[i + 2])
+    }
+  }
+
   return any ? box : null
 }
 
@@ -485,6 +507,12 @@ export function buildRoofGeometry(ir) {
     }
   }
 
+  // THE VERTICAL END WALLS, which no rung pair describes. Every other roof
+  // surface is the band between two contours; a gable end is the flat triangle
+  // that closes the roof where the contours did not shrink at all, so it travels
+  // beside the ladder - see building/roof.js endWalls and the note in ir.js.
+  for (const gable of roof.gables || []) addGableWall(builder, gable.path, place, roofGroup)
+
   // Whatever the ladder ends on gets a lid. A closed roof ends on a ridge so thin
   // the cap is a sliver; a capped one ends on a real flat deck. Both need it, or
   // the building has a hole where the sky is.
@@ -495,6 +523,80 @@ export function buildRoofGeometry(ir) {
 
   if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
   return { ...builder.build(), triangleCount: builder.triangleCount }
+}
+
+/**
+ * One vertical end wall of a gable or shed roof.
+ *
+ * TRIANGULATED IN ITS OWN PLANE, not in plan. The polygon is vertical, so its
+ * projection onto the ground is a line and Earcut would return nothing at all -
+ * the wall would silently not exist. Projecting onto the two axes the wall
+ * actually spans (horizontal along its face, and up) gives a 2D polygon with
+ * real area, and the triangles map straight back.
+ *
+ * The winding is roof.js's - it wound each wall to face away from the building -
+ * so the normal is taken from the triangle and flipped only if it disagrees.
+ */
+function addGableWall(builder, path, place, group) {
+  const count = Math.floor(path.length / 3)
+  if (count < 3) return
+
+  const points = []
+  for (let i = 0; i < count; i++) points.push([path[i * 3], path[i * 3 + 1], path[i * 3 + 2]])
+
+  // The face's own horizontal direction: the longest horizontal span in it.
+  let ux = 0
+  let uy = 0
+  for (let i = 1; i < count; i++) {
+    const dx = points[i][0] - points[0][0]
+    const dy = points[i][1] - points[0][1]
+    if (Math.hypot(dx, dy) > Math.hypot(ux, uy)) { ux = dx; uy = dy }
+  }
+  const length = Math.hypot(ux, uy)
+  if (length < 1e-9) return
+  ux /= length
+  uy /= length
+
+  const flat = points.map(p => [
+    (p[0] - points[0][0]) * ux + (p[1] - points[0][1]) * uy,
+    p[2] - points[0][2],
+  ])
+  const faces = triangulate(flat, [])
+  if (!faces.length) return
+
+  // Outward: perpendicular to the face's horizontal direction, in plan.
+  const outward = [uy, 0, ux]
+
+  for (const face of faces) {
+    const a = points[face[0]]
+    const b = points[face[1]]
+    const c = points[face[2]]
+    if (!a || !b || !c) continue
+    const A = place(a[0], a[1], a[2])
+    const B = place(b[0], b[1], b[2])
+    const C = place(c[0], c[1], c[2])
+
+    const px = B[0] - A[0], py = B[1] - A[1], pz = B[2] - A[2]
+    const qx = C[0] - A[0], qy = C[1] - A[1], qz = C[2] - A[2]
+    let nx = py * qz - pz * qy
+    let ny = pz * qx - px * qz
+    let nz = px * qy - py * qx
+    const len = Math.hypot(nx, ny, nz)
+    if (len < 1e-12) continue
+    nx /= len; ny /= len; nz /= len
+
+    // Flip the WINDING rather than the normal, so the two never disagree - the
+    // same rule addRoofBand follows.
+    const flip = nx * outward[0] + ny * outward[1] + nz * outward[2] < 0
+    builder.tri(
+      A, flip ? C : B, flip ? B : C,
+      [flip ? -nx : nx, flip ? -ny : ny, flip ? -nz : nz],
+      [flat[face[0]][0], flat[face[0]][1]],
+      flip ? [flat[face[2]][0], flat[face[2]][1]] : [flat[face[1]][0], flat[face[1]][1]],
+      flip ? [flat[face[1]][0], flat[face[1]][1]] : [flat[face[2]][0], flat[face[2]][1]],
+      group,
+    )
+  }
 }
 
 /**
@@ -708,7 +810,7 @@ function edgeNormal(a, b) {
  * @param {object} ir
  * @returns {Array<{type: string, count: number, geometry: THREE.BufferGeometry, matrices: Float32Array}>}
  */
-export function buildSlotInstances(ir) {
+export function buildSlotInstances(ir, slotMeshes = {}) {
   if (!ir || !Array.isArray(ir.slots) || ir.slots.length === 0) return []
 
   // GROUPED BY TYPE *AND* MATERIAL, not by type alone. An InstancedMesh draws
@@ -720,12 +822,28 @@ export function buildSlotInstances(ir) {
   const byGroup = new Map()
   for (const slot of ir.slots) {
     // A door resolves against the door slot, everything else against openings -
-    // the same two palette slots the viewport has always drawn them with.
-    const materialSlot = slot.type === 'door' ? 'door' : 'opening'
+    // the same two palette slots the viewport has always drawn them with. A
+    // BALCONY RESOLVES AGAINST TRIM: it is masonry or ironwork bolted to the
+    // wall, not glazing, and drawing it in the opening colour makes a facade
+    // look like it has holes hanging off it.
+    const materialSlot = slot.type === 'door' ? 'door'
+      : slot.type === 'balcony' ? 'trim' : 'opening'
     const side = sideOfNormal(slot.transform[8], slot.transform[9])
     const material = resolveMaterialIndex(ir, materialSlot, slot.floorIndex, side)
-    const key = `${slot.type}#${material}`
-    if (!byGroup.has(key)) byGroup.set(key, { type: slot.type, material, slots: [] })
+    // AND BY WHICH MESH IT WEARS. A shopfront on the ground floor and windows
+    // above are different models as well as different materials, and one
+    // InstancedMesh draws one geometry.
+    const tag = slot.styleSlot || slot.type
+    // AND BY WHICH MODEL IT WEARS: the compiler resolved each opening to a
+    // reference list (the building-wide one for its tag, or a facade's override,
+    // or one side of one) and rolled an entry from it, so two windows on one
+    // wall can be two models and two sides of one facade can be two lists.
+    const meshSlot = slot.meshSlot || ''
+    const variant = slot.variant | 0
+    const key = `${slot.type}#${material}#${tag}#${meshSlot}#${variant}`
+    if (!byGroup.has(key)) {
+      byGroup.set(key, { type: slot.type, material, tag, meshSlot, variant, slots: [] })
+    }
     byGroup.get(key).slots.push(slot)
   }
 
@@ -733,7 +851,11 @@ export function buildSlotInstances(ir) {
   // Sorted, so the draw order - and therefore anything comparing two builds -
   // does not depend on which slot happened to be emitted first.
   for (const key of [...byGroup.keys()].sort()) {
-    const { type, material, slots } = byGroup.get(key)
+    const { type, material, tag, meshSlot, variant, slots } = byGroup.get(key)
+    // A hole in the list - an entry that failed to load - falls back to the
+    // placeholder box, which is what an unbound slot does too.
+    const loaded = (meshSlot && slotMeshes[meshSlot]?.[variant]) || null
+    const custom = loaded?.geometry || null
     const matrices = new Float32Array(slots.length * 16)
     const matrix = new THREE.Matrix4()
     const local = new THREE.Matrix4()
@@ -769,8 +891,23 @@ export function buildSlotInstances(ir) {
         along[2], up[2], normal[2], pos[2],
         0, 0, 0, 1,
       )
-      // Scale the unit box to the opening, with a shallow depth.
-      local.makeScale(Math.max(slot.cellW, 1e-4), Math.max(slot.cellH, 1e-4), SLOT_DEPTH)
+      // Scale the unit geometry to the opening. WIDTH AND HEIGHT COME FROM THE
+      // CELL, which is what the grammar computed the hole to be; DEPTH does not,
+      // because nothing says how deep a window is. A bound mesh keeps its
+      // proportions by taking the average of the other two, so a moulding is not
+      // flattened into the placeholder's slot; the placeholder box itself has no
+      // proportions to keep and uses the fixed depth it always did.
+      const w = Math.max(slot.cellW, 1e-4)
+      const h = Math.max(slot.cellH, 1e-4)
+      // A SLOT THAT DECLARES ITS OWN DEPTH GETS IT, whatever it is wearing. A
+      // balcony's projection is the dimension that makes it a balcony, so the
+      // model-versus-placeholder rule below must not touch it: scaling an
+      // authored 1m projection by the token 0.18 would flatten it onto the wall,
+      // and scaling the placeholder by it would too.
+      const d = slot.cellD > 0
+        ? slot.cellD
+        : (custom ? (w + h) / 2 * SLOT_DEPTH : SLOT_DEPTH)
+      local.makeScale(w, h, d)
       matrix.multiply(local)
       matrix.toArray(matrices, index * 16)
     })
@@ -780,9 +917,20 @@ export function buildSlotInstances(ir) {
       // needs them to be distinguishable.
       key,
       type,
+      tag,
+      meshSlot,
+      variant,
       material,
       count: slots.length,
-      geometry: new THREE.BoxGeometry(1, 1, 1),
+      // A bound mesh is SHARED, not cloned: several groups can wear the same
+      // model, and the loader owns its lifetime. Only the placeholder box is
+      // made here, so only the placeholder box is disposed by the caller.
+      geometry: custom || new THREE.BoxGeometry(1, 1, 1),
+      ownsGeometry: !custom,
+      // THE MODEL'S OWN MATERIAL, for a consumer that wants it. Offered rather
+      // than applied: a texture deliberately bound to the slot has to win over
+      // one that came along inside a GLB, or binding it would do nothing.
+      modelMaterial: loaded?.material || null,
       matrices,
     })
   }

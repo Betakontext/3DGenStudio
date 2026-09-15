@@ -10,11 +10,12 @@ import { resolveMaterialIndex } from './ir.js';
 import { SIDE_ORDER } from './sides.js';
 import { createNode } from './catalog.js';
 import {
-  buildingSignature, clearReference, createBuildingDoc, serializeBuildingDoc, setReference,
+  appendReference, buildingSignature, clearReference, clearReferenceList, createBuildingDoc,
+  referenceList, referenceListKeys, serializeBuildingDoc, setReference,
 } from './doc.js';
 import {
   DEFAULT_PALETTE, PALETTE_SLOTS, STYLE_PACK_FORMAT, TEXTURE_SLOTS, applyStylePack,
-  createStylePack, nodeTextureKey, normalizeStylePack, packAssetNeeds, paletteOf,
+  createStylePack, meshKey, nodeTextureKey, normalizeStylePack, packAssetNeeds, paletteOf,
   stylePackSummary, textureKey, validateStylePack,
 } from './stylepack.js';
 
@@ -254,7 +255,7 @@ test('a texture slot reaches the IR as a material ref', () => {
   // The whole chain: a reference key -> the reference table -> ir.materials.
   // The renderer never learns an asset id from a node.
   let doc = endsOnly();
-  doc = setReference(doc, textureKey('wall'), {
+  doc = setReference(doc, `${textureKey('wall')}.0`, {
     kind: 'image', ref: 'asset:42', name: 'Brick', tileMetres: 2.5,
   });
   const wall = compileBuilding(applyStylePack(doc, PACK)).ir.materials
@@ -280,18 +281,18 @@ test('a bare-number reference is REJECTED, not coerced', () => {
   // The tree-preset mistake, and invariant 4's whole reason for existing: a
   // bare id ships broken across installations. Rejecting the entry makes it a
   // visible empty slot instead of a silently untextured building.
-  const doc = setReference(endsOnly(), textureKey('wall'), { kind: 'image', ref: 42 });
-  assert.equal(doc.references[textureKey('wall')], undefined);
+  const doc = setReference(endsOnly(), `${textureKey('wall')}.0`, { kind: 'image', ref: 42 });
+  assert.equal(doc.references[`${textureKey('wall')}.0`], undefined);
 });
 
 test('a tile size is always present and always sane', () => {
   for (const [given, expected] of [
     [undefined, 2], [0, 2], [-3, 2], ['nope', 2], [1.5, 1.5], [500, 100],
   ]) {
-    const doc = setReference(endsOnly(), textureKey('trim'), {
+    const doc = setReference(endsOnly(), `${textureKey('trim')}.0`, {
       kind: 'image', ref: 'asset:7', tileMetres: given,
     });
-    assert.equal(doc.references[textureKey('trim')].tileMetres, expected,
+    assert.equal(doc.references[`${textureKey('trim')}.0`].tileMetres, expected,
       `tileMetres ${JSON.stringify(given)}`);
   }
 });
@@ -302,7 +303,7 @@ test('only images carry a tile size', () => {
   const doc = setReference(endsOnly(), 'mesh_window', {
     kind: 'mesh', ref: 'asset:9', tileMetres: 3,
   });
-  assert.equal(doc.references.mesh_window.tileMetres, undefined);
+  assert.equal(doc.references['mesh_window.0'].tileMetres, undefined);
 });
 
 test('every texture slot is a real palette slot', () => {
@@ -319,17 +320,17 @@ test('clearing a slot removes the entry rather than emptying it', () => {
   // Styled first: materials are emitted alongside the geometry, so a document
   // with no Mass compiles to nothing and has no material table to inspect.
   let doc = applyStylePack(endsOnly(), PACK);
-  doc = setReference(doc, textureKey('wall'), { kind: 'image', ref: 'asset:1' });
+  doc = setReference(doc, `${textureKey('wall')}.0`, { kind: 'image', ref: 'asset:1' });
   assert.equal(compileBuilding(doc).ir.materials.find(m => m.slot === 'wall').ref, 'asset:1');
 
-  doc = clearReference(doc, textureKey('wall'));
-  assert.equal(textureKey('wall') in doc.references, false);
+  doc = clearReference(doc, `${textureKey('wall')}.0`);
+  assert.equal(`${textureKey('wall')}.0` in doc.references, false);
   assert.equal(compileBuilding(doc).ir.materials.find(m => m.slot === 'wall').ref, '');
 });
 
 test('binding a texture changes the signature, so the preview updates', () => {
   const plain = applyStylePack(endsOnly(), PACK);
-  const textured = setReference(plain, textureKey('wall'), { kind: 'image', ref: 'asset:3' });
+  const textured = setReference(plain, `${textureKey('wall')}.0`, { kind: 'image', ref: 'asset:3' });
   assert.notEqual(buildingSignature(plain), buildingSignature(textured));
 });
 
@@ -370,7 +371,7 @@ test('with nothing bound, every storey and side shares one material', () => {
 });
 
 test('a building-wide texture reaches every storey and side', () => {
-  const doc = setReference(withFacade(), textureKey('wall'), image('asset:1'));
+  const doc = setReference(withFacade(), `${textureKey('wall')}.0`, image('asset:1'));
   const ir = compileBuilding(doc).ir;
   for (const floor of [0, 3]) {
     for (const side of SIDE_ORDER) assert.equal(refAt(ir, floor, side), 'asset:1');
@@ -380,8 +381,8 @@ test('a building-wide texture reaches every storey and side', () => {
 test('a FACADE override wins on its storeys and leaves the rest alone', () => {
   // The user-facing behaviour: a stone ground floor under a brick building.
   let doc = withFacade('ground');
-  doc = setReference(doc, textureKey('wall'), image('asset:1'));
-  doc = setReference(doc, nodeTextureKey(facadeId(doc), 'wall'), image('asset:2'));
+  doc = setReference(doc, `${textureKey('wall')}.0`, image('asset:1'));
+  doc = setReference(doc, `${nodeTextureKey(facadeId(doc), 'wall')}.0`, image('asset:2'));
   const ir = compileBuilding(doc).ir;
   assert.equal(refAt(ir, 0, 'north'), 'asset:2', 'the ground floor did not take the override');
   assert.equal(refAt(ir, 1, 'north'), 'asset:1', 'the override leaked upward');
@@ -390,9 +391,9 @@ test('a FACADE override wins on its storeys and leaves the rest alone', () => {
 
 test('a SIDE override wins over the facade, on that side only', () => {
   let doc = withFacade('all');
-  doc = setReference(doc, textureKey('wall'), image('asset:1'));
-  doc = setReference(doc, nodeTextureKey(facadeId(doc), 'wall'), image('asset:2'));
-  doc = setReference(doc, nodeTextureKey(facadeId(doc), 'wall', 'north'), image('asset:3'));
+  doc = setReference(doc, `${textureKey('wall')}.0`, image('asset:1'));
+  doc = setReference(doc, `${nodeTextureKey(facadeId(doc), 'wall')}.0`, image('asset:2'));
+  doc = setReference(doc, `${nodeTextureKey(facadeId(doc), 'wall', 'north')}.0`, image('asset:3'));
   const ir = compileBuilding(doc).ir;
   assert.equal(refAt(ir, 1, 'north'), 'asset:3');
   assert.equal(refAt(ir, 1, 'south'), 'asset:2');
@@ -403,8 +404,8 @@ test('a side override with NO facade texture falls through to the building', () 
   // Every rung is independent. Requiring the facade rung to be filled first
   // would make "just the street front in brick" impossible to express.
   let doc = withFacade('all');
-  doc = setReference(doc, textureKey('wall'), image('asset:1'));
-  doc = setReference(doc, nodeTextureKey(facadeId(doc), 'wall', 'south'), image('asset:9'));
+  doc = setReference(doc, `${textureKey('wall')}.0`, image('asset:1'));
+  doc = setReference(doc, `${nodeTextureKey(facadeId(doc), 'wall', 'south')}.0`, image('asset:9'));
   const ir = compileBuilding(doc).ir;
   assert.equal(refAt(ir, 1, 'south'), 'asset:9');
   assert.equal(refAt(ir, 1, 'north'), 'asset:1');
@@ -412,8 +413,8 @@ test('a side override with NO facade texture falls through to the building', () 
 
 test('windows follow the same chain as walls', () => {
   let doc = withFacade('all');
-  doc = setReference(doc, textureKey('opening'), image('asset:1'));
-  doc = setReference(doc, nodeTextureKey(facadeId(doc), 'opening', 'west'), image('asset:4'));
+  doc = setReference(doc, `${textureKey('opening')}.0`, image('asset:1'));
+  doc = setReference(doc, `${nodeTextureKey(facadeId(doc), 'opening', 'west')}.0`, image('asset:4'));
   const ir = compileBuilding(doc).ir;
   assert.equal(ir.materials[resolveMaterialIndex(ir, 'opening', 1, 'west')].ref, 'asset:4');
   assert.equal(ir.materials[resolveMaterialIndex(ir, 'opening', 1, 'east')].ref, 'asset:1');
@@ -429,8 +430,8 @@ test('two facades override their own storeys independently', () => {
     ],
   });
   const facades = doc.nodes.filter(n => n.type === 'facade');
-  doc = setReference(doc, nodeTextureKey(facades[0].id, 'wall'), image('asset:10'));
-  doc = setReference(doc, nodeTextureKey(facades[1].id, 'wall'), image('asset:11'));
+  doc = setReference(doc, `${nodeTextureKey(facades[0].id, 'wall')}.0`, image('asset:10'));
+  doc = setReference(doc, `${nodeTextureKey(facades[1].id, 'wall')}.0`, image('asset:11'));
   const ir = compileBuilding(doc).ir;
   assert.equal(refAt(ir, 0, 'north'), 'asset:10');
   assert.equal(refAt(ir, 2, 'north'), 'asset:11');
@@ -440,7 +441,7 @@ test('an override keeps the slot colour, so a tint is not lost', () => {
   // A texture MULTIPLIES its colour. An override that reset the tint to white
   // would make one storey of a coloured building suddenly grey.
   let doc = withFacade('ground');
-  doc = setReference(doc, nodeTextureKey(facadeId(doc), 'wall'), image('asset:2'));
+  doc = setReference(doc, `${nodeTextureKey(facadeId(doc), 'wall')}.0`, image('asset:2'));
   const ir = compileBuilding(doc).ir;
   assert.equal(ir.materials[wallAt(ir, 0, 'north')].color, '#aabbcc');
 });
@@ -450,19 +451,19 @@ test('a deleted facade leaves a DANGLING key rather than a wrong material', () =
   // reportable rather than silently reassigned to whatever node comes next.
   let doc = withFacade('all');
   const id = facadeId(doc);
-  doc = setReference(doc, nodeTextureKey(id, 'wall'), image('asset:5'));
+  doc = setReference(doc, `${nodeTextureKey(id, 'wall')}.0`, image('asset:5'));
   const without = { ...doc, nodes: doc.nodes.filter(n => n.id !== id) };
   const ir = compileBuilding(without).ir;
   // No facade means no override is emitted at all; the building-wide slot stands.
   assert.equal(ir.materials.filter(m => m.ref === 'asset:5').length, 0);
-  assert.ok(`${id}.wall` in without.references, 'the key vanished instead of dangling');
+  assert.ok(`${id}.wall.0` in without.references, 'the key vanished instead of dangling');
 });
 
 test('the material table stays small - selectors, not expanded lists', () => {
   // A 40-storey building with one brick has ONE entry per slot. Expanding per
   // storey would make adding a floor rewrite the whole table.
   let doc = withFacade('all', 40);
-  doc = setReference(doc, textureKey('wall'), image('asset:1'));
+  doc = setReference(doc, `${textureKey('wall')}.0`, image('asset:1'));
   const ir = compileBuilding(doc).ir;
   assert.equal(ir.materials.length, PALETTE_SLOTS.length, 'the table grew with the storeys');
 });
@@ -500,7 +501,7 @@ test('with nothing bound, every trim run shares the building-wide material', () 
 test('a Trim node with its own texture gets its own material', () => {
   let doc = withTrims(['cornice', 'plinth']);
   const [cornice, plinth] = trimIds(doc);
-  doc = setReference(doc, nodeTextureKey(plinth, 'trim'), {
+  doc = setReference(doc, `${nodeTextureKey(plinth, 'trim')}.0`, {
     kind: 'image', ref: 'asset:77', tileMetres: 1,
   });
   const ir = compileBuilding(doc).ir;
@@ -517,8 +518,8 @@ test('a Trim node with its own texture gets its own material', () => {
 test('two textured trims get two materials, not one', () => {
   let doc = withTrims(['cornice', 'plinth']);
   const [cornice, plinth] = trimIds(doc);
-  doc = setReference(doc, nodeTextureKey(cornice, 'trim'), { kind: 'image', ref: 'asset:1' });
-  doc = setReference(doc, nodeTextureKey(plinth, 'trim'), { kind: 'image', ref: 'asset:2' });
+  doc = setReference(doc, `${nodeTextureKey(cornice, 'trim')}.0`, { kind: 'image', ref: 'asset:1' });
+  doc = setReference(doc, `${nodeTextureKey(plinth, 'trim')}.0`, { kind: 'image', ref: 'asset:2' });
   const ir = compileBuilding(doc).ir;
   const refs = runsOf(ir).map(r => ({ profile: r.profile, ref: ir.materials[r.material].ref }));
   assert.equal(refs.find(r => r.profile === 'cornice').ref, 'asset:1');
@@ -566,6 +567,124 @@ test('a run records which node made it', () => {
   // The IR run itself does not need to carry the node id - the material index
   // is the resolved answer - but the compiler must have had it.
   assert.ok(ir.trims.every(run => Number.isInteger(run.material) && run.material >= 0));
+});
+
+// --- lists, and the seeded pick from them -----------------------------------
+//
+// A slot holds a LIST so that one document can be re-rolled into a different
+// building. Two units of variation, and they are deliberately different: a
+// TEXTURE is picked once per building (a building wears one brick), an OPENING
+// is picked per opening (one building shows a mix of windows).
+
+const meshList = (doc, tag, refs) => refs.reduce(
+  (acc, ref) => appendReference(acc, meshKey(tag), { kind: 'mesh', ref }), doc,
+);
+const texList = (doc, slot, refs) => refs.reduce(
+  (acc, ref) => appendReference(acc, textureKey(slot), { kind: 'image', ref, tileMetres: 2 }), doc,
+);
+
+test('a bare key from an older document is read as index 0', () => {
+  // migrateBuildingDoc's only job so far. A slot that held one asset held its
+  // first entry, which is what it always meant.
+  const doc = normalizeStylePack && createBuildingDoc({
+    references: { tex_wall: { kind: 'image', ref: 'asset:5' } },
+  });
+  assert.deepEqual(Object.keys(doc.references), ['tex_wall.0']);
+  assert.deepEqual(referenceList(doc, textureKey('wall')).map(e => e.ref), ['asset:5']);
+});
+
+test('a TEXTURE list is picked once per building, and the seed changes which', () => {
+  let doc = texList(withFacade('all'), 'wall', ['asset:1', 'asset:2', 'asset:3']);
+  const chosenAt = seed => {
+    const ir = compileBuilding({ ...doc, building: { ...doc.building, seed } }).ir;
+    return ir.materials.find(m => m.slot === 'wall').ref;
+  };
+  // One brick for the whole building, whichever it is.
+  const picked = chosenAt(12345);
+  assert.ok(['asset:1', 'asset:2', 'asset:3'].includes(picked), `picked ${picked}`);
+  // ...and the same document with the same seed always picks the same one.
+  assert.equal(chosenAt(12345), picked);
+  // Across seeds it must actually vary, or the list is decoration.
+  const seen = new Set([1, 2, 3, 4, 5, 6, 7, 8].map(chosenAt));
+  assert.ok(seen.size > 1, `eight seeds all picked ${[...seen]}`);
+});
+
+test('adding a texture to a list does not reshuffle the windows', () => {
+  // The rule building/random.js exists to enforce: a pick is hashed from its own
+  // identity, never from a position in a stream, so an unrelated change cannot
+  // reshuffle everything else.
+  let doc = meshList(withFacade('all'), 'window', ['asset:1', 'asset:2']);
+  const before = compileBuilding(doc).ir.slots.map(s => s.variant).join('');
+  doc = texList(doc, 'wall', ['asset:9', 'asset:8']);
+  assert.equal(compileBuilding(doc).ir.slots.map(s => s.variant).join(''), before);
+});
+
+test('an OPENING list is picked per opening, so one building shows a mix', () => {
+  const doc = meshList(withFacade('all', 4), 'window', ['a', 'b', 'c'].map(n => `asset:${n.charCodeAt(0)}`));
+  const ir = compileBuilding(doc).ir;
+  const windows = ir.slots.filter(slot => slot.styleSlot === 'window');
+  assert.ok(windows.length > 12, `only ${windows.length} windows`);
+  const used = new Set(windows.map(slot => slot.variant));
+  assert.ok(used.size > 1, `every opening wears variant ${[...used]} - the pick is not per opening`);
+  for (const variant of used) assert.ok(variant >= 0 && variant < 3, `variant ${variant}`);
+});
+
+test('one entry means variant 0 everywhere, with no dice rolled', () => {
+  const doc = meshList(withFacade('all'), 'window', ['asset:1']);
+  const ir = compileBuilding(doc).ir;
+  assert.ok(ir.slots.every(slot => slot.variant === 0));
+});
+
+test('ADDING A STOREY does not reshuffle the openings below it', () => {
+  // The invariant the whole seeding design exists for, now that the pick is
+  // per opening: floorIndex counts from the GROUND, so a new storey on top
+  // cannot renumber anything under it.
+  const doc = meshList(withFacade('all', 3), 'window', ['asset:1', 'asset:2', 'asset:3']);
+  const taller = meshList(withFacade('all', 6), 'window', ['asset:1', 'asset:2', 'asset:3']);
+  const fingerprint = ir => ir.slots
+    .filter(slot => slot.floorIndex < 3)
+    .map(slot => `${slot.faceIndex}:${slot.floorIndex}:${slot.bayIndex}:${slot.variant}`)
+    .sort()
+    .join(' ');
+  assert.equal(fingerprint(compileBuilding(taller).ir), fingerprint(compileBuilding(doc).ir));
+});
+
+test('a per-side texture list is picked independently of the building-wide one', () => {
+  let doc = withFacade('all');
+  doc = texList(doc, 'wall', ['asset:1']);
+  const id = facadeId(doc);
+  doc = appendReference(doc, nodeTextureKey(id, 'wall', 'north'), {
+    kind: 'image', ref: 'asset:7', tileMetres: 2,
+  });
+  doc = appendReference(doc, nodeTextureKey(id, 'wall', 'north'), {
+    kind: 'image', ref: 'asset:8', tileMetres: 2,
+  });
+  const ir = compileBuilding(doc).ir;
+  const north = ir.materials[resolveMaterialIndex(ir, 'wall', 1, 'north')].ref;
+  const south = ir.materials[resolveMaterialIndex(ir, 'wall', 1, 'south')].ref;
+  assert.ok(['asset:7', 'asset:8'].includes(north), `north got ${north}`);
+  assert.equal(south, 'asset:1', 'the building-wide slot was overridden on every side');
+});
+
+test('clearing a whole list empties the slot', () => {
+  let doc = texList(withFacade('all'), 'wall', ['asset:1', 'asset:2']);
+  assert.equal(referenceList(doc, textureKey('wall')).length, 2);
+  doc = clearReferenceList(doc, textureKey('wall'));
+  assert.deepEqual(referenceList(doc, textureKey('wall')), []);
+  assert.equal(compileBuilding(doc).ir.materials.find(m => m.slot === 'wall').ref, '');
+});
+
+test('a gap in a list does not renumber the entries after it', () => {
+  // Removing the middle entry must leave the last one where the compiler's
+  // variant index expects it, or every opening silently changes model.
+  let doc = meshList(withFacade('all'), 'window', ['asset:1', 'asset:2', 'asset:3']);
+  doc = clearReference(doc, `${meshKey('window')}.1`);
+  const keys = referenceListKeys(doc.references, meshKey('window'));
+  assert.deepEqual(keys, ['mesh_window.0', 'mesh_window.2']);
+  // ...and appending goes after the highest index, not into the gap.
+  doc = appendReference(doc, meshKey('window'), { kind: 'mesh', ref: 'asset:4' });
+  assert.deepEqual(referenceListKeys(doc.references, meshKey('window')),
+    ['mesh_window.0', 'mesh_window.2', 'mesh_window.3']);
 });
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`);

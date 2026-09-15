@@ -9,11 +9,12 @@ import assert from 'node:assert/strict'
 import * as THREE from 'three'
 import { compileBuilding } from '../../../building/compile.js'
 import { createNode } from '../../../building/catalog.js'
-import { normalizeBuildingDoc } from '../../../building/doc.js'
+import { appendReference, normalizeBuildingDoc } from '../../../building/doc.js'
+import { meshKey } from '../../../building/stylepack.js'
 import { MASS_PROFILE } from '../../../building/mass.js'
 import {
-  buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry, buildSlotInstances,
-  buildTrimGeometry, buildingBounds, toThree,
+  SLOT_DEPTH, buildBuildingGeometry, buildLevelOutlines, buildRoofGeometry,
+  buildSlotInstances, buildTrimGeometry, buildingBounds, toThree,
 } from './mesh.js'
 import { sideOfNormal } from '../../../building/sides.js'
 
@@ -626,6 +627,225 @@ test('a leaning building tilts its windows on every wall orientation', () => {
     const worst = Math.min(...tilts)
     assert.ok(worst > 20, `${side} windows tilt only ${worst.toFixed(2)}deg`)
   }
+})
+
+
+test('the camera frames a roof taller than the building under it', () => {
+  // Framing on the levels alone worked while every roof was shorter than its
+  // walls, and then a 45-degree SHED over an 8m span rose 8m - taller than the
+  // two storeys below - and the preview cut the top off. The roof looked broken
+  // when only the camera was.
+  const doc = graphWith([{ type: 'roof', modes: { kind: 'shed' }, props: { pitch: 45 } }],
+    { shape: SQUARE, mass: { props: { levelCount: 2 } } })
+  const ir = irOf(doc)
+  const box = buildingBounds(ir)
+  const total = ir.stats.height + ir.stats.roofHeight
+  assert.ok(ir.stats.roofHeight > ir.stats.height,
+    `the fixture roof (${ir.stats.roofHeight}) is not taller than its walls`)
+  assert.ok(Math.abs(box.max.y - total) < 1e-6,
+    `the frame tops out at ${box.max.y}, the building at ${total}`)
+})
+
+test('a gable end wall is drawn, and faces outward', () => {
+  // The part the contour ladder cannot say. Without it the roof has a hole at
+  // each end; wound inward, the wall is invisible until it is shaded.
+  const ir = irOf(graphWith([
+    { type: 'roof', modes: { kind: 'gable' }, props: { pitch: 45 } },
+  ], { shape: { outer: [[0, 0], [20, 0], [20, 10], [0, 10]], holes: [] } }))
+  assert.equal(ir.roof.gables.length, 2)
+
+  const tris = triangles(buildRoofGeometry(ir).geometry)
+  // The ridge runs along X, so the end walls are the faces whose normal is +/-X.
+  const ends = tris.filter(t => Math.abs(t.normal[0]) > 0.99)
+  assert.ok(ends.length >= 4, `only ${ends.length} end-wall triangles`)
+  for (const t of ends) {
+    // Outward: a wall at the far end faces +X, one at the near end faces -X.
+    const sign = t.centroid[0] > 10 ? 1 : -1
+    assert.ok(t.normal[0] * sign > 0,
+      `an end wall at x=${t.centroid[0].toFixed(1)} faces inward`)
+  }
+})
+
+// --- bound opening models ---------------------------------------------------
+//
+// The contract: a bound mesh is treated as a UNIT mesh and scaled to the bay the
+// grammar worked out, so one model fits any wall. Same rule the VFX mesh
+// renderer settled on after getting it wrong in both importers.
+
+/** A unit-ish geometry standing in for a loaded GLB, already normalised. */
+function unitGeometry() {
+  return new THREE.BoxGeometry(1, 1, 1)
+}
+
+// A slot resolves to a reference PREFIX and the loader returns one array per
+// prefix, holes and all - so a fixture binds a real reference, reads the prefix
+// the compiler chose, and hands over an array even when it holds one entry.
+const withWindowModels = (doc, count = 1) => {
+  let next = doc
+  for (let i = 0; i < count; i++) {
+    next = appendReference(next, meshKey('window'), { kind: 'mesh', ref: `asset:${i + 1}` })
+  }
+  return next
+}
+const meshSlotOf = ir => ir.slots.find(slot => slot.styleSlot === 'window')?.meshSlot || ''
+// The loader hands back {geometry, material} per entry - the model keeps its own
+// material, which the first version of it threw away.
+const loadedList = (...geometries) => geometries.map(geometry => ({ geometry, material: null }))
+
+test('a bound model REPLACES the placeholder box for that opening kind', () => {
+  const ir = irOf(withWindowModels(graphWith([{ type: 'facade' }],
+    { shape: SQUARE, mass: { props: { levelCount: 2 } } })))
+  const custom = unitGeometry()
+  const prefix = meshSlotOf(ir)
+  assert.equal(prefix, meshKey('window'), `the slot resolved to "${prefix}"`)
+  const groups = buildSlotInstances(ir, { [prefix]: loadedList(custom) })
+  const windows = groups.find(group => group.tag === 'window')
+  assert.ok(windows, 'no window group')
+  assert.equal(windows.geometry, custom, 'the placeholder box was used anyway')
+  // ...and the caller must not dispose it: the loader owns it.
+  assert.equal(windows.ownsGeometry, false)
+  custom.dispose()
+})
+
+test('an UNBOUND opening keeps its own box, which the caller owns', () => {
+  const ir = irOf(graphWith([{ type: 'facade' }], { shape: SQUARE }))
+  const groups = buildSlotInstances(ir, {})
+  for (const group of groups) {
+    assert.ok(group.geometry, `${group.tag} has no geometry`)
+    assert.equal(group.ownsGeometry, true, `${group.tag} does not own its box`)
+  }
+})
+
+test('openings are grouped by TAG as well as by material', () => {
+  // A shopfront and the windows above it are different models, and one
+  // InstancedMesh draws one geometry - so the split has to fall out of the
+  // grouping rather than need a second pass.
+  const ir = irOf(graphWith([
+    { type: 'facade', modes: { storeys: 'all', opening: 'window' } },
+    { type: 'facade', modes: { storeys: 'ground', opening: 'shopfront' } },
+  ], { shape: SQUARE, mass: { props: { levelCount: 3 } } }))
+
+  const tags = new Set(ir.slots.map(slot => slot.styleSlot))
+  assert.ok(tags.has('window') && tags.has('shopfront'), `tags were ${[...tags]}`)
+
+  const groups = buildSlotInstances(ir, {})
+  const byTag = new Set(groups.map(group => group.tag))
+  assert.ok(byTag.has('window') && byTag.has('shopfront'),
+    `groups were ${[...byTag]} - a shopfront cannot wear its own model`)
+})
+
+test('a model is scaled to the CELL, so one model fits any wall', () => {
+  // Width and height come from the bay the grammar computed. A model authored at
+  // any size arrives the right size, which is the whole point of normalising it
+  // to a unit box on load.
+  const ir = irOf(withWindowModels(graphWith([{ type: 'facade', props: { bayWidth: 4 } }],
+    { shape: SQUARE, mass: { props: { levelCount: 2 } } })))
+  const custom = unitGeometry()
+  const group = buildSlotInstances(ir, { [meshSlotOf(ir)]: loadedList(custom) })
+    .find(g => g.tag === 'window')
+  const slot = ir.slots.find(s => s.styleSlot === 'window')
+
+  // Column lengths of the instance matrix are the scale it applied.
+  const m = group.matrices
+  const colLength = k => Math.hypot(m[k * 4], m[k * 4 + 1], m[k * 4 + 2])
+  assert.ok(Math.abs(colLength(0) - slot.cellW) < 1e-4,
+    `width ${colLength(0).toFixed(3)}, cell is ${slot.cellW}`)
+  assert.ok(Math.abs(colLength(1) - slot.cellH) < 1e-4,
+    `height ${colLength(1).toFixed(3)}, cell is ${slot.cellH}`)
+  custom.dispose()
+})
+
+test('DEPTH keeps a model in proportion instead of flattening it', () => {
+  // The cell says how wide and how tall the hole is. Nothing says how DEEP a
+  // window is, and squashing a 200mm frame into the placeholder's 180mm slot
+  // would flatten every moulding on it - so a bound model scales its depth with
+  // the other two, and only the placeholder box keeps the fixed depth.
+  const ir = irOf(withWindowModels(graphWith([{ type: 'facade' }],
+    { shape: SQUARE, mass: { props: { levelCount: 2 } } })))
+  const custom = unitGeometry()
+  const depthOf = meshes => {
+    const group = buildSlotInstances(ir, meshes).find(g => g.tag === 'window')
+    const m = group.matrices
+    return Math.hypot(m[8], m[9], m[10])
+  }
+  const plain = depthOf({})
+  const model = depthOf({ [meshSlotOf(ir)]: loadedList(custom) })
+  assert.ok(Math.abs(plain - SLOT_DEPTH) < 1e-6, `a box got depth ${plain}`)
+  assert.ok(model > plain, `a model got depth ${model}, no deeper than the box's ${plain}`)
+  custom.dispose()
+})
+
+test('the export bakes a bound model, and does not free what it does not own', () => {
+  // Disposing a shared model here would pull it out from under the preview.
+  const ir = irOf(withWindowModels(graphWith([{ type: 'facade' }],
+    { shape: SQUARE, mass: { props: { levelCount: 2 } } })))
+  const custom = unitGeometry()
+  const groups = buildSlotInstances(ir, { [meshSlotOf(ir)]: loadedList(custom) })
+  const windows = groups.find(group => group.tag === 'window')
+  assert.equal(windows.ownsGeometry, false)
+  // Still usable after a caller that respects ownsGeometry has finished.
+  assert.ok(custom.getAttribute('position'), 'the shared model was disposed')
+  custom.dispose()
+})
+
+// --- balconies --------------------------------------------------------------
+//
+// The two things a balcony needs from the mesher that an opening does not: its
+// own projection depth, and the trim material rather than the opening one.
+
+const balconyIr = (props = {}) => irOf(graphWith(
+  [{ type: 'facade', modes: { balcony: 'all' }, props }],
+  { shape: SQUARE, mass: { props: { levelCount: 3 } } },
+))
+
+test('a balcony is drawn its authored depth, not the token opening depth', () => {
+  // SLOT_DEPTH exists to set a flat opening into its wall. Applying it to a
+  // balcony would flatten a 1.4m projection onto the masonry - which is exactly
+  // what "a balcony" stops being at that point.
+  const ir = balconyIr({ balconyDepth: 1.4 })
+  const group = buildSlotInstances(ir, {}).find(g => g.type === 'balcony')
+  assert.ok(group, 'no balcony group')
+  const m = new THREE.Matrix4().fromArray(group.matrices, 0)
+  // The third basis column's length is the Z scale the instance was given.
+  const depth = new THREE.Vector3(m.elements[8], m.elements[9], m.elements[10]).length()
+  assert.ok(Math.abs(depth - 1.4) < 1e-5, `drawn ${depth.toFixed(4)}m deep, authored 1.4m`)
+  // ...while an opening in the same building still gets the token depth.
+  const window = buildSlotInstances(ir, {}).find(g => g.type === 'window')
+  const wm = new THREE.Matrix4().fromArray(window.matrices, 0)
+  const wd = new THREE.Vector3(wm.elements[8], wm.elements[9], wm.elements[10]).length()
+  assert.ok(Math.abs(wd - SLOT_DEPTH) < 1e-5, `an opening was drawn ${wd.toFixed(4)}m deep`)
+})
+
+test('a BOUND balcony model keeps the authored depth too', () => {
+  // The model path scales depth by the average of width and height, which is
+  // right for a window (nothing says how thick one is) and wrong for a balcony
+  // (the author said exactly how far it sticks out).
+  const ir = balconyIr({ balconyDepth: 1.4 })
+  const slot = ir.slots.find(s => s.type === 'balcony')
+  const custom = unitGeometry()
+  const group = buildSlotInstances(ir, { [slot.meshSlot || 'x']: loadedList(custom) })
+    .find(g => g.type === 'balcony')
+  const m = new THREE.Matrix4().fromArray(group.matrices, 0)
+  const depth = new THREE.Vector3(m.elements[8], m.elements[9], m.elements[10]).length()
+  assert.ok(Math.abs(depth - 1.4) < 1e-5, `a bound model was drawn ${depth.toFixed(4)}m deep`)
+  custom.dispose()
+})
+
+test('a balcony draws in the TRIM material, not the opening one', () => {
+  // It is masonry or ironwork bolted to the wall. In the opening colour a
+  // facade reads as having holes hanging off the front of it.
+  const ir = balconyIr()
+  const groups = buildSlotInstances(ir, {})
+  const balcony = groups.find(g => g.type === 'balcony')
+  const window = groups.find(g => g.type === 'window')
+  assert.equal(ir.materials[balcony.material].slot, 'trim')
+  assert.equal(ir.materials[window.material].slot, 'opening')
+})
+
+test('balconies are their own instanced group, never merged with the openings', () => {
+  const groups = buildSlotInstances(balconyIr(), {})
+  const types = groups.map(g => g.type)
+  assert.ok(types.includes('balcony') && types.includes('window'), `groups were ${types}`)
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

@@ -1,27 +1,27 @@
-// A list of material slots that can be filled with a texture.
+// A list of material and model slots, each holding a LIST of assets.
 //
-// GENERIC OVER THE ROWS, because the same list appears twice with different
-// scopes: the building-wide slots in the sidebar, and a Facade node's own
-// overrides in the inspector. They differ only in which reference KEYS they
-// write, so one component takes the rows and the two callers describe them.
+// GENERIC OVER THE ROWS, because the same list appears three times with
+// different scopes: the building-wide slots in the sidebar, the openings' models,
+// and a Facade or Trim node's own overrides in the inspector. They differ only
+// in which reference KEYS they write, so one component takes the rows and the
+// callers describe them.
 //
-// FIVE BUILDING-WIDE SLOTS, NOT A MATERIAL GRAPH. A building has a wall, a trim,
-// a roof, and whatever fills its window and door openings - and that is the
-// whole of what a style pack binds. Offering a PBR stack per surface would be
-// more expressive and would also be the point at which this stops being a
-// building generator and starts being a material editor.
+// A SLOT HOLDS SEVERAL ASSETS, NOT ONE, and that is the whole point of the list:
+// give a style three bricks and three window models and a street of these stops
+// looking like one building copied. The compiler rolls the choice from the
+// document's seed - see building/compile.js pickReference - so re-rolling the
+// seed re-rolls the building. Openings roll PER OPENING, textures once per
+// building, because a building wears one brick and shows many windows.
 //
-// EACH ROW IS A REFERENCE KEY, resolved through doc.references - invariant 3.
-// The node graph never names an asset; it names a slot, and the table says what
-// is in it. That is what gives bundling one place to walk, project import one
-// place to remap, and a deleted texture a reportable dangling key rather than an
-// untraceable id.
-//
-// Two ways to fill one, because both are normal: generate it from a prompt, or
-// pick an image already in the library. Neither is privileged.
+// EACH ENTRY IS A REFERENCE KEY, `<slot>.<n>`, resolved through doc.references -
+// invariant 3. The node graph never names an asset; it names a slot, and the
+// table says what is in it. That is what gives bundling one place to walk,
+// project import one place to remap, and a deleted asset a reportable dangling
+// key rather than an untraceable id.
 
 import { useState } from 'react'
 import AssetSelectorModal from '../AssetSelectorModal'
+import { referenceListKeys } from '../../../building/doc.js'
 import { SLOT_GUIDE } from '../../utils/building/textureSlots'
 import { buildingFileUrl } from '../../utils/buildingApi'
 import './BuildingTextures.css'
@@ -30,32 +30,40 @@ import './BuildingTextures.css'
  * @param {Object} props
  * @param {Object} props.doc
  * @param {Array<{refKey: string, guideSlot: string, label: string, hint?: string,
- *   indent?: boolean, fallback?: string}>} props.rows
+ *   indent?: boolean, fallback?: string, warn?: string, assetType?: string}>} props.rows
+ *   `refKey` is the slot PREFIX; entries live at `<refKey>.<n>`.
  * @param {string} [props.title]
- * @param {(refKey: string, asset: Object) => void} props.onBind
- * @param {(refKey: string) => void} props.onClear
+ * @param {(refKey: string, assets: Array<Object>) => void} props.onAdd
+ * @param {(entryKey: string) => void} props.onRemove
  * @param {(refKey: string, guideSlot: string) => void} props.onGenerate
  * @param {string} [props.note]
  */
 export default function BuildingTextures({
-  doc, rows, title, onBind, onClear, onGenerate, note,
+  doc, rows, title, onAdd, onRemove, onGenerate, note,
 }) {
   const [picking, setPicking] = useState(null)
 
-  const pick = asset => {
+  const pick = chosen => {
     const row = picking
     setPicking(null)
-    if (!row || !asset) return
-    // The library hands back ids in several shapes depending on the route;
-    // the reference table stores the bare number - invariant 4 in doc.js.
-    const assetId = Number(String(asset.id ?? asset.assetId ?? '').replace('library:', ''))
-    if (!Number.isFinite(assetId)) return
-    onBind(row.refKey, {
-      assetId,
-      name: asset.name || SLOT_GUIDE[row.guideSlot]?.label || 'Texture',
-      tile: SLOT_GUIDE[row.guideSlot]?.tile || 2,
-      url: buildingFileUrl(asset),
-    })
+    if (!row || !chosen) return
+    // `multiple` makes the modal hand back an ARRAY; a single-select caller
+    // still gets one asset, so both shapes have to be accepted.
+    const list = Array.isArray(chosen) ? chosen : [chosen]
+    const assets = list.map(asset => {
+      // The library hands back ids in several shapes depending on the route;
+      // the reference table stores the bare number - invariant 4 in doc.js.
+      const assetId = Number(String(asset.id ?? asset.assetId ?? '').replace('library:', ''))
+      if (!Number.isFinite(assetId)) return null
+      return {
+        assetId,
+        name: asset.name || SLOT_GUIDE[row.guideSlot]?.label || 'Asset',
+        tile: SLOT_GUIDE[row.guideSlot]?.tile || 2,
+        kind: row.assetType === 'mesh' ? 'mesh' : 'image',
+        url: buildingFileUrl(asset),
+      }
+    }).filter(Boolean)
+    if (assets.length) onAdd(row.refKey, assets)
   }
 
   return (
@@ -64,55 +72,97 @@ export default function BuildingTextures({
       <ul className="btex__list">
         {rows.map(row => {
           const guide = SLOT_GUIDE[row.guideSlot] || {}
-          const entry = doc.references[row.refKey]
-          const bound = Boolean(entry?.ref)
+          const entryKeys = referenceListKeys(doc.references, row.refKey)
+          const entries = entryKeys.map(key => ({ key, entry: doc.references[key] }))
+          const filled = entries.filter(({ entry }) => entry?.ref)
+          const isMesh = row.assetType === 'mesh'
           return (
-            <li
-              key={row.refKey}
-              className={`btex__slot ${row.indent ? 'btex__slot--sub' : ''}`}
-              title={row.hint || guide.hint}
-            >
-              <span className={`btex__chip ${bound ? 'btex__chip--on' : ''}`}>
-                <span className="material-symbols-outlined">
-                  {bound ? 'texture' : 'add_photo_alternate'}
+            <li key={row.refKey} className="btex__group">
+              <div
+                className={`btex__slot ${row.indent ? 'btex__slot--sub' : ''}`}
+                title={row.hint || guide.hint}
+              >
+                <span className={`btex__chip ${filled.length ? 'btex__chip--on' : ''}`}>
+                  <span className="material-symbols-outlined">
+                    {filled.length ? (isMesh ? 'deployed_code' : 'texture') : 'add_photo_alternate'}
+                  </span>
                 </span>
-              </span>
-              <span className="btex__text">
-                <span className="btex__label">{row.label}</span>
-                <span className="btex__state">
-                  {bound
-                    ? `${entry.name || 'bound'} · ${entry.tileMetres}m tile`
-                    // An unfilled row is not empty, it INHERITS. Saying which is
-                    // the difference between a slot that does nothing and one
-                    // deliberately left to the level above it.
-                    : row.fallback || 'palette colour only'}
+                <span className="btex__text">
+                  <span className="btex__label">{row.label}</span>
+                  <span className="btex__state">
+                    {filled.length === 0
+                      // An unfilled row is not empty, it INHERITS. Saying which is
+                      // the difference between a slot that does nothing and one
+                      // deliberately left to the level above it.
+                      ? (row.fallback || 'palette colour only')
+                      : filled.length === 1
+                        ? (isMesh
+                          ? (filled[0].entry.name || 'a model')
+                          : `${filled[0].entry.name || 'bound'} · ${filled[0].entry.tileMetres}m tile`)
+                        // The COUNT, because that is the thing that changes the
+                        // building: one asset is a choice, several are a roll.
+                        : `${filled.length} ${isMesh ? 'models' : 'textures'}, picked by seed`}
+                  </span>
                 </span>
-              </span>
-              <span className="btex__buttons">
-                <button
-                  type="button"
-                  onClick={() => onGenerate(row.refKey, row.guideSlot)}
-                  title={`Generate a ${row.label.toLowerCase()} texture with ComfyUI`}
-                >
-                  <span className="material-symbols-outlined">auto_awesome</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPicking(row)}
-                  title="Pick an image from the library"
-                >
-                  <span className="material-symbols-outlined">photo_library</span>
-                </button>
-                {bound && (
+                <span className="btex__buttons">
+                  {/* No Generate on a model row: ComfyUI makes images here, and a
+                      button that could only ever fail is worse than no button. */}
+                  {!isMesh && (
+                    <button
+                      type="button"
+                      onClick={() => onGenerate(row.refKey, row.guideSlot)}
+                      title={`Generate a ${row.label.toLowerCase()} texture with ComfyUI`}
+                    >
+                      <span className="material-symbols-outlined">auto_awesome</span>
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => onClear(row.refKey)}
-                    title="Clear this slot"
+                    onClick={() => setPicking(row)}
+                    title={filled.length
+                      ? 'Add more to this slot - one is picked per building from the seed'
+                      : 'Pick from the library'}
+                  >
+                    <span className="material-symbols-outlined">
+                      {filled.length ? 'add' : 'photo_library'}
+                    </span>
+                  </button>
+                </span>
+              </div>
+
+              {/* WHY THIS SLOT DOES NOTHING, when that is true whether or not
+                  something is bound. `fallback` above speaks only for an empty
+                  row, so a model bound into a slot the graph never places would
+                  otherwise show a name and change nothing. */}
+              {row.warn && <p className="btex__warn">{row.warn}</p>}
+
+              {/* The entries themselves, only once there is more than one to tell
+                  apart - a single binding is already named on the row above. */}
+              {filled.length > 1 && filled.map(({ key, entry }) => (
+                <div key={key} className="btex__entry">
+                  <span className="btex__entry-name">{entry.name || entry.ref}</span>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(key)}
+                    title="Remove this one from the slot"
                   >
                     <span className="material-symbols-outlined">close</span>
                   </button>
-                )}
-              </span>
+                </div>
+              ))}
+
+              {filled.length === 1 && (
+                <div className="btex__entry btex__entry--only">
+                  <button
+                    type="button"
+                    onClick={() => onRemove(filled[0].key)}
+                    title="Clear this slot"
+                  >
+                    <span className="material-symbols-outlined">close</span>
+                    Clear
+                  </button>
+                </div>
+              )}
             </li>
           )
         })}
@@ -121,9 +171,18 @@ export default function BuildingTextures({
 
       {picking && (
         <AssetSelectorModal
-          assetType="image"
-          title={`Pick a ${picking.label.toLowerCase()} texture`}
+          assetType={picking.assetType || 'image'}
+          title={picking.assetType === 'mesh'
+            ? `Pick ${picking.label.toLowerCase()} models`
+            : `Pick ${picking.label.toLowerCase()} textures`}
+          // ALWAYS TRUE, for meshes as well as images. It is what makes the
+          // modal list a parent's children - a mesh's LOD versions, an image's
+          // edits - and a mesh library where every version is invisible is most
+          // of the library missing.
           showEdits
+          // Several at once: a slot holds a list, so picking one at a time and
+          // reopening the modal N times is the wrong shape for the job.
+          multiple
           onSelect={pick}
           onClose={() => setPicking(null)}
         />

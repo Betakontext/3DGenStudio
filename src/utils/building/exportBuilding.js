@@ -201,10 +201,19 @@ export function buildExportObject(ir, textures = {}) {
     const tile = tileOf(group.material)
     const baked = bakeTileIntoUvs(geometry, [tile], null)
     if (baked !== geometry) geometry.dispose()
-    const mesh = new THREE.Mesh(baked, exportMaterials[group.material] || exportMaterials[0])
-    mesh.name = `${group.type}s`
+    // The same rule the preview follows: a deliberately bound slot texture wins,
+    // otherwise the model keeps the material it arrived with.
+    const slotMaterial = exportMaterials[group.material] || exportMaterials[0]
+    const slotHasTexture = Boolean(ir.materials?.[group.material]?.ref)
+    const mesh = new THREE.Mesh(
+      baked,
+      (!slotHasTexture && group.modelMaterial) || slotMaterial,
+    )
+    mesh.name = `${group.tag || group.type}s`
     root.add(mesh)
-    group.geometry.dispose()
+    // Only the placeholder box belongs to this call; a bound slot mesh is shared
+    // with the preview and owned by its loader.
+    if (group.ownsGeometry) group.geometry.dispose()
   }
 
   return root

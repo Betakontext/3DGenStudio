@@ -33,6 +33,9 @@ import {
 import {
   buildMaterials, disposeMaterials, materialsForGroups,
 } from '../../utils/building/materials'
+import {
+  disposeSlotMeshes, loadSlotMeshes, slotMeshKeyOf,
+} from '../../utils/building/slotMeshes'
 
 /**
  * Frames the camera, and makes left-drag orbit.
@@ -165,6 +168,27 @@ export default function BuildingViewport({
   //
   // Switching back to Preview rebuilds once, which is what an unmounted viewport
   // did anyway - so this costs nothing and removes the whole hidden cost.
+  // The bound opening models, on the same terms as the textures: keyed on what
+  // is bound, not on the IR, so a slider drag does not re-parse a GLB per frame.
+  const meshKeyOf = useMemo(() => slotMeshKeyOf(ir), [ir])
+  const [openingMeshes, setOpeningMeshes] = useState({})
+  useEffect(() => {
+    if (!active) return undefined
+    let alive = true
+    let loaded = null
+    loadSlotMeshes(ir).then(result => {
+      if (!alive) { disposeSlotMeshes(result); return }
+      loaded = result
+      setOpeningMeshes(result)
+    })
+    return () => {
+      alive = false
+      disposeSlotMeshes(loaded)
+      setOpeningMeshes({})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meshKeyOf, active])
+
   const {
     geometry, groups, roofGeometry, roofGroups, trimGeometry, trimGroups,
     outlines, box, slots,
@@ -189,9 +213,9 @@ export default function BuildingViewport({
       trimGroups: trim.groups || [],
       outlines: buildLevelOutlines(ir),
       box: buildingBounds(ir),
-      slots: buildSlotInstances(ir),
+      slots: buildSlotInstances(ir, openingMeshes),
     }
-  }, [ir, active])
+  }, [ir, active, openingMeshes])
 
   // The InstancedMeshes are built here rather than declared as JSX.
   //
@@ -246,12 +270,16 @@ export default function BuildingViewport({
   useEffect(() => () => disposeMaterials(materialsRef.current), [])
 
   const slotMeshes = useMemo(() => slots.map(group => {
-    // Already resolved by buildSlotInstances, which split the instances by
-    // material in the first place - so a ground-floor shopfront and the upper
-    // windows arrive here as two groups pointing at two entries.
-    const material = materials[group.material] || materials[0]
+    // THE SLOT'S MATERIAL WINS OVER THE MODEL'S, but only when one was
+    // deliberately bound. An imported window keeps its own texture - that is
+    // most of why it is worth importing - and binding a texture to the Windows
+    // slot has to override it, or the control would silently do nothing.
+    const slotMaterial = materials[group.material] || materials[0]
+    const slotHasTexture = Boolean(ir?.materials?.[group.material]?.ref)
+    const material = (!slotHasTexture && group.modelMaterial) || slotMaterial
     const mesh = new THREE.InstancedMesh(group.geometry, material, group.count)
     mesh.name = group.key
+    mesh.userData.ownsGeometry = group.ownsGeometry
     mesh.instanceMatrix.set(group.matrices)
     mesh.instanceMatrix.needsUpdate = true
     // The bounding sphere three computes for an InstancedMesh ignores the
@@ -259,7 +287,7 @@ export default function BuildingViewport({
     // building's own origin left the frustum.
     mesh.frustumCulled = false
     return mesh
-  }), [slots, materials])
+  }), [slots, materials, ir])
 
   const slotsRef = useRef(slotMeshes)
   useEffect(() => {
@@ -267,17 +295,17 @@ export default function BuildingViewport({
     slotsRef.current = slotMeshes
     if (previous && previous !== slotMeshes) {
       for (const mesh of previous) {
-        mesh.geometry?.dispose?.()
-        // NOT the material: it belongs to the shared materials array, which has
-        // its own disposal above. Disposing it here would free a material three
-        // other meshes are still drawing with.
+        // NEITHER the material NOR a bound slot mesh: the first belongs to the
+        // shared materials array and the second to the mesh loader, and freeing
+        // either here would pull it out from under everything still drawing it.
+        if (mesh.userData?.ownsGeometry) mesh.geometry?.dispose?.()
         mesh.dispose?.()
       }
     }
   }, [slotMeshes])
   useEffect(() => () => {
     for (const mesh of slotsRef.current || []) {
-      mesh.geometry?.dispose?.()
+      if (mesh.userData?.ownsGeometry) mesh.geometry?.dispose?.()
       mesh.dispose?.()
     }
   }, [])

@@ -41,6 +41,12 @@ app.whenReady().then(async () => {
   await sleep(3200);
   fs.mkdirSync(OUT, { recursive: true });
   const shot = async n => {
+    // capturePage returns the last COMPOSITED frame; one taken straight after a
+    // React commit shows the previous state.
+    for (let i = 0; i < 2; i++) {
+      try { await win.webContents.capturePage(); } catch { /* the retry covers it */ }
+      await sleep(1000);
+    }
     for (let i = 1; i <= 4; i++) {
       try { fs.writeFileSync(path.join(OUT, `${n}.png`), (await win.webContents.capturePage()).toPNG()); console.log(`shot ${n}`); return; }
       catch { await sleep(700); }
@@ -75,6 +81,8 @@ app.whenReady().then(async () => {
     ['4-stepped', 'stepped', {}],
     ['5-tiered', 'tiered', {}],
     ['6-flat', 'flat', {}],
+    ['7-gable', 'gable', { Pitch: 45 }],
+    ['8-shed', 'shed', { Pitch: 30 }],
   ]) {
     await win.webContents.executeJavaScript(selectNode('Roof'));
     await sleep(300);

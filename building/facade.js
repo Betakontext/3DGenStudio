@@ -27,7 +27,7 @@
 // a viewer being able to say why, so `isGround` is threaded through rather than
 // inferred late.
 
-import { instanceSeed, slotId } from './random.js';
+import { instanceSeed, randomAt, slotId } from './random.js';
 import { SLOT_TYPE } from './ir.js';
 import {
   STRETCH, bayParts, placeInCell, splitSpan, storeyParts, tileSpan,
@@ -129,10 +129,17 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
     doorWidth = 1.1,
     doorHeight = 2.2,
     includeCourtyards = true,
+    // Balconies. 'none' | 'upper' | 'all' | 'scattered' - resolved by the
+    // compiler from the node's mode, like floorFrom/floorTo above.
+    balcony = 'none',
+    balconyDepth = 1,
+    balconyWidth = 2,
+    balconyHeight = 1.05,
+    balconyChance = 0.5,
   } = rule;
 
   const out = {
-    slots: [], truncated: false, squashed: false, doorCount: 0,
+    slots: [], truncated: false, squashed: false, doorCount: 0, balconyCount: 0,
     // Which storeys this node actually claimed. The compiler needs it to decide
     // what an earlier facade's slots should be replaced by - see the override
     // rule there - and to tell the author when a facade covers nothing.
@@ -145,6 +152,9 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
   // One compile-time slot per drawn property, so a window's choice of variant is
   // stable when an unrelated node is edited. See building/random.js.
   const variantSlot = slotId(nodeId, 'variant');
+  // A SEPARATE compile-time slot for "does this one get a balcony", so turning
+  // balconies on does not re-roll which window model every opening wears.
+  const balconySlot = slotId(nodeId, 'balcony');
 
   // The door goes on the longest GROUND-level wall, nearest its middle: the
   // frontage, which is what anyone looking at the building will read as the
@@ -222,6 +232,12 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
           out.slots.push({
             type: isDoor ? SLOT_TYPE.DOOR : SLOT_TYPE.WINDOW,
             styleSlot: isDoor ? 'door' : openingTag,
+            // WHICH FACADE MADE IT. Needed because a Facade can override the
+            // model its openings wear, and nothing else in the slot says which
+            // node it came from - the tag does not, since two Facades can share
+            // one. Doc-side only: the compiler resolves it to a reference prefix
+            // and the IR carries that instead.
+            source: nodeId,
             transform: slotTransform(edge, placed.start + placed.size / 2, centreZ),
             cellW: placed.size,
             cellH: openingHeight,
@@ -238,6 +254,78 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
             }),
           });
           if (isDoor) out.doorCount++;
+
+          // THE BALCONY, IN FRONT OF THE OPENING THAT IS ALREADY THERE.
+          //
+          // Emitted as a second slot rather than as a different opening, because
+          // that is what a balcony is: the window stays, and a balustrade stands
+          // proud of the wall on the sill it steps out onto. Never on the door -
+          // a slab across the front door is a canopy at best and a blockage at
+          // worst - and never on a courtyard ring, where it would project into a
+          // light well barely wider than itself.
+          const wantsBalcony = balcony !== 'none'
+            && !isDoor
+            && ring === rings[0]
+            && (balcony === 'all'
+              || (balcony === 'upper' && !isGround)
+              || (balcony === 'scattered' && !isGround && randomAt(seed, balconySlot, {
+                face, floor: level.index, bay: bay.index,
+              }) < balconyChance));
+
+          if (wantsBalcony) {
+            if (out.slots.length >= MAX_SLOTS) {
+              out.truncated = true;
+              return out;
+            }
+            // CLAMPED TO THE BAY, not to the opening. A balcony is normally
+            // wider than its window - that is most of what makes it read as one
+            // - but two neighbours growing past the pier between them would
+            // interpenetrate, and a balustrade passing through a balustrade is
+            // the kind of artefact that looks like a broken generator rather
+            // than like a wide setting.
+            const width = Math.min(balconyWidth, bay.size);
+            // ON THE SILL, not in the opening band: the floor of the balcony is
+            // the bottom of the hole you step through. The slot's origin is its
+            // CENTRE, like every other slot, so it rises by half the balustrade.
+            // openingBand.start IS the sill, in both cases: the vertical split
+            // above already chose groundSillHeight or sillHeight, and it is the
+            // split's answer rather than the setting that is right here - a
+            // storey too short for both squashes the band, and the balcony has
+            // to follow the hole it belongs to.
+            const sillZ = level.z0 + openingBand.start;
+            const centre = slotTransform(
+              edge,
+              placed.start + placed.size / 2,
+              sillZ + balconyHeight / 2,
+            );
+            // Pushed OUT along the wall normal by half its depth, so the slab
+            // starts at the wall face and projects forward rather than being
+            // half buried in the masonry.
+            centre[12] += edge.normal[0] * balconyDepth / 2;
+            centre[13] += edge.normal[1] * balconyDepth / 2;
+
+            out.slots.push({
+              type: SLOT_TYPE.BALCONY,
+              styleSlot: 'balcony',
+              source: nodeId,
+              transform: centre,
+              cellW: width,
+              cellH: balconyHeight,
+              // The one slot with a REAL depth. An opening leaves this 0 and
+              // takes the consumer's token depth; a balcony's projection is a
+              // dimension the author set and has to survive into the IR.
+              cellD: balconyDepth,
+              faceIndex: face,
+              floorIndex: level.index,
+              bayIndex: bay.index,
+              // `sub: 2` - the door is 1 and the window is 0, so a balcony rolls
+              // its model independently of the window it hangs on.
+              seedKey: instanceSeed(seed, variantSlot, {
+                face, floor: level.index, bay: bay.index, sub: 2,
+              }),
+            });
+            out.balconyCount++;
+          }
         }
       }
     }

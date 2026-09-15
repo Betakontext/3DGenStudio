@@ -329,13 +329,80 @@ export function normalizeBuildingDoc(input) {
 }
 
 /**
+ * A reference list's keys, in order.
+ *
+ * A SLOT HOLDS A LIST, NOT ONE ASSET, and the list is stored as numbered keys -
+ * `tex_wall.0`, `tex_wall.1` - rather than as an array inside one entry. That
+ * keeps "one reference key, one asset" true, which is what lets
+ * storage.js's collectAssetIdsFromValue and remapReferencesDeep carry and
+ * renumber a building's dependencies with zero changes (invariant 4). An array
+ * of refs inside an entry would work for those two walkers and break the third
+ * thing that matters: a dangling key would name the slot but not WHICH entry.
+ *
+ * The numeric tail is what separates a list index from a scope: a facade's
+ * per-side override is `<node>.wall.north`, and its list is
+ * `<node>.wall.north.0`.
+ */
+export function referenceListKeys(references, prefix) {
+  // String work rather than a built regex: the prefix contains dots and a node
+  // id can contain anything, and an escaped-prefix pattern is one mistake away
+  // from matching the wrong slot.
+  const head = `${prefix}.`;
+  const out = [];
+  for (const key of Object.keys(references || {})) {
+    if (!key.startsWith(head)) continue;
+    const tail = key.slice(head.length);
+    if (!tail.length || !/^\d+$/.test(tail)) continue;
+    out.push({ key, index: Number(tail) });
+  }
+  return out.sort((a, b) => a.index - b.index).map(entry => entry.key);
+}
+
+/** The entries of a reference list, in order. */
+export function referenceList(doc, prefix) {
+  const d = normalizeBuildingDoc(doc);
+  return referenceListKeys(d.references, prefix).map(key => d.references[key]);
+}
+
+/** Append an entry to a slot's list, returning a new document. */
+export function appendReference(doc, prefix, entry) {
+  const d = normalizeBuildingDoc(doc);
+  const keys = referenceListKeys(d.references, prefix);
+  // The next free index, not the count: removing the middle of a list leaves a
+  // gap, and reusing an index would overwrite a sibling.
+  let next = 0;
+  for (const key of keys) next = Math.max(next, Number(key.slice(prefix.length + 1)) + 1);
+  return setReference(d, `${prefix}.${next}`, entry);
+}
+
+/** Drop every entry of a slot's list, returning a new document. */
+export function clearReferenceList(doc, prefix) {
+  const d = normalizeBuildingDoc(doc);
+  const keys = referenceListKeys(d.references, prefix);
+  if (!keys.length) return d;
+  const references = { ...d.references };
+  for (const key of keys) delete references[key];
+  return { ...d, references };
+}
+
+/**
  * Upgrade an older document in place.
  *
- * Empty at format 1 and kept anyway, so the first migration has an obvious home
- * and the call site in normalizeBuildingDoc never has to be added later.
+ * ONE MIGRATION so far: reference slots used to hold a single asset under a bare
+ * key, and now hold a list under numbered ones. A bare key is read as index 0 of
+ * its list, which is what it always meant.
  */
 export function migrateBuildingDoc(doc) {
-  return doc;
+  if (!isObject(doc) || !isObject(doc.references)) return doc;
+  const references = {};
+  let changed = false;
+  for (const [key, entry] of Object.entries(doc.references)) {
+    // Already indexed - a numeric final segment is a list position.
+    if (/\.\d+$/.test(key)) { references[key] = entry; continue; }
+    references[`${key}.0`] = entry;
+    changed = true;
+  }
+  return changed ? { ...doc, references } : doc;
 }
 
 // Canonical JSON: object keys in sorted order, so two structurally identical
@@ -435,7 +502,12 @@ export function setReference(doc, key, entry) {
   const d = normalizeBuildingDoc(doc);
   const normalized = normalizeReferenceEntry(entry);
   if (!normalized) return d;
-  return { ...d, references: { ...d.references, [key]: normalized } };
+  // A KEY IS A LIST POSITION. A caller naming the slot alone means its first
+  // entry, which is what migrateBuildingDoc reads an old bare key as - and
+  // without this the key would stay bare here and only become `.0` on the next
+  // normalise, so setReference and the document would disagree in between.
+  const at = /\.\d+$/.test(key) ? key : `${key}.0`;
+  return { ...d, references: { ...d.references, [at]: normalized } };
 }
 
 /** A copy of the document with one reference slot removed. */

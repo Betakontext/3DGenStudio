@@ -34,7 +34,7 @@
 // use, and the IR stays small and inspectable. src/utils/building/mesh.js turns
 // the ladder into geometry with the Earcut it already has.
 
-import { differencePolygons, offsetPolygonList } from './clip.js';
+import { differencePolygons, intersectPolygons, offsetPolygonList } from './clip.js';
 import { polygonArea } from './poly.js';
 
 /**
@@ -54,6 +54,10 @@ export const ROOF_KIND = {
   STEPPED: 'stepped',
   /** Stepped, with each tier oversailing the one below. Asian eaves. */
   TIERED: 'tiered',
+  /** Two slopes to a ridge, with VERTICAL end walls. The ordinary house roof. */
+  GABLE: 'gable',
+  /** One slope, from a low edge to a high one. Lean-tos, sheds, modern boxes. */
+  SHED: 'shed',
   /**
    * Not selectable. What two chained Roof nodes of different shapes produce -
    * see stackRoofs. It exists so the IR can name the result honestly instead of
@@ -207,6 +211,259 @@ function steppedLadder(base, baseZ, options) {
 }
 
 /**
+ * Which way the ridge runs.
+ *
+ * THE DEFINING DECISION OF A GABLE, which is why it is a control and not a
+ * guess. `long` is right almost always - a gabled roof runs along the building -
+ * but a terrace of houses gables ACROSS its long axis onto the street, and
+ * nothing in the plan says which of those was meant.
+ */
+export const RIDGE = {
+  /** Along the plan's longest axis. What a house does. */
+  LONG: 'long',
+  /** Across it. What a terrace facing the street does. */
+  ACROSS: 'across',
+  /** A bearing set by hand. */
+  CUSTOM: 'custom',
+};
+
+/** How far a point is along a unit direction. */
+const alongDir = (point, dir) => point[0] * dir[0] + point[1] * dir[1];
+
+/**
+ * The plan's long axis - the direction a ridge should run.
+ *
+ * MEASURED BY THE NARROWEST PERPENDICULAR, not by the longest extent, and the
+ * difference is not subtle. On a 20x10 rectangle the longest extent is the
+ * DIAGONAL at 22.4m, so "the direction with the greatest extent" answers 26
+ * degrees and puts the ridge across the corners - which then made a 45-degree
+ * gable 8.1m tall instead of 5m, because the span it closes over is the
+ * perpendicular one. What a ridge wants is the axis the building is THIN across,
+ * and that is the minimum-width direction's perpendicular.
+ *
+ * Sampled over ninety directions rather than by rotating calipers: same answer,
+ * far less code, and the extra precision is meaningless when it feeds a control
+ * a person will override the moment they disagree.
+ */
+export function longestAxis(polygons) {
+  const points = [];
+  for (const polygon of polygons) points.push(...(polygon.outer || []));
+  if (points.length < 2) return [1, 0];
+
+  let best = [1, 0];
+  let narrowest = Infinity;
+  for (let degrees = 0; degrees < 180; degrees += 1) {
+    const radians = (degrees * Math.PI) / 180;
+    const dir = [Math.cos(radians), Math.sin(radians)];
+    const perp = [-dir[1], dir[0]];
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const point of points) {
+      const t = alongDir(point, perp);
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
+    }
+    if (hi - lo < narrowest) { narrowest = hi - lo; best = dir; }
+  }
+  return best;
+}
+
+/** The ridge direction for a plan, as a unit vector. */
+export function ridgeDirection(polygons, ridge = RIDGE.LONG, angleDegrees = 0) {
+  if (ridge === RIDGE.CUSTOM) {
+    const radians = (Number(angleDegrees) || 0) * (Math.PI / 180);
+    return [Math.cos(radians), Math.sin(radians)];
+  }
+  const longest = longestAxis(polygons);
+  return ridge === RIDGE.ACROSS ? [-longest[1], longest[0]] : longest;
+}
+
+/** A rectangle covering everything between two offsets along `perp`. */
+function slab(centre, axis, perp, reach, lo, hi) {
+  const at = (a, p) => [
+    centre[0] + axis[0] * a + perp[0] * p,
+    centre[1] + axis[1] * a + perp[1] * p,
+  ];
+  return { outer: [at(-reach, lo), at(reach, lo), at(reach, hi), at(-reach, hi)], holes: [] };
+}
+
+/** The plan cut down by `inset`: from both sides for a gable, one for a shed. */
+function cutTo(base, frame, inset, kind) {
+  const lo = kind === ROOF_KIND.SHED ? frame.pLo : frame.pLo + inset;
+  const hi = frame.pHi - inset;
+  if (hi - lo < 1e-9) return [];
+  return intersectPolygons(base, [slab(frame.centre, frame.axis, frame.perp, frame.reach, lo, hi)])
+    .filter(polygon => polygonArea(polygon) > MIN_CONTOUR_AREA);
+}
+
+/** Everything the directional walk needs to know about the plan, measured once. */
+function ridgeFrame(base, axis) {
+  const perp = [-axis[1], axis[0]];
+  let cx = 0;
+  let cy = 0;
+  let points = 0;
+  let pLo = Infinity;
+  let pHi = -Infinity;
+  let aSpan = 0;
+  for (const polygon of base) {
+    for (const point of polygon.outer) {
+      cx += point[0];
+      cy += point[1];
+      points += 1;
+      const p = alongDir(point, perp);
+      if (p < pLo) pLo = p;
+      if (p > pHi) pHi = p;
+      aSpan = Math.max(aSpan, Math.abs(alongDir(point, axis)));
+    }
+  }
+  if (!points) return null;
+  const centre = [cx / points, cy / points];
+  return {
+    axis,
+    perp,
+    centre,
+    pLo: pLo - alongDir(centre, perp),
+    pHi: pHi - alongDir(centre, perp),
+    // Generous: the slab has to cover the plan along the ridge whatever the
+    // centroid does, and one that stopped short would clip the building.
+    reach: aSpan + Math.abs(alongDir(centre, axis)) + (pHi - pLo) + 10,
+  };
+}
+
+/**
+ * A gable or a shed: the plan is cut down in ONE direction, not offset inward.
+ *
+ * WHY THIS IS NOT THE OFFSET WALK every other roof uses. Offsetting moves every
+ * edge, which is exactly what makes a hip roof a hip roof - all four sides
+ * slope. A gable slopes only the two sides facing across the ridge and leaves
+ * the ends VERTICAL, so its contour has to shrink along one axis and not the
+ * other: an intersection with a narrowing slab, not an inset.
+ *
+ * The bands between contours then come out right for free, because the three
+ * rung rules do not care how a contour got smaller. What they cannot express is
+ * the vertical END WALL, which is not between two contours at all - see
+ * endWalls, and see the note in ir.js on why the IR carries it separately.
+ */
+function directionalLadder(base, baseZ, kind, options) {
+  const frame = ridgeFrame(base, options.ridgeAxis);
+  if (!frame) return { rungs: [], closed: false };
+
+  // Half the span for a gable - it closes from both sides at once - and the
+  // whole span for a shed, which closes from one.
+  const width = frame.pHi - frame.pLo;
+  const span = kind === ROOF_KIND.SHED ? width : width / 2;
+  if (!(span > 1e-6)) return { rungs: [], closed: false };
+
+  // THE WALK STOPS A HAIR SHORT OF THE RIDGE, on purpose. At exactly `span` the
+  // slab has zero width and the contour vanishes, so the last rung that survives
+  // is one step BELOW the apex - which made a 45-degree gable over a 10m span
+  // 4.58m tall instead of 5m, an eight per cent error nobody would attribute to
+  // the step count. Walking to span minus a ten-thousandth instead puts the top
+  // rung within a fraction of a millimetre of the ridge and leaves a sliver the
+  // cap covers, exactly as the offset walk's last non-empty contour does.
+  const limit = span * (1 - 1e-4);
+  const step = limit / 12;
+  const rungs = [{ polygons: base, z: baseZ }];
+  let inset = 0;
+  let closed = false;
+
+  for (let i = 0; i < MAX_ROOF_STEPS; i++) {
+    inset = Math.min(inset + step, limit);
+    const rise = inset * Math.tan(options.pitch);
+
+    // Checked BEFORE pushing, for the reason slopedLadder spells out: checking
+    // after overshoots the cap by a whole step.
+    if (options.maxHeight > 0 && rise > options.maxHeight) {
+      const capped = options.maxHeight / Math.tan(options.pitch);
+      const deck = cutTo(base, frame, capped, kind);
+      if (deck.length) rungs.push({ polygons: deck, z: baseZ + options.maxHeight });
+      break;
+    }
+
+    const next = cutTo(base, frame, inset, kind);
+    if (!next.length) { closed = true; break; }
+    rungs.push({ polygons: next, z: baseZ + rise });
+    // The ridge has been reached; anything further is slivers.
+    if (inset >= limit - 1e-12) { closed = true; break; }
+  }
+
+  return { rungs, closed };
+}
+
+/**
+ * The vertical end walls a gable or a shed needs.
+ *
+ * THE PART THE CONTOUR LADDER CANNOT SAY, and the reason these two roofs were
+ * held back out of Phase 3. Every other roof surface is the band BETWEEN two
+ * contours. A gable end is not between anything - it is the flat triangle that
+ * closes the roof where the contours did not shrink, and nothing in "polygons at
+ * a height" describes it. So it travels beside the ladder as its own polygons.
+ *
+ * TRACED FROM THE RUNGS rather than derived from the pitch. Each rung that still
+ * reaches the end plane contributes the span it covers there, and threading
+ * those spans up one side and back down the other IS the gable outline. That
+ * costs nothing extra and works unchanged for a shed (one triangle, right
+ * angled), for a height-capped roof (the outline stops at the deck) and for a
+ * plan that is not a rectangle.
+ */
+function endWalls(rungs, axis) {
+  if (rungs.length < 2) return [];
+  const perp = [-axis[1], axis[0]];
+
+  let aLo = Infinity;
+  let aHi = -Infinity;
+  for (const polygon of rungs[0].polygons) {
+    for (const point of polygon.outer) {
+      const a = alongDir(point, axis);
+      if (a < aLo) aLo = a;
+      if (a > aHi) aHi = a;
+    }
+  }
+  if (!Number.isFinite(aLo)) return [];
+
+  const walls = [];
+  for (const [end, outward] of [[aHi, 1], [aLo, -1]]) {
+    const profile = [];
+    for (const rung of rungs) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const polygon of rung.polygons) {
+        for (const point of polygon.outer) {
+          // On the end plane, within a millimetre. A rung that has pulled away
+          // from the end contributes nothing, which is what stops a contour that
+          // shrank in both directions from inventing a wall it does not need.
+          if (Math.abs(alongDir(point, axis) - end) > 1e-3) continue;
+          const p = alongDir(point, perp);
+          if (p < lo) lo = p;
+          if (p > hi) hi = p;
+        }
+      }
+      if (!Number.isFinite(lo) || hi - lo < -1e-9) break;
+      profile.push({ lo, hi, z: rung.z });
+    }
+    if (profile.length < 2) continue;
+
+    const at = (p, z) => [
+      axis[0] * end + perp[0] * p,
+      axis[1] * end + perp[1] * p,
+      z,
+    ];
+    const points = [];
+    for (const entry of profile) points.push(at(entry.lo, entry.z));
+    for (let i = profile.length - 1; i >= 0; i--) {
+      // The apex is ONE point, not two: a ridge that closed to nothing would
+      // otherwise leave a zero-width sliver at the top of every gable.
+      if (i === profile.length - 1 && profile[i].hi - profile[i].lo < 1e-6) continue;
+      points.push(at(profile[i].hi, profile[i].z));
+    }
+    // Wound so both ends face outward - the far one is the mirror of the near
+    // one, and a wall lit from inside is invisible until it is shaded.
+    if (points.length >= 3) walls.push(outward > 0 ? points : points.slice().reverse());
+  }
+  return walls;
+}
+
+/**
  * Build a roof over the top of a stack.
  *
  * @param {object} options
@@ -226,6 +483,8 @@ export function generateRoof({
   stepRise = 0.9,
   overhang = 0,
   maxHeight = 0,
+  ridge = RIDGE.LONG,
+  ridgeAngle = 0,
   join = undefined,
 } = {}) {
   const base = polygons.filter(p => polygonArea(p) > MIN_CONTOUR_AREA);
@@ -235,6 +494,9 @@ export function generateRoof({
     height: 0,
     closed: true,
     fallback: null,
+    // Vertical end walls, for the two shapes that have them. Empty for every
+    // other roof, so a consumer can walk it without asking what kind this is.
+    gables: [],
   };
   if (!base.length) return out;
 
@@ -250,6 +512,7 @@ export function generateRoof({
     stepRise: Math.max(stepRise, 0.01),
     overhang: Math.max(overhang, 0),
     maxHeight: Math.max(maxHeight, 0),
+    ridgeAxis: ridgeDirection(base, ridge, ridgeAngle),
     join,
   };
 
@@ -260,9 +523,12 @@ export function generateRoof({
       * estimateMaxInset(base, options.join));
   }
 
-  const built = (kind === ROOF_KIND.STEPPED || kind === ROOF_KIND.TIERED)
-    ? steppedLadder(base, baseZ, options)
-    : slopedLadder(base, baseZ, kind, options);
+  const directional = kind === ROOF_KIND.GABLE || kind === ROOF_KIND.SHED;
+  const built = directional
+    ? directionalLadder(base, baseZ, kind, options)
+    : (kind === ROOF_KIND.STEPPED || kind === ROOF_KIND.TIERED)
+      ? steppedLadder(base, baseZ, options)
+      : slopedLadder(base, baseZ, kind, options);
 
   // A roof that produced nothing but its own base could not be built at all -
   // a plan too small for one step. Falling back to flat keeps the building
@@ -282,6 +548,7 @@ export function generateRoof({
   out.rungs = built.rungs;
   out.closed = built.closed;
   out.height = built.rungs[built.rungs.length - 1].z - baseZ;
+  if (directional) out.gables = endWalls(built.rungs, options.ridgeAxis);
   return out;
 }
 
