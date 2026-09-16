@@ -271,12 +271,16 @@ export default function BuildingViewport({
 
   const slotMeshes = useMemo(() => slots.map(group => {
     // THE SLOT'S MATERIAL WINS OVER THE MODEL'S, but only when one was
-    // deliberately bound. An imported window keeps its own texture - that is
-    // most of why it is worth importing - and binding a texture to the Windows
-    // slot has to override it, or the control would silently do nothing.
+    // deliberately bound TO THAT ELEMENT'S OWN SLOT. An imported window keeps
+    // its own texture - that is most of why it is worth importing - and binding
+    // a texture to the Windows slot has to override it, or the control would
+    // silently do nothing. A chimney and a balcony merely BORROW `wall` and
+    // `trim` for a colour to fall back to, so a texture there is not about them
+    // and must not win: see borrowsMaterial in buildSlotInstances.
     const slotMaterial = materials[group.material] || materials[0]
     const slotHasTexture = Boolean(ir?.materials?.[group.material]?.ref)
-    const material = (!slotHasTexture && group.modelMaterial) || slotMaterial
+    const modelWins = group.borrowsMaterial || !slotHasTexture
+    const material = (modelWins && group.modelMaterial) || slotMaterial
     const mesh = new THREE.InstancedMesh(group.geometry, material, group.count)
     mesh.name = group.key
     mesh.userData.ownsGeometry = group.ownsGeometry

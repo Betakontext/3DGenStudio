@@ -119,11 +119,14 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Assets | `list_assets`, `list_library_assets`, `view_asset`, `download_asset`, `upload_asset`, `link_asset`, `unlink_asset`, `delete_asset` |
 | Asset tags | `list_asset_tags`, `tag_asset`, `find_assets_by_tags` |
 | Asset library | `import_library_assets`, `rename_library_asset`, `delete_library_asset` |
+| Procedural trees | `list_tree_presets`, `preview_tree_skeleton`, `generate_tree` |
+| Particle effects | `describe_vfx_catalog`, `list_vfx_assets`, `get_vfx_graph`, `compile_vfx_graph`, `list_vfx_sprites`, `install_vfx_sprite`, `set_vfx_texture`, `render_vfx_preview`, `save_vfx_graph`, `export_vfx_bundle` |
+| Buildings | `describe_building_catalog`, `list_buildings`, `get_building`, `compile_building`, `create_building_graph`, `list_building_styles`, `apply_building_style`, `set_building_reference`, `save_building` |
 | System | `get_settings` (secrets redacted), `update_settings`, `get_system_stats` |
 
 ### Context cost and loading only the groups you need
 
-An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 67 tools cost ~91 KB of JSON plus ~5 KB of server instructions — roughly **26,500 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~26k tokens: the question is ~10 tokens, the connection is the rest.
+An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 91 tools cost ~115 KB of JSON plus ~5 KB of server instructions — roughly **33,000 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~33k tokens: the question is ~10 tokens, the connection is the rest.
 
 Clients that load tool schemas lazily (Claude Code fetches them on demand) pay almost nothing. For clients that load everything eagerly — most local LLM stacks — load only the groups you need, either with the `--tools` flag or the `MCP_TOOLS` environment variable:
 
@@ -151,23 +154,23 @@ Two forms are accepted, comma- or space-separated:
 - **include** — `projects,graph,workflows` loads exactly those groups
 - **exclude** — `-mesh,-actions` loads everything except those
 
-Unset, empty, or `all` loads every group, so nothing changes for an existing config. Unknown names are ignored with a warning on stderr rather than failing. Group names: `projects`, `cards`, `graph`, `workflows`, `actions`, `mesh`, `assets`, `settings`.
+Unset, empty, or `all` loads every group, so nothing changes for an existing config. Unknown names are ignored with a warning on stderr rather than failing. Group names: `projects`, `cards`, `graph`, `workflows`, `actions`, `mesh`, `tree`, `vfx`, `building`, `assets`, `settings`.
 
 | Selector | Tools | Catalog | Saved |
 |---|---|---|---|
-| *(unset)* / `all` | 67 | ~25,200 tokens | — |
-| `-mesh` | 54 | ~15,700 | 38% |
-| `-mesh,-actions` | 44 | ~10,300 | 59% |
-| `projects,graph,workflows,assets` | 34 | ~8,600 | 66% |
-| `projects,mesh,assets` | 34 | ~14,200 | 44% |
-| `projects,cards,assets` | 28 | ~5,800 | 77% |
-| `projects,settings` | 10 | ~1,600 | 94% |
+| *(unset)* / `all` | 91 | ~31,600 tokens | — |
+| `-mesh` | 77 | ~23,000 | 27% |
+| `-mesh,-actions` | 67 | ~16,700 | 47% |
+| `projects,graph,workflows,assets` | 34 | ~8,600 | 73% |
+| `projects,mesh,assets` | 35 | ~13,100 | 59% |
+| `projects,cards,assets` | 29 | ~5,600 | 82% |
+| `projects,settings` | 10 | ~1,500 | 95% |
 
 The server instructions are assembled to match, so dropping a group also drops its guidance, and the model is told which groups were left out — it reports them as "not exposed in this session" rather than claiming the app can't do it.
 
 Over the HTTP endpoint the same selector is available per request as `POST /mcp?tools=graph,workflows`, or as `settings.mcp.tools` for a persistent default.
 
-The heaviest groups are `mesh` (~8,900 tokens across 13 tools) and `actions` (~5,400 across 10) — both are parameter-dense by design, since each tool documents its full option set with ranges and defaults.
+The heaviest groups are `mesh` (~8,600 tokens across 14 tools), `actions` (~6,300 across 10), `tree` (~3,300 across 3) and `assets` (~3,400 across 14) — the parameter-dense ones, since each tool documents its full option set with ranges and defaults. `building` is ~1,700 across 9, and `vfx` ~1,500 across 10, because both push their vocabulary into a `describe_*` tool the caller fetches once instead of into every schema.
 
 #### Tool *results* cost context too
 

@@ -28,6 +28,7 @@ import { registerAssetTools } from './tools/assets.js';
 import { registerSettingsTools } from './tools/settings.js';
 import { registerTreeTools } from './tools/tree.js';
 import { registerVfxTools } from './tools/vfx.js';
+import { registerBuildingTools } from './tools/building.js';
 
 function readAppVersion() {
   try {
@@ -52,6 +53,7 @@ const TOOL_GROUPS = {
   mesh: { register: registerMeshToolTools, cost: 31972 },
   tree: { register: registerTreeTools, cost: 12368 },
   vfx: { register: registerVfxTools, cost: 5400 },
+  building: { register: registerBuildingTools, cost: 6200 },
   assets: { register: registerAssetTools, cost: 12542 },
   settings: { register: registerSettingsTools, cost: 1684 }
 };
@@ -62,7 +64,7 @@ const GROUP_NAMES = Object.keys(TOOL_GROUPS);
 const GROUP_ALIASES = {
   meshtools: 'mesh', meshtool: 'mesh', project: 'projects', card: 'cards',
   asset: 'assets', workflow: 'workflows', action: 'actions', setting: 'settings',
-  trees: 'tree', treegen: 'tree'
+  trees: 'tree', treegen: 'tree', buildings: 'building', buildinggen: 'building'
 };
 
 function normalizeGroup(raw) {
@@ -174,6 +176,10 @@ const INSTRUCTION_BLOCKS = [
   {
     groups: ['vfx'],
     text: '- Particle effects: the loop is get_vfx_graph -> patch the document -> compile_vfx_graph to check it -> save_vfx_graph. THE GRAPH IS THE ASSET (a JSON file, not rows): systems hold contexts (Event -> Spawn -> Initialize -> Update -> Output), each holding an ordered stack of blocks. Blocks reference textures and meshes by SLOT KEY (e.g. "tex_spark") resolved through the graph\'s `references` table - NEVER write an asset id into a block property. Effects are library-global, so there is no projectId anywhere. compile_vfx_graph is pure and fast and reports exactly what the editor shows an author (capacity overflow with the arithmetic, a missing Output, a value varying faster than its stage allows) - run it before saving. save_vfx_graph does NOT render a thumbnail, because that needs a GPU: an effect saved this way shows a placeholder card until someone opens and saves it in the editor. export_vfx_bundle produces the Unity/Unreal bundle; importer plugins read its IR, not its graph.'
+  },
+  {
+    groups: ['building'],
+    text: '- Procedural buildings: the loop is describe_building_catalog (once, to learn the vocabulary) -> create_building_graph or get_building -> patch the nodes -> compile_building to check it -> save_building. THE GRAPH IS THE ASSET (a ~10-40KB JSON file, not rows): a DAG of nodes, Footprint -> Mass -> Facade -> Roof -> Trim -> Output. ORDER IS NOT COSMETIC and is the main way an agent gets this wrong - a Roof Detail reads the roof UNDER it, a Trim reads it for its eave, and a Facade REPLACES the storeys it claims, so a node wired in the wrong place compiles clean and quietly does nothing; compile_building says so. Nodes reference textures and meshes by SLOT KEY resolved through the `references` table, and EVERY SLOT HOLDS A LIST (tex_wall.0, tex_wall.1) the compiler rolls from the document seed - use set_building_reference, and NEVER write an asset id into a node property. A style pack is a GRAPH RECIPE, not a texture set: apply_building_style replaces the massing too, which is why one vocabulary covers a Roman villa and a Mayan temple. Buildings are library-global, so there is no projectId anywhere. save_building does NOT render a thumbnail, because that needs a GPU.'
   },
   {
     groups: ['tree'],

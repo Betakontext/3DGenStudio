@@ -892,5 +892,97 @@ test('a tall tower is a HANDFUL of draw calls, not one per opening', () => {
     'an opening was dropped on the way into an instance buffer')
 })
 
+test('a chimney BORROWS the wall slot, so a wall texture never wins over its model', () => {
+  // The rule that decides who owns a surface. A window owns `opening`, so a
+  // texture bound there is an instruction about windows and overrides whatever
+  // the imported model arrived wearing. A chimney has no slot of its own and
+  // borrows `wall` purely for a colour to fall back to - so the building's
+  // plaster, tiled in metres, must NOT be painted over the brick texture that
+  // came baked into the chimney model. It silently was, and the only place it
+  // showed was on the skyline.
+  const plain = graphWith([
+    { type: 'facade', props: { bayWidth: 3 } },
+    { type: 'roof', modes: { kind: 'gable' }, props: { pitch: 45 } },
+    { type: 'roofitem', modes: { where: 'ridge', item: 'chimney' }, props: { count: 1 } },
+  ], { shape: SQUARE, mass: { props: { levelCount: 2 } } })
+  // A wall texture, bound the way the Textures panel binds one.
+  const doc = appendReference(plain, 'tex_wall', { kind: 'image', ref: 'asset:41', tileMetres: 2 })
+
+  const ir = compileBuilding(doc).ir
+  const groups = buildSlotInstances(ir, {})
+  const chimney = groups.find(g => g.type === 'roof_item')
+  const window = groups.find(g => g.type === 'window')
+  assert.ok(chimney, 'no chimney was placed - the graph, not the rule, is wrong')
+  assert.ok(window, 'no window was placed - the graph, not the rule, is wrong')
+
+  assert.equal(chimney.borrowsMaterial, true, 'a chimney owns no slot of its own')
+  assert.equal(window.borrowsMaterial, false, 'a window owns the opening slot')
+  // ...and the slot it borrowed really does carry that texture, or the
+  // assertions above would hold for the boring reason that nothing was bound.
+  assert.ok(ir.materials[chimney.material]?.ref,
+    'the borrowed slot has no texture on it, so this proves nothing')
+})
+
+test('a roof slope is UV-mapped in its own plane, whichever way the ridge runs', () => {
+  // The bug this pins: the uv was the plan x/y, a projection from above. That
+  // bakes the PLAN's axes into the texture, so the shingle courses ran along the
+  // eave on a roof whose eave lay along x and straight down the slope on one
+  // that ran along y. A cross-gable has both, which is how it was spotted - one
+  // slope combed the wrong way while its neighbour was right.
+  //
+  // BOTH RIDGE DIRECTIONS ARE CHECKED, because exactly one of them looked fine
+  // under the old mapping and testing that one would have proved nothing.
+  for (const ridge of ['long', 'across']) {
+    const ir = irOf(graphWith([{ type: 'roof', modes: { kind: 'gable', ridge }, props: { pitch: 45 } }],
+      { shape: { outer: [[0, 0], [12, 0], [12, 8], [0, 8]], holes: [] } }))
+    const { geometry } = buildRoofGeometry(ir)
+    assert.ok(geometry, `no roof geometry for ridge=${ridge}`)
+
+    const pos = geometry.getAttribute('position')
+    const uv = geometry.getAttribute('uv')
+    let sloping = 0
+    let horizontalEdges = 0
+
+    for (let i = 0; i < pos.count; i += 3) {
+      const P = k => [pos.getX(k), pos.getY(k), pos.getZ(k)]
+      const T = k => [uv.getX(k), uv.getY(k)]
+      const a = P(i), b = P(i + 1), c = P(i + 2)
+      // The triangle's own normal; only the pitched faces are the subject here -
+      // a flat deck is seen from above and keeps the plan projection.
+      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+      const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]]
+      const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+      const nl = Math.hypot(...n)
+      if (nl < 1e-9) continue
+      if (Math.abs(n[1] / nl) > 0.99) continue
+      sloping++
+
+      for (const [j, k] of [[i, i + 1], [i + 1, i + 2], [i + 2, i]]) {
+        const p = P(j), q = P(k)
+        const t = T(j), r = T(k)
+        const world = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2])
+        if (world < 1e-6) continue
+        // ISOMETRIC, so a texture set to 2 m is 2 m up the slope as well as
+        // along it. The plan projection foreshortened by cos(pitch) - a third
+        // of the tile length gone at 45 degrees.
+        const texture = Math.hypot(r[0] - t[0], r[1] - t[1])
+        assert.ok(Math.abs(texture - world) < 1e-3 * Math.max(1, world),
+          `ridge=${ridge}: a ${world.toFixed(2)} m edge is ${texture.toFixed(2)} in uv`)
+        // ...and V IS THE SLOPE. An edge that is level - an eave, a ridge - must
+        // not move in v, or the courses do not run along the eave. This is the
+        // half that the old mapping got right on one ridge direction and wrong
+        // on the other.
+        if (Math.abs(q[1] - p[1]) < 1e-6) {
+          horizontalEdges++
+          assert.ok(Math.abs(r[1] - t[1]) < 1e-3,
+            `ridge=${ridge}: a level edge moves ${(r[1] - t[1]).toFixed(3)} in v`)
+        }
+      }
+    }
+    assert.ok(sloping > 0, `ridge=${ridge}: no sloping triangles, so nothing was tested`)
+    assert.ok(horizontalEdges > 0, `ridge=${ridge}: no level edges, so v was never tested`)
+  }
+})
+
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)
 else console.log(`mesh.test.mjs: ${passed} passed`)

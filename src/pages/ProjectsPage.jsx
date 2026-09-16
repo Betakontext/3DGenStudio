@@ -27,6 +27,19 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v3.5.0',
+    date: '2026-09-16',
+    items: [
+			'New: Building Generator - draw a plan, the graph builds every storey',
+			'Buildings: 11 style packs, from Roman villa to cyberpunk block',
+			'Buildings: merge wings and towers, each with its own roof',
+			'Buildings: half-timber framing, chimneys, balconies, colonnades and bargeboards',
+			'Buildings: bind your own window and door models, per facade and per side',
+			'Buildings: export with an LOD chain regenerated from the graph',
+			'MCP: 9 building tools, so an agent can author and save one'
+    ]
+  },
+  {
     version: 'v3.4.0',
     date: '2026-09-14',
     items: [

@@ -631,6 +631,23 @@ function addGableWall(builder, path, place, group) {
  * proximity rather than by identity: the band comes back from Clipper as fresh
  * coordinates, quantised to its integer lattice, so the vertices are equal in
  * value but never the same objects.
+ *
+ * UV-MAPPED IN THE SLOPE'S OWN PLANE, not from above. The plan x/y used to be
+ * handed straight out as the uv, which is a top-down projection, and it is wrong
+ * in two ways that a flat roof hides. It bakes the PLAN's axes into the texture,
+ * so shingle courses run along the eave on a roof whose eave happens to lie
+ * along x and straight DOWN the slope on one that runs along y - a cross-gable
+ * shows both at once, which is how it was found. And it foreshortens by
+ * cos(pitch), so a 50 degrees slope stretches its tiles by half again.
+ *
+ * The frame is built from the triangle's own normal: `u` along the horizontal
+ * in-plane direction, which is the eave, and `v` up the true slope. Both are
+ * world distances in metres, so a roof texture stays the size it is set to and
+ * the mapping is isometric. It is derived per triangle but depends only on the
+ * plane, so every triangle of one slope agrees and the seam falls on the ridge
+ * where roofing has one anyway. A FLAT face has no in-plane horizontal to pick,
+ * and there the plan projection is the right answer - a deck is seen from above -
+ * so it keeps it.
  */
 function addRoofBand(builder, band, lowerZ, upperZ, upperPolys, place = toThree, group = 0) {
   const faces = triangulate(band.outer, band.holes)
@@ -673,12 +690,37 @@ function addRoofBand(builder, band, lowerZ, upperZ, upperPolys, place = toThree,
     nx /= len; ny /= len; nz /= len
     // A roof faces up. Flip the winding rather than the normal so the two agree.
     const flip = ny < 0
+    const fx = flip ? -nx : nx
+    const fy = flip ? -ny : ny
+    const fz = flip ? -nz : nz
+
+    // The in-plane frame: `e` is normal x up, the horizontal direction lying in
+    // the slope - the eave. `s` completes it and points up the slope.
+    let ex = -fz
+    let ez = fx
+    const eLen = Math.hypot(ex, ez)
+    const uvOf = eLen < 1e-6
+      // Flat: no eave to align to, and a deck is seen from above.
+      ? P => [P[0], -P[2]]
+      : (() => {
+        ex /= eLen
+        ez /= eLen
+        // s = e x n, unit because e and n are unit and perpendicular.
+        const sx = -ez * fy
+        const sy = ez * fx - ex * fz
+        const sz = ex * fy
+        return P => [
+          P[0] * ex + P[2] * ez,
+          P[0] * sx + P[1] * sy + P[2] * sz,
+        ]
+      })()
+
     builder.tri(
       A, flip ? C : B, flip ? B : C,
-      [flip ? -nx : nx, flip ? -ny : ny, flip ? -nz : nz],
-      [a[0], a[1]],
-      flip ? [c[0], c[1]] : [b[0], b[1]],
-      flip ? [b[0], b[1]] : [c[0], c[1]],
+      [fx, fy, fz],
+      uvOf(A),
+      uvOf(flip ? C : B),
+      uvOf(flip ? B : C),
       group,
     )
   }
@@ -940,6 +982,15 @@ export function buildSlotInstances(ir, slotMeshes = {}) {
         // in every style that has one.
           : slot.type === 'pillar' ? 'pillar'
             : 'opening'
+    // AND WHETHER THAT SLOT IS ITS OWN OR ONE IT BORROWS, because that decides
+    // who wins against an imported model's baked-in material. A window owns
+    // `opening`, so binding a texture there is an instruction about windows and
+    // must override the model. A chimney only BORROWS `wall` for a colour to
+    // fall back to; a wall texture is authored for walls and tiled in metres, so
+    // letting it win wrapped every imported chimney in the building's own
+    // plaster and threw away the texture that was the point of importing it.
+    // Same for a balcony and a finial against `trim`.
+    const borrowsMaterial = slot.type === 'balcony' || slot.type === 'roof_item'
     const side = sideOfNormal(slot.transform[8], slot.transform[9])
     const material = resolveMaterialIndex(ir, materialSlot, slot.floorIndex, side)
     // AND BY WHICH MESH IT WEARS. A shopfront on the ground floor and windows
@@ -954,7 +1005,7 @@ export function buildSlotInstances(ir, slotMeshes = {}) {
     const variant = slot.variant | 0
     const key = `${slot.type}#${material}#${tag}#${meshSlot}#${variant}`
     if (!byGroup.has(key)) {
-      byGroup.set(key, { type: slot.type, material, tag, meshSlot, variant, slots: [] })
+      byGroup.set(key, { type: slot.type, material, tag, meshSlot, variant, borrowsMaterial, slots: [] })
     }
     byGroup.get(key).slots.push(slot)
   }
@@ -963,7 +1014,7 @@ export function buildSlotInstances(ir, slotMeshes = {}) {
   // Sorted, so the draw order - and therefore anything comparing two builds -
   // does not depend on which slot happened to be emitted first.
   for (const key of [...byGroup.keys()].sort()) {
-    const { type, material, tag, meshSlot, variant, slots } = byGroup.get(key)
+    const { type, material, tag, meshSlot, variant, borrowsMaterial, slots } = byGroup.get(key)
     // A hole in the list - an entry that failed to load - falls back to the
     // placeholder box, which is what an unbound slot does too.
     const loaded = (meshSlot && slotMeshes[meshSlot]?.[variant]) || null
@@ -1043,6 +1094,9 @@ export function buildSlotInstances(ir, slotMeshes = {}) {
       // than applied: a texture deliberately bound to the slot has to win over
       // one that came along inside a GLB, or binding it would do nothing.
       modelMaterial: loaded?.material || null,
+      // True when `material` above is a slot this element only borrows a colour
+      // from, so a texture bound there must not override the model's own.
+      borrowsMaterial,
       matrices,
     })
   }

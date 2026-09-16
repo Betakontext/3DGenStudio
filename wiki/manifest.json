@@ -530,6 +530,15 @@
       "position": 3,
       "createdAt": 1789074716307,
       "updatedAt": 1789074724416
+    },
+    {
+      "id": 60,
+      "parentId": null,
+      "title": "Buildings",
+      "icon": "apartment",
+      "position": 11,
+      "createdAt": 1789555769898,
+      "updatedAt": 1789555769898
     }
   ]
 }
