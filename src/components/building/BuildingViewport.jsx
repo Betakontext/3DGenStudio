@@ -57,6 +57,17 @@ import {
  * the sculpt and paint tools there. There are no such tools here, so left-drag
  * did nothing at all, which is a terrible answer to the first thing anyone tries
  * in a 3D view.
+ *
+ * THE DOLLY CLAMPS ARE THEIR OWN EFFECT, and that separation is the point. They
+ * used to be set inside the framing effect, after its "have I framed this
+ * already" guard had been written - so any run where the controls were not yet
+ * available lost them permanently, and the OrbitControls JSX fallback of
+ * maxDistance=100 stood. On a 150 m tower that is a camera pinned inside the
+ * building, unable to back off far enough to see it. It is a race, which is why
+ * it appeared intermittently and reproduced reliably only by toggling the
+ * projection: that swaps in the OTHER camera, drei rebuilds the controls, and
+ * the clamps were never reapplied. Framing has to happen once; clamping is
+ * idempotent and has to happen every time either object changes.
  */
 function BuildingCamera({ extents, frameKey }) {
   // Destructured, not selected. Framing a camera means MUTATING it - that is how
@@ -102,18 +113,31 @@ function BuildingCamera({ extents, frameKey }) {
     camera.updateProjectionMatrix()
 
     if (controls?.target) {
-      // Also widen the dolly clamps: CameraRig's static maxDistance of 100 is
-      // fine for a mesh and too close for a hundred-metre tower.
-      Object.assign(controls, {
-        minDistance: Math.max(radius * 0.02, 0.05),
-        maxDistance: Math.max(radius * 40, 200),
-      })
       controls.target.copy(center)
       controls.update()
     } else {
       camera.lookAt(center)
     }
   }, [camera, controls, extents, frameKey])
+
+  // The dolly clamps, scaled to the building rather than to a mesh. Separate
+  // from the framing above and with no "already done" guard, so a camera or a
+  // controls object that arrives late - or replaces the one that was there when
+  // the projection is toggled - is clamped too. See the header.
+  useEffect(() => {
+    if (!camera || !controls?.target) return
+    const radius = Math.max(
+      Math.hypot(extents.x / 2, extents.y / 2, extents.z / 2), 1,
+    )
+    Object.assign(controls, {
+      minDistance: Math.max(radius * 0.02, 0.05),
+      // 80 radii. A building is framed at roughly four, so this is a long way
+      // out - far enough to put a tower in a skyline rather than merely in
+      // frame, which is what it is for.
+      maxDistance: Math.max(radius * 80, 400),
+    })
+    controls.update()
+  }, [camera, controls, extents])
 
   return null
 }

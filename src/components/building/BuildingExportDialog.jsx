@@ -22,6 +22,7 @@ import { exportObject3D } from '../../utils/meshExport'
 import { createMeshThumbnailFile } from '../../utils/meshThumbnail'
 import { LOD_LEVELS, buildLevel, disposeLevel } from '../../utils/building/exportBuilding'
 import { loadBuildingTextures } from '../../utils/building/textures'
+import { loadSlotMeshes } from '../../utils/building/slotMeshes'
 import './BuildingExportDialog.css'
 
 const formatCount = n => new Intl.NumberFormat().format(n)
@@ -44,7 +45,10 @@ export default function BuildingExportDialog({ doc, name, onClose, onExportFiles
     ;(async () => {
       try {
         for (const spec of LOD_LEVELS) {
-          const level = await buildLevel(doc, spec, loadBuildingTextures)
+          // THE MODELS TOO. Without them every opening exported as the
+          // placeholder box, and because that is also what an unbound slot
+          // draws, the file looked plausible rather than broken.
+          const level = await buildLevel(doc, spec, loadBuildingTextures, loadSlotMeshes)
           if (!alive) { disposeLevel(level); return }
           built = [...built, level]
           setLevels(built)

@@ -258,5 +258,100 @@ test('an EXPORTED opening fills its cell, exactly as the preview does', () => {
     `a wall's UVs only reach ${uvRange(walls[0]).toFixed(3)} - it stopped tiling`)
 })
 
+test('a BOUND MODEL reaches the export, and is not replaced by the placeholder', () => {
+  // The bug: buildExportObject called buildSlotInstances(ir) with no models at
+  // all, so every window, door, post and chimney a document bound came out as
+  // the 12-triangle placeholder box. It was invisible because an UNBOUND slot
+  // draws that same box - the file looked plausible and the triangle count was
+  // reasonable. A 1,808-fin tower exported at 46,000 triangles with no fins.
+  const doc = setReference(graph(FULL), 'mesh_window.0', { kind: 'mesh', ref: 'asset:55' })
+  const ir = compileBuilding(doc).ir
+  const windows = ir.slots.filter(slot => slot.type === 'window')
+  assert.ok(windows.length > 10, `only ${windows.length} windows in the fixture`)
+  // The compiler must have resolved them to the list, or the export would have
+  // nothing to look up and this would pass for the wrong reason.
+  assert.ok(windows.every(slot => slot.meshSlot), 'the compiler resolved no mesh slot')
+
+  // A stand-in for a loaded GLB, distinctive enough that its triangles can be
+  // told apart from the placeholder's twelve.
+  const model = new THREE.SphereGeometry(0.5, 12, 8)
+  const modelTriangles = model.index.count / 3
+  const slotMeshes = {}
+  for (const prefix of new Set(windows.map(slot => slot.meshSlot))) {
+    slotMeshes[prefix] = [{ geometry: model, material: new THREE.MeshStandardMaterial() }]
+  }
+
+  const without = buildExportObject(ir)
+  const bound = buildExportObject(ir, {}, slotMeshes)
+  const gain = countTriangles(bound) - countTriangles(without)
+  // Each window swaps twelve placeholder triangles for the model's.
+  const expected = windows.length * (modelTriangles - 12)
+  assert.equal(gain, expected,
+    `binding a model changed the export by ${gain} triangles, expected ${expected}`)
+  disposeLevel({ object: without })
+  disposeLevel({ object: bound })
+  model.dispose()
+})
+
+test('healing a chain past a MERGE reattaches to the right port', () => {
+  // The heal used to take the port from the edge that ARRIVED at the dropped
+  // node instead of the one that LEFT it. Down a linear chain both are
+  // `building` and it made no difference for months; a Merge's ports are `a` and
+  // `b`, so a Trim between a Roof and a Merge reattached the Roof to
+  // `mg.building` - a port a Merge does not have - and every level below LOD0
+  // failed with "Merge has nothing plugged into Building". That is every
+  // building with a wing, a tower or a porch: the full model exported fine and
+  // its entire LOD chain silently did not.
+  const fp = createNode('footprint', 'fp')
+  fp.props.shape = SQUARE
+  const second = createNode('footprint', 'fp2')
+  second.props.shape = { outer: [[20, 0], [30, 0], [30, 8], [20, 8]], holes: [] }
+  const nodes = [
+    fp, createNode('mass', 'ms'), createNode('roof', 'rf'), createNode('trim', 'tr'),
+    second, createNode('mass', 'ms2'), createNode('roof', 'rf2'), createNode('trim', 'tr2'),
+    createNode('merge', 'mg'), createNode('output', 'out'),
+  ]
+  const edge = (from, to, port) => ({ from: { node: from, port: 'out' }, to: { node: to, port } })
+  const doc = normalizeBuildingDoc({
+    nodes,
+    edges: [
+      edge('fp', 'ms', 'shape'), edge('ms', 'rf', 'building'), edge('rf', 'tr', 'building'),
+      edge('fp2', 'ms2', 'shape'), edge('ms2', 'rf2', 'building'), edge('rf2', 'tr2', 'building'),
+      // The two Trims are what the reduction drops, and they are the only things
+      // standing between the roofs and the Merge's two ports.
+      edge('tr', 'mg', 'a'), edge('tr2', 'mg', 'b'),
+      edge('mg', 'out', 'building'),
+    ],
+  })
+  assert.equal(compileBuilding(doc).ok, true, 'the fixture itself does not compile')
+
+  for (const spec of LOD_LEVELS.slice(1)) {
+    const reduced = docAtLevel(doc, spec)
+    assert.equal(reduced.nodes.some(node => node.type === 'trim'), false, `LOD${spec.level}`)
+    const ports = reduced.edges.filter(e => e.to.node === 'mg').map(e => e.to.port).sort()
+    assert.deepEqual(ports, ['a', 'b'],
+      `LOD${spec.level}: the Merge is fed through ${JSON.stringify(ports)}`)
+    const result = compileBuilding(reduced)
+    assert.equal(result.ok, true,
+      `LOD${spec.level}: ${result.diagnostics.filter(d => d.severity === 'error').map(d => d.message).join('; ')}`)
+    // ...and BOTH parts are still there, not just the branch that happened to
+    // keep its wiring.
+    assert.equal(result.ir.roofs.length, 2, `LOD${spec.level}: a branch was lost`)
+  }
+})
+
+test('a coarser level gives its MODELS a smaller allowance, not a larger one', () => {
+  // Widening the bays removes instances, and the allowance is the budget divided
+  // by instances - so without a per-level scale each coarser level hands its
+  // models MORE triangles each and lands on exactly the same total. LOD1 and
+  // LOD2 both came out at 1,200,570 triangles beside LOD0's 1,214,538. An LOD
+  // that is not cheaper is not an LOD.
+  const budgets = LOD_LEVELS.map(spec => spec.modelBudget)
+  assert.deepEqual(budgets, [...budgets].sort((a, b) => b - a),
+    `the model budget does not fall with the level: ${JSON.stringify(budgets)}`)
+  assert.equal(budgets[0], 1, 'LOD0 must be the full budget - it is the model')
+  assert.ok(budgets[1] < 1 && budgets[2] < budgets[1], 'two levels share an allowance')
+})
+
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)
 else console.log(`exportBuilding.test.mjs: ${passed} passed`)

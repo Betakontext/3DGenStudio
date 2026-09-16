@@ -182,6 +182,15 @@ import { buildBuildingGeometry, buildRoofGeometry, buildTrimGeometry, buildSlotI
   from './src/utils/building/mesh.js'
 ```
 
+A bound slot model is **simplified in proportion to how often it is drawn**, because a slot is
+instanced and the real cost is `triangles x instances` — a number only the grammar knows. A
+12,000-triangle fin is an ordinary generated mesh; 1,808 of them is 21.7M triangles and a
+viewport at 7 fps. `slotBudget.js` divides one total budget by the instance count, so a
+cottage's forty windows are left whole and a tower's fins come down to ~600 each. The
+simplifier's output must be **compacted** as well as re-indexed: simplifying rewrites only the
+index, and the exporter clones the geometry per instance, so the dead vertices are what
+actually stops an export.
+
 The mesher maps IR space to three.js space as `toThree(x, y, z) → [x, z, -y]` — a proper
 rotation, not a mirror. Walls are UV-mapped in **metres** as (run, height); caps in plan
 metres. A **roof slope is mapped in its own plane** — `u` along the eave, `v` up the true

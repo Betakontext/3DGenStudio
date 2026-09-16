@@ -18,6 +18,9 @@
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { referenceListKeys } from '../../../building/doc.js'
 import { normalise } from './meshNormalise.js'
+import {
+  SLOT_TRIANGLE_BUDGET, simplifyToBudget, slotUsage, targetTriangles,
+} from './slotBudget.js'
 import { resolveAssetImageUrl } from '../buildingApi.js'
 
 const loader = new GLTFLoader()
@@ -39,7 +42,7 @@ async function loadGeometry(url, rotation = null) {
  * then falls back to the placeholder box, which is the same thing an unbound
  * slot does and is a far better failure than a building with holes in it.
  */
-export async function loadSlotMeshes(ir) {
+export async function loadSlotMeshes(ir, budget = SLOT_TRIANGLE_BUDGET) {
   const out = {}
   const refs = ir?.references || {}
   const rotations = ir?.meshRotations || {}
@@ -67,6 +70,20 @@ export async function loadSlotMeshes(ir) {
   }
   if (!jobs.length) return out
 
+  // HOW OFTEN EACH ENTRY IS DRAWN, so a model can be simplified in proportion to
+  // what it costs. A slot is instanced, so the price of binding a model is
+  // `triangles x instances` and only the grammar knows the second number - see
+  // slotBudget.js. Summed per CACHE KEY rather than per job, because two
+  // prefixes naming one asset share one geometry and it has to be cheap enough
+  // for both of them together.
+  const usage = slotUsage(ir)
+  const cacheKeyOf = job => (job.rotation ? `${job.ref}#${job.rotation.join(',')}` : job.ref)
+  const demand = new Map()
+  for (const job of jobs) {
+    const key = cacheKeyOf(job)
+    demand.set(key, (demand.get(key) || 0) + (usage.get(`${job.prefix}#${job.index}`) || 0))
+  }
+
   // One load per ASSET, not per slot that wants it: a facade override and the
   // building-wide list routinely name the same model, and parsing a GLB twice is
   // the kind of waste that only shows up on a big building.
@@ -75,7 +92,7 @@ export async function loadSlotMeshes(ir) {
     // KEYED ON THE TURN AS WELL AS THE ASSET. One model used twice with two
     // different corrections is two geometries, and sharing the cache entry
     // between them would silently give the second one the first one's rotation.
-    const key = rotation ? `${ref}#${rotation.join(',')}` : ref
+    const key = cacheKeyOf({ ref, rotation })
     if (!cache.has(key)) {
       cache.set(key, (async () => {
         const url = await resolveAssetImageUrl(ref)
@@ -84,7 +101,17 @@ export async function loadSlotMeshes(ir) {
           return null
         }
         const loaded = await loadGeometry(url, rotation)
-        if (!loaded) console.warn(`Building slot mesh: ${ref} failed to load from ${url}`)
+        if (!loaded) {
+          console.warn(`Building slot mesh: ${ref} failed to load from ${url}`)
+          return null
+        }
+        // Fitted to what it costs, before anything draws it.
+        const target = targetTriangles(demand.get(key) || 0, budget)
+        const geometry = await simplifyToBudget(loaded.geometry, target)
+        if (geometry !== loaded.geometry) {
+          loaded.geometry.dispose()
+          return { ...loaded, geometry }
+        }
         return loaded
       })())
     }
