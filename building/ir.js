@@ -201,6 +201,18 @@ export function createBuildingIr({ seed = 0 } = {}) {
     deform: null,
     materials: [],
     references: {},
+    /**
+     * How a bound MODEL is turned, per reference key, in degrees.
+     *
+     * A parallel table rather than a field on the slot, because it is a property
+     * of the ASSET: every opening wearing that model needs the same correction,
+     * and they share one geometry. `references` stays a flat key -> 'asset:<n>'
+     * map because storage.js's dependency walkers match on exactly that shape -
+     * invariant 4 - so the turn could not live inside it.
+     *
+     * Absent for every model that was never turned, which is nearly all of them.
+     */
+    meshRotations: {},
     stats: {
       levelCount: 0,
       slotCount: 0,

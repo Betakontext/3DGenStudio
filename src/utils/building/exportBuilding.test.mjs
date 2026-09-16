@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import * as THREE from 'three'
 import { compileBuilding } from '../../../building/compile.js'
 import { createNode } from '../../../building/catalog.js'
-import { normalizeBuildingDoc, setReference } from '../../../building/doc.js'
+import { appendReference, normalizeBuildingDoc, setReference } from '../../../building/doc.js'
 import { textureKey } from '../../../building/stylepack.js'
 import {
   LOD_LEVELS, buildExportObject, countTriangles, disposeLevel, docAtLevel,
@@ -212,6 +212,50 @@ test('coarser levels really are cheaper', () => {
     assert.ok(counts[i] <= counts[i - 1],
       `LOD${i} is ${counts[i]} triangles, more than LOD${i - 1}'s ${counts[i - 1]}`)
   }
+})
+
+test('an EXPORTED opening fills its cell, exactly as the preview does', () => {
+  // The preview expresses this as a texture repeat and the export as baked UVs,
+  // so the two can disagree - and a building that looks one way in the tab and
+  // another in the file is the worst kind of bug to notice.
+  let doc = graph([{ type: 'facade' }])
+  doc = appendReference(doc, textureKey('opening'), {
+    kind: 'image', ref: 'asset:31', tileMetres: 1.5,
+  })
+  doc = appendReference(doc, textureKey('wall'), {
+    kind: 'image', ref: 'asset:32', tileMetres: 2,
+  })
+
+  const ir = compileBuilding(doc).ir
+  const object = buildExportObject(ir, {})
+  const uvRange = mesh => {
+    const uv = mesh.geometry.getAttribute('uv')
+    let hi = 0
+    for (let i = 0; i < uv.array.length; i++) hi = Math.max(hi, Math.abs(uv.array[i]))
+    return hi
+  }
+
+  const windows = []
+  const walls = []
+  object.traverse(child => {
+    if (!child.isMesh) return
+    if (/window/i.test(child.name)) windows.push(child)
+    if (/wall/i.test(child.name)) walls.push(child)
+  })
+  assert.ok(windows.length, 'no window mesh in the export')
+  assert.ok(walls.length, 'no wall mesh in the export')
+
+  // An opening's UVs stay 0..1: the whole image across the hole. Baking DIVIDES
+  // by the tile, so the failure is UVs that stop SHORT of 1 - at a 1.5m tile
+  // they reach 0.667 and the mesh shows two thirds of the window. Asserting
+  // "no more than 1" would have passed either way, which the first version of
+  // this test did.
+  const openingUv = uvRange(windows[0])
+  assert.ok(Math.abs(openingUv - 1) < 0.01,
+    `an opening's UVs reach ${openingUv.toFixed(3)}, not 1 - the tile was baked in`)
+  // A wall's are divided by its tile, so they run well past 1 on a 12m building.
+  assert.ok(uvRange(walls[0]) > 1.5,
+    `a wall's UVs only reach ${uvRange(walls[0]).toFixed(3)} - it stopped tiling`)
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

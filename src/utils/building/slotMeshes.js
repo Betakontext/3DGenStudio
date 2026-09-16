@@ -15,93 +15,18 @@
 // it. Depth is scaled by the average of the other two instead, so a window keeps
 // its proportions and a wide shopfront gets a proportionally deeper frame.
 
-import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { referenceListKeys } from '../../../building/doc.js'
-import { resolveAssetImageUrl } from '../buildingApi'
+import { normalise } from './meshNormalise.js'
+import { resolveAssetImageUrl } from '../buildingApi.js'
 
 const loader = new GLTFLoader()
 
-/**
- * Every mesh in a glTF scene, merged and normalised into a unit box.
- *
- * MERGED, because an InstancedMesh draws ONE geometry: a window model with a
- * frame, a sill and four panes as separate meshes would otherwise arrive as its
- * frame alone.
- *
- * THE MODEL KEEPS ITS OWN MATERIAL, which the first version of this threw away -
- * an imported window arrived untextured and there was no way to tell that from a
- * model that simply had no texture. A GLB carries its material and its maps, and
- * discarding them is discarding most of what makes it worth importing.
- *
- * ONE MATERIAL, though, and that is a real limit rather than a shortcut: an
- * InstancedMesh draws its geometry with one material, so a multi-material model
- * is merged under the FIRST material that has a texture (or simply the first).
- * A window whose frame and glass are separate materials arrives all frame. Said
- * out loud in a warning rather than left to be discovered.
- */
-function normalise(scene) {
-  const parts = []
-  const materials = []
-  scene.traverse(node => {
-    if (!node.isMesh || !node.geometry) return
-    for (const material of (Array.isArray(node.material) ? node.material : [node.material])) {
-      if (material) materials.push(material)
-    }
-    const piece = node.geometry.clone()
-    node.updateWorldMatrix(true, false)
-    piece.applyMatrix4(node.matrixWorld)
-    // mergeGeometries refuses inputs whose attribute sets differ, and a model
-    // may carry anything; keep the three every consumer here needs.
-    for (const name of Object.keys(piece.attributes)) {
-      if (!['position', 'normal', 'uv'].includes(name)) piece.deleteAttribute(name)
-    }
-    if (!piece.getAttribute('normal')) piece.computeVertexNormals()
-    if (!piece.getAttribute('uv')) {
-      const count = piece.getAttribute('position').count
-      piece.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(count * 2), 2))
-    }
-    parts.push(piece.index ? piece.toNonIndexed() : piece)
-  })
-  if (!parts.length) return null
-
-  const merged = parts.length === 1 ? parts[0] : mergeGeometries(parts, false)
-  for (const piece of parts) if (piece !== merged) piece.dispose()
-  if (!merged) return null
-
-  merged.computeBoundingBox()
-  const box = merged.boundingBox
-  const size = new THREE.Vector3()
-  const centre = new THREE.Vector3()
-  box.getSize(size)
-  box.getCenter(centre)
-  // A flat model - a plane, say - would divide by zero on one axis.
-  const sx = size.x > 1e-6 ? 1 / size.x : 1
-  const sy = size.y > 1e-6 ? 1 / size.y : 1
-  const sz = size.z > 1e-6 ? 1 / size.z : 1
-  merged.translate(-centre.x, -centre.y, -centre.z)
-  merged.scale(sx, sy, sz)
-
-  // Prefer a material that actually has a map: on a two-material window the
-  // textured one is the part worth keeping, and it is not reliably first.
-  const material = materials.find(entry => entry.map) || materials[0] || null
-  const distinct = new Set(materials).size
-  if (distinct > 1) {
-    console.warn(
-      `Building slot mesh: the model has ${distinct} materials and an instanced `
-      + 'opening can draw only one, so it is using '
-      + `"${material?.name || 'the first'}" for all of it.`,
-    )
-  }
-  return { geometry: merged, material }
-}
-
 /** Load one glTF and return its merged geometry and material, or null. */
-async function loadGeometry(url) {
+async function loadGeometry(url, rotation = null) {
   try {
     const gltf = await loader.loadAsync(url)
-    return normalise(gltf.scene)
+    return normalise(gltf.scene, rotation)
   } catch {
     return null
   }
@@ -117,6 +42,7 @@ async function loadGeometry(url) {
 export async function loadSlotMeshes(ir) {
   const out = {}
   const refs = ir?.references || {}
+  const rotations = ir?.meshRotations || {}
 
   // DRIVEN BY WHAT THE SLOTS ASK FOR, not by the list of tags. The compiler has
   // already resolved each opening to a reference PREFIX - the building-wide list
@@ -136,7 +62,7 @@ export async function loadSlotMeshes(ir) {
     out[prefix] = new Array(keys.length).fill(null)
     keys.forEach((key, index) => {
       const ref = refs[key]
-      if (ref) jobs.push({ prefix, index, ref })
+      if (ref) jobs.push({ prefix, index, ref, rotation: rotations[key] || null })
     })
   }
   if (!jobs.length) return out
@@ -145,20 +71,24 @@ export async function loadSlotMeshes(ir) {
   // building-wide list routinely name the same model, and parsing a GLB twice is
   // the kind of waste that only shows up on a big building.
   const cache = new Map()
-  await Promise.all(jobs.map(async ({ prefix, index, ref }) => {
-    if (!cache.has(ref)) {
-      cache.set(ref, (async () => {
+  await Promise.all(jobs.map(async ({ prefix, index, ref, rotation }) => {
+    // KEYED ON THE TURN AS WELL AS THE ASSET. One model used twice with two
+    // different corrections is two geometries, and sharing the cache entry
+    // between them would silently give the second one the first one's rotation.
+    const key = rotation ? `${ref}#${rotation.join(',')}` : ref
+    if (!cache.has(key)) {
+      cache.set(key, (async () => {
         const url = await resolveAssetImageUrl(ref)
         if (!url) {
           console.warn(`Building slot mesh: ${ref} has no file.`)
           return null
         }
-        const loaded = await loadGeometry(url)
+        const loaded = await loadGeometry(url, rotation)
         if (!loaded) console.warn(`Building slot mesh: ${ref} failed to load from ${url}`)
         return loaded
       })())
     }
-    const loaded = await cache.get(ref)
+    const loaded = await cache.get(key)
     // SHARED, so two prefixes naming one asset share one upload - and so
     // disposal has to happen once per distinct entry, not once per slot.
     if (loaded) out[prefix][index] = loaded
@@ -169,9 +99,14 @@ export async function loadSlotMeshes(ir) {
 /** A stable key for what is bound, so the preview reloads only when it changes. */
 export function slotMeshKeyOf(ir) {
   const refs = ir?.references || {}
+  const rotations = ir?.meshRotations || {}
   const prefixes = [...new Set((ir?.slots || []).map(slot => slot.meshSlot).filter(Boolean))].sort()
+  // THE TURN IS PART OF THE KEY. It is what decides whether the preview reloads,
+  // and rotating a model changes the geometry it produces - without this, turning
+  // a balcony changed the document and nothing on screen.
   return prefixes
-    .map(prefix => `${prefix}:${referenceListKeys(refs, prefix).map(key => refs[key]).join(',')}`)
+    .map(prefix => `${prefix}:${referenceListKeys(refs, prefix)
+      .map(key => `${refs[key]}@${(rotations[key] || []).join(',')}`).join(',')}`)
     .join('|')
 }
 

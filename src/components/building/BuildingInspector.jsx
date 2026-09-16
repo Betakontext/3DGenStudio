@@ -105,6 +105,7 @@ export default function BuildingInspector({
   onAddTexture,
   onRemoveTexture,
   onGenerateTexture,
+  onRotateMesh,
 }) {
   const node = doc?.nodes?.find(candidate => candidate.id === selectedId) || null
   const def = node ? getNodeDef(node.type) : null
@@ -281,7 +282,7 @@ export default function BuildingInspector({
           differ only when asked. */}
       {/* A Frame's timbers resolve through the same per-node slot a Trim run
           does, so one row here is the whole feature. The COLOUR is set in the
-          Colours panel; this tints it with an image. */}
+          Colours panel; a texture here replaces it. */}
       {node.type === 'frame' && onAddTexture && (
         <section className="binspect__section binspect__section--textures">
           <BuildingTextures
@@ -291,6 +292,7 @@ export default function BuildingInspector({
             onAdd={onAddTexture}
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
+            onRotate={onRotateMesh}
             note="Timbers draw in the Trim colour. Change it under Colours."
           />
         </section>
@@ -305,6 +307,7 @@ export default function BuildingInspector({
             onAdd={onAddTexture}
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
+            onRotate={onRotateMesh}
             note="Each Trim node can carry its own; empty uses the building-wide trim."
           />
         </section>
@@ -327,6 +330,7 @@ export default function BuildingInspector({
             onAdd={onAddTexture}
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
+            onRotate={onRotateMesh}
             note={sidesOpen
               ? 'A side overrides this facade, which overrides the building.'
               : 'Empty rows use the building-wide texture.'}

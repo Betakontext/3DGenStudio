@@ -460,6 +460,69 @@ export const CATALOG = {
         hint: 'A colonnade also stands this far clear of the wall.',
         showFor: { posts: ['pier', 'colonnade'] },
       },
+      // WHICH SIDES. Four booleans rather than one multi-choice control: a
+      // mode is single-select and the answer here is a SUBSET - two sides of
+      // four is the common case, and 'all but the north' has to be sayable.
+      openingNorth: {
+        type: PROP_TYPE.BOOL,
+        label: 'North',
+        default: true,
+        hint: 'Openings on walls facing north. Off leaves a blank wall - a '
+            + 'blind gable, a party wall, the back of a terrace. The front door is '
+            + 'placed whatever these say.',
+      },
+      openingEast: {
+        type: PROP_TYPE.BOOL,
+        label: 'East',
+        default: true,
+        hint: 'Openings on walls facing east. Off leaves a blank wall - a '
+            + 'blind gable, a party wall, the back of a terrace. The front door is '
+            + 'placed whatever these say.',
+      },
+      openingSouth: {
+        type: PROP_TYPE.BOOL,
+        label: 'South',
+        default: true,
+        hint: 'Openings on walls facing south. Off leaves a blank wall - a '
+            + 'blind gable, a party wall, the back of a terrace. The front door is '
+            + 'placed whatever these say.',
+      },
+      openingWest: {
+        type: PROP_TYPE.BOOL,
+        label: 'West',
+        default: true,
+        hint: 'Openings on walls facing west. Off leaves a blank wall - a '
+            + 'blind gable, a party wall, the back of a terrace. The front door is '
+            + 'placed whatever these say.',
+      },
+      balconyNorth: {
+        type: PROP_TYPE.BOOL,
+        label: 'Balconies north',
+        default: true,
+        hint: 'Balconies on walls facing north.',
+        showFor: { balcony: ['upper', 'all', 'scattered'] },
+      },
+      balconyEast: {
+        type: PROP_TYPE.BOOL,
+        label: 'Balconies east',
+        default: true,
+        hint: 'Balconies on walls facing east.',
+        showFor: { balcony: ['upper', 'all', 'scattered'] },
+      },
+      balconySouth: {
+        type: PROP_TYPE.BOOL,
+        label: 'Balconies south',
+        default: true,
+        hint: 'Balconies on walls facing south.',
+        showFor: { balcony: ['upper', 'all', 'scattered'] },
+      },
+      balconyWest: {
+        type: PROP_TYPE.BOOL,
+        label: 'Balconies west',
+        default: true,
+        hint: 'Balconies on walls facing west.',
+        showFor: { balcony: ['upper', 'all', 'scattered'] },
+      },
       includeCourtyards: {
         type: PROP_TYPE.BOOL,
         label: 'Dress courtyards',

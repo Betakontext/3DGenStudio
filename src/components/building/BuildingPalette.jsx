@@ -84,8 +84,8 @@ export default function BuildingPalette({ palette, overrides, onChange, onReset 
         ))}
       </ul>
       <p className="bpal__note">
-        A texture tints its slot&rsquo;s colour rather than replacing it, so a
-        neutral image keeps the hue set here. Applying a style replaces the lot.
+        A colour is what a slot shows with no texture on it. Binding a texture
+        replaces it. Applying a style replaces the lot.
       </p>
     </div>
   )

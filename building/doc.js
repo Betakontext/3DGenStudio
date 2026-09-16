@@ -184,6 +184,27 @@ function normalizeReferenceEntry(entry) {
     const tile = Number(entry.tileMetres);
     out.tileMetres = Number.isFinite(tile) && tile > 0 ? Math.min(tile, 100) : 2;
   }
+  // HOW THE MODEL IS TURNED, in degrees, and it belongs on the reference for the
+  // same reason the tile size does: it is a property of the ASSET, not of the
+  // slot. A balcony modelled facing up needs the same quarter turn wherever it is
+  // placed, and every other model in the same list may need a different one - so
+  // a single correction on the node would be wrong for all but one of them.
+  //
+  // Only meshes have one. An image has no orientation to fix.
+  if (kind === REFERENCE_KIND.MESH) {
+    const axes = Array.isArray(entry.rotation) ? entry.rotation : [];
+    const degrees = [0, 1, 2].map(i => {
+      const value = Number(axes[i]);
+      if (!Number.isFinite(value)) return 0;
+      // Wrapped rather than clamped: -90 and 270 are the same turn, and an author
+      // dragging past a full circle means the angle, not the limit.
+      const wrapped = value % 360;
+      return Math.round((wrapped < 0 ? wrapped + 360 : wrapped) * 1000) / 1000;
+    });
+    // Stored ONLY when it is a real turn, so an untouched model serialises
+    // exactly as it did before this existed and no document churns on save.
+    if (degrees.some(value => value !== 0)) out.rotation = degrees;
+  }
   return out;
 }
 

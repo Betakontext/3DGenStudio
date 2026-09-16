@@ -163,3 +163,44 @@
   color: var(--primary);
   opacity: 0.85;
 }
+
+/* A model entry carries its rotation, so its row is taller and wraps. An image
+   entry keeps the single compact line it always had. */
+.btex__entry--mesh {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.btex__rot {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.btex__rot-axis {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--on-surface-variant);
+}
+
+.btex__rot-axis input {
+  width: 42px;
+  padding: 1px 3px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-size: 11px;
+  text-align: right;
+}
+
+.btex__rot-axis input:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.btex__entry-del {
+  flex: 0 0 auto;
+}

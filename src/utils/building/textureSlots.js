@@ -16,6 +16,28 @@ export const TILEABLE_SUFFIX = 'seamless tileable texture, flat even lighting, '
  * tiles at under a metre, and a stone plinth block at around 1m. A texture at
  * the wrong scale looks like a different material entirely.
  */
+/**
+ * Which slots tile by METRES, and which fill the thing they are drawn on.
+ *
+ * Two different kinds of surface, and treating them alike is what put a corner
+ * of a window texture in every opening.
+ *
+ * A WALL, ROOF or TRIM is UV-mapped in metres by mesh.js - see its header - so a
+ * texture's repeat is 1/tileMetres and brickwork is the same size on a cottage
+ * and on a tower. That is the whole reason the tile size exists.
+ *
+ * An OPENING or a DOOR is not a material, it is a THING: one window, one door,
+ * drawn on an instanced unit box whose UVs run 0..1 across the cell. Tiling it
+ * samples a fraction of the image - at a 1.5m tile, the bottom-left two thirds
+ * of the window and nothing else. It has to fill the cell exactly.
+ */
+export const CELL_SLOTS = new Set(['opening', 'door'])
+
+/** Whether a slot's texture repeats by metres rather than filling its cell. */
+export function tilesByMetres(slot) {
+  return !CELL_SLOTS.has(slot)
+}
+
 export const SLOT_GUIDE = {
   wall: {
     label: 'Wall',

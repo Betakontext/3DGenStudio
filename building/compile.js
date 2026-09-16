@@ -383,9 +383,9 @@ export function compileBuilding(document) {
 
   // Then the per-facade and per-side overrides, which are MORE SPECIFIC and win
   // by resolveMaterialIndex's scoring rather than by being later in the list.
-  // They carry the same palette colour as the slot they override: a texture
-  // tints its colour, and an override that reset the tint to white would make
-  // one storey of a coloured building suddenly grey.
+  // They carry the same palette colour as the slot they override, so an override
+  // whose texture fails to load falls back to the same colour the rest of the
+  // building uses rather than to a stray grey.
   for (const override of result.materialOverrides || []) {
     ir.materials.push(makeMaterial({
       slot: override.slot,
@@ -460,6 +460,7 @@ export function compileBuilding(document) {
   // table - invariant 3 in doc.js - rather than hunting through nodes.
   for (const [key, entry] of Object.entries(doc.references)) {
     ir.references[key] = entry.ref;
+    if (entry.rotation) ir.meshRotations[key] = entry.rotation;
     if (!entry.ref) {
       diagnostics.warn(
         CODE.W_MISSING_ASSET,
@@ -512,6 +513,25 @@ function finish(ir, diagnostics) {
  * rule 1 in catalog.js. The switch is deliberately flat: a registry of functions
  * would be tidier and would also hide the fact that there are only a handful.
  */
+/**
+ * Which sides a facade's openings or balconies are allowed on.
+ *
+ * Returns a SET, and an empty one means "every side" - which is also what a
+ * document written before these props existed produces, so nothing changes for
+ * one. Four booleans rather than a mode because the answer is a subset: two
+ * sides of four is the common case and a single-select cannot say it.
+ */
+function sidesFrom(node, prefix) {
+  const out = new Set();
+  for (const side of SIDE_ORDER) {
+    const key = `${prefix}${side[0].toUpperCase()}${side.slice(1)}`;
+    if (readProp(node, key) !== false) out.add(side);
+  }
+  // All four on is the same as no filter at all, and saying so here means the
+  // common case costs nothing downstream.
+  return out.size === SIDE_ORDER.length ? null : out;
+}
+
 /**
  * Every roof on a building.
  *
@@ -705,6 +725,10 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {},
           balconyWidth: readProp(node, 'balconyWidth'),
           balconyHeight: readProp(node, 'balconyHeight'),
           balconyChance: readProp(node, 'balconyChance'),
+          // A SET, built here rather than in facade.js, so the geometry code
+          // never has to know how the vocabulary spells a side.
+          openingSides: sidesFrom(node, 'opening'),
+          balconySides: sidesFrom(node, 'balcony'),
           posts: readMode(node, 'posts'),
           postWidth: readProp(node, 'postWidth'),
           postDepth: readProp(node, 'postDepth'),

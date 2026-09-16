@@ -267,6 +267,28 @@ export function insertNodeAfter(doc, afterId, type) {
 }
 
 /**
+ * Turn a bound model.
+ *
+ * ON THE REFERENCE, so every opening wearing that model gets the same
+ * correction and a second model in the same list keeps its own. A balcony
+ * exported lying down needs a quarter turn wherever it is used, and the slot it
+ * sits in is not what was wrong with it.
+ */
+export function setMeshRotation(doc, key, rotation) {
+  const d = normalizeBuildingDoc(doc)
+  const entry = d.references[key]
+  if (!entry || entry.kind !== 'mesh') return d
+  const axes = [0, 1, 2].map(i => {
+    const value = Number(rotation?.[i])
+    return Number.isFinite(value) ? value : 0
+  })
+  return normalizeBuildingDoc({
+    ...d,
+    references: { ...d.references, [key]: { ...entry, rotation: axes } },
+  })
+}
+
+/**
  * Change one palette colour.
  *
  * WHY THE DOCUMENT AND NOT THE PACK. A style pack is a file on disk shared by

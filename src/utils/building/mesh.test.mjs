@@ -39,6 +39,7 @@ function graph({ shape, mass } = {}) {
   })
 }
 
+const BIG = { outer: [[0, 0], [40, 0], [40, 28], [0, 28]], holes: [] }
 const SQUARE = { outer: [[0, 0], [10, 0], [10, 10], [0, 10]], holes: [] }
 const COURTYARD = {
   outer: [[0, 0], [30, 0], [30, 30], [0, 30]],
@@ -846,6 +847,49 @@ test('balconies are their own instanced group, never merged with the openings', 
   const groups = buildSlotInstances(balconyIr(), {})
   const types = groups.map(g => g.type)
   assert.ok(types.includes('balcony') && types.includes('window'), `groups were ${types}`)
+})
+
+test('a building big enough to need a large buffer still MESHES', () => {
+  // The builder used to finish with `positions.push(...bucket.positions)`, and a
+  // spread is an ARGUMENT LIST: past roughly a hundred thousand floats the
+  // engine raises "Maximum call stack size exceeded" from a line that looks like
+  // a copy. It cost nothing at the sizes it was written for and crashed the
+  // moment the Frame node existed - a 40-storey tower with a timber frame is
+  // several hundred thousand.
+  const doc = graphWith([
+    { type: 'facade', props: { bayWidth: 2.4 } },
+    { type: 'frame', modes: { storeys: 'all', brace: 'cross' }, props: { bayWidth: 2.4 } },
+  ], { shape: BIG, mass: { props: { levelCount: 40, levelHeight: 3.2 } } })
+
+  const ir = irOf(doc)
+  assert.ok(ir.trims.length > 1000, `only ${ir.trims.length} members - not big enough to test`)
+
+  const { geometry, triangleCount } = buildTrimGeometry(ir)
+  assert.ok(geometry, 'no geometry came back')
+  assert.ok(triangleCount > 20000, `only ${triangleCount} triangles`)
+  // The attributes have to be complete, not merely present: a partial copy would
+  // pass a truthiness check and draw a fraction of the building.
+  const position = geometry.getAttribute('position')
+  assert.equal(position.count, triangleCount * 3)
+  assert.equal(geometry.getAttribute('normal').count, position.count)
+  assert.equal(geometry.getAttribute('uv').count, position.count)
+  // ...and no NaN crept in through the typed-array copy.
+  assert.ok(Number.isFinite(position.array[position.array.length - 1]))
+  geometry.dispose()
+})
+
+test('a tall tower is a HANDFUL of draw calls, not one per opening', () => {
+  // The instancing question, as a number. One InstancedMesh per distinct
+  // (type, material, tag, model, variant) - so a thousand identical windows are
+  // one draw call, and only a real difference splits them.
+  const ir = irOf(graphWith([{ type: 'facade', props: { bayWidth: 2.4 } }],
+    { shape: BIG, mass: { props: { levelCount: 40, levelHeight: 3.2 } } }))
+  assert.ok(ir.slots.length > 2000, `only ${ir.slots.length} openings`)
+
+  const groups = buildSlotInstances(ir, {})
+  assert.ok(groups.length <= 4, `${groups.length} draw calls for ${ir.slots.length} openings`)
+  assert.equal(groups.reduce((total, group) => total + group.count, 0), ir.slots.length,
+    'an opening was dropped on the way into an instance buffer')
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

@@ -7,6 +7,7 @@ import { BUILDING_IR_FORMAT, LEVEL_KIND, irDigest, validateIrJson } from './ir.j
 import { createNode } from './catalog.js';
 import { MASS_PROFILE } from './mass.js';
 import { appendReference, normalizeBuildingDoc } from './doc.js';
+import { sideOfNormal } from './sides.js';
 import { FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, meshKey, nodeTextureKey } from './stylepack.js';
 
 let passed = 0;
@@ -694,6 +695,97 @@ test('jitter is deterministic, and per element rather than per stream', () => {
   // Two slots must not have received the same nudge.
   const offsets = new Set(run());
   assert.ok(offsets.size > 1);
+});
+
+// --- which sides get openings, and which get balconies -----------------------
+
+const sideTally = (ir, type) => {
+  const out = {};
+  for (const slot of ir.slots.filter(s => s.type === type)) {
+    const side = sideOfNormal(slot.transform[8], slot.transform[9]);
+    out[side] = (out[side] || 0) + 1;
+  }
+  return out;
+};
+const facadeWith = props => compileBuilding(graphWithStages([
+  { type: 'facade', modes: { storeys: 'all', balcony: 'all' }, props },
+])).ir;
+
+test('every side is dressed unless told otherwise', () => {
+  const ir = facadeWith({});
+  assert.deepEqual(Object.keys(sideTally(ir, 'window')).sort(),
+    ['east', 'north', 'south', 'west']);
+  assert.deepEqual(Object.keys(sideTally(ir, 'balcony')).sort(),
+    ['east', 'north', 'south', 'west']);
+});
+
+test('balconies can be limited to some sides without touching the windows', () => {
+  const ir = facadeWith({ balconyNorth: false, balconyEast: false, balconyWest: false });
+  assert.deepEqual(Object.keys(sideTally(ir, 'balcony')), ['south']);
+  // The openings are untouched: they are a separate decision.
+  assert.deepEqual(Object.keys(sideTally(ir, 'window')).sort(),
+    ['east', 'north', 'south', 'west']);
+});
+
+test('openings can be limited too, and the balconies follow the openings', () => {
+  const ir = facadeWith({ openingEast: false, openingWest: false });
+  assert.deepEqual(Object.keys(sideTally(ir, 'window')).sort(), ['north', 'south']);
+  // A balcony hangs on an opening, so a side with no openings has no balconies
+  // whatever the balcony sides say.
+  assert.deepEqual(Object.keys(sideTally(ir, 'balcony')).sort(), ['north', 'south']);
+});
+
+test('the FRONT DOOR survives every side filter', () => {
+  // It is placed once for the whole building, on the wall meant to read as the
+  // front. Losing it to a side filter would leave a house with no way in.
+  const all = compileBuilding(graphWithStages([
+    { type: 'facade', props: { openingNorth: false, openingEast: false, openingSouth: false, openingWest: false } },
+  ])).ir;
+  assert.equal(all.slots.filter(slot => slot.type === 'door').length, 1);
+  assert.equal(all.slots.filter(slot => slot.type === 'window').length, 0,
+    'the openings should all be gone');
+});
+
+test('all four sides on is the same document as no filter at all', () => {
+  const on = facadeWith({ openingNorth: true, openingEast: true, openingSouth: true, openingWest: true });
+  const none = facadeWith({});
+  assert.equal(on.slots.length, none.slots.length);
+});
+
+// --- turning a bound model ---------------------------------------------------
+
+test('a rotation on a mesh reference reaches the IR', () => {
+  let doc = graphWithStages([{ type: 'facade' }]);
+  doc = appendReference(doc, meshKey('window'), {
+    kind: 'mesh', ref: 'asset:11', rotation: [90, 0, 0],
+  });
+  const ir = compileBuilding(doc).ir;
+  assert.deepEqual(ir.meshRotations['mesh_window.0'], [90, 0, 0]);
+  // The reference table itself stays a flat key -> 'asset:<n>' map, which is
+  // what storage.js's dependency walkers match on - invariant 4.
+  assert.equal(ir.references['mesh_window.0'], 'asset:11');
+});
+
+test('an untouched model carries no rotation at all', () => {
+  let doc = graphWithStages([{ type: 'facade' }]);
+  doc = appendReference(doc, meshKey('window'), { kind: 'mesh', ref: 'asset:11' });
+  const ir = compileBuilding(doc).ir;
+  assert.deepEqual(ir.meshRotations, {},
+    'a zero rotation should not be stored - it would churn every saved document');
+});
+
+test('angles wrap rather than clamp, because -90 and 270 are the same turn', () => {
+  const doc = normalizeBuildingDoc({
+    references: { 'mesh_balcony.0': { kind: 'mesh', ref: 'asset:1', rotation: [-90, 450, 0] } },
+  });
+  assert.deepEqual(doc.references['mesh_balcony.0'].rotation, [270, 90, 0]);
+});
+
+test('only a MESH can be turned; an image has no orientation to fix', () => {
+  const doc = normalizeBuildingDoc({
+    references: { 'tex_wall.0': { kind: 'image', ref: 'asset:1', rotation: [90, 0, 0] } },
+  });
+  assert.equal(doc.references['tex_wall.0'].rotation, undefined);
 });
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`);

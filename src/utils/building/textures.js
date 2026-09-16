@@ -14,6 +14,7 @@
 
 import * as THREE from 'three'
 import { resolveAssetImageUrl } from '../buildingApi'
+import { tilesByMetres } from './textureSlots.js'
 
 /** Metres per tile when a reference does not say. One storey of brick, roughly. */
 export const DEFAULT_TILE_METRES = 2
@@ -28,15 +29,26 @@ const loader = new THREE.TextureLoader()
  * repeats, whoever ends up using it. Getting the colour space wrong is a
  * washed-out building that looks like a lighting bug.
  */
-function loadTexture(url, tileMetres) {
+function loadTexture(url, tileMetres, tiles = true) {
   return new Promise(resolve => {
     loader.load(
       url,
       texture => {
-        texture.wrapS = THREE.RepeatWrapping
-        texture.wrapT = THREE.RepeatWrapping
-        const tile = tileMetres > 0 ? tileMetres : DEFAULT_TILE_METRES
-        texture.repeat.set(1 / tile, 1 / tile)
+        if (tiles) {
+          texture.wrapS = THREE.RepeatWrapping
+          texture.wrapT = THREE.RepeatWrapping
+          const tile = tileMetres > 0 ? tileMetres : DEFAULT_TILE_METRES
+          texture.repeat.set(1 / tile, 1 / tile)
+        } else {
+          // FILLS THE CELL. An opening's box is UV-mapped 0..1 across the hole,
+          // so repeating by metres shows a fraction of the image - which is how
+          // a window texture came out as the bottom-left corner of a window.
+          // Clamped rather than repeated as well, so the reveals at the sides of
+          // the box carry the edge of the image instead of a second copy of it.
+          texture.wrapS = THREE.ClampToEdgeWrapping
+          texture.wrapT = THREE.ClampToEdgeWrapping
+          texture.repeat.set(1, 1)
+        }
         texture.colorSpace = THREE.SRGBColorSpace
         texture.anisotropy = 4
         resolve(texture)
@@ -77,7 +89,7 @@ export async function loadBuildingTextures(ir) {
       console.warn(`Building texture: ${material.ref} (${material.slot}) has no file.`)
       return
     }
-    const texture = await loadTexture(url, material.tile)
+    const texture = await loadTexture(url, material.tile, tilesByMetres(material.slot))
     if (texture) out[index] = texture
     else console.warn(`Building texture: ${material.slot} failed to load from ${url}`)
   }))

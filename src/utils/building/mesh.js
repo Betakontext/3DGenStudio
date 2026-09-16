@@ -177,22 +177,38 @@ function createBuilder({ recomputeNormals = false } = {}) {
      *   `groups[i]` is the ir.materials index that geometry group i draws with.
      */
     build() {
-      const positions = []
-      const normals = []
-      const uvs = []
       const groups = []
       const geometry = new THREE.BufferGeometry()
 
       // Sorted, so the same building always produces the same group order and a
       // golden test of the geometry is possible at all - Map iteration is
       // insertion order, which depends on which wall happened to be built first.
-      for (const group of [...buckets.keys()].sort((a, b) => a - b)) {
+      const order = [...buckets.keys()].sort((a, b) => a - b)
+
+      // SIZED FIRST, THEN COPIED INTO TYPED ARRAYS, and that is not a
+      // micro-optimisation - it is the difference between working and throwing.
+      // The old code did `positions.push(...bucket.positions)`, and a spread is
+      // an ARGUMENT LIST: a 40-storey tower with a timber frame produces a
+      // bucket of a few hundred thousand floats, which is past the engine's
+      // argument limit and raises "Maximum call stack size exceeded" from a line
+      // that looks like a copy. It cost nothing at the sizes this was written
+      // for and crashed the moment the Frame node existed.
+      let total = 0
+      for (const group of order) total += buckets.get(group).positions.length
+      const positions = new Float32Array(total)
+      const normals = new Float32Array(total)
+      const uvs = new Float32Array((total / 3) * 2)
+
+      let at = 0
+      let uvAt = 0
+      for (const group of order) {
         const bucket = buckets.get(group)
-        const start = positions.length / 3
-        positions.push(...bucket.positions)
-        normals.push(...bucket.normals)
-        uvs.push(...bucket.uvs)
-        geometry.addGroup(start, bucket.positions.length / 3, groups.length)
+        positions.set(bucket.positions, at)
+        normals.set(bucket.normals, at)
+        uvs.set(bucket.uvs, uvAt)
+        geometry.addGroup(at / 3, bucket.positions.length / 3, groups.length)
+        at += bucket.positions.length
+        uvAt += bucket.uvs.length
         groups.push(group)
       }
 

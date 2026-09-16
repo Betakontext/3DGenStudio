@@ -22,7 +22,7 @@
 import { useState } from 'react'
 import AssetSelectorModal from '../AssetSelectorModal'
 import { referenceListKeys } from '../../../building/doc.js'
-import { SLOT_GUIDE } from '../../utils/building/textureSlots'
+import { SLOT_GUIDE, tilesByMetres } from '../../utils/building/textureSlots'
 import { buildingFileUrl } from '../../utils/buildingApi'
 import './BuildingTextures.css'
 
@@ -35,11 +35,13 @@ import './BuildingTextures.css'
  * @param {string} [props.title]
  * @param {(refKey: string, assets: Array<Object>) => void} props.onAdd
  * @param {(entryKey: string) => void} props.onRemove
+ * @param {(entryKey: string, rotation: Array<number>) => void} [props.onRotate]
+ *   Models only. Degrees about X, Y and Z.
  * @param {(refKey: string, guideSlot: string) => void} props.onGenerate
  * @param {string} [props.note]
  */
 export default function BuildingTextures({
-  doc, rows, title, onAdd, onRemove, onGenerate, note,
+  doc, rows, title, onAdd, onRemove, onGenerate, onRotate, note,
 }) {
   const [picking, setPicking] = useState(null)
 
@@ -98,7 +100,14 @@ export default function BuildingTextures({
                       : filled.length === 1
                         ? (isMesh
                           ? (filled[0].entry.name || 'a model')
-                          : `${filled[0].entry.name || 'bound'} · ${filled[0].entry.tileMetres}m tile`)
+                          // A CELL SLOT HAS NO TILE SIZE: an opening's texture fills
+                          // the hole rather than repeating by metres, and printing
+                          // "1.5m tile" beside it describes something the renderer
+                          // does not do.
+                          : `${filled[0].entry.name || 'bound'} · ${
+                            tilesByMetres(row.guideSlot)
+                              ? `${filled[0].entry.tileMetres}m tile`
+                              : 'fills the opening'}`)
                         // The COUNT, because that is the thing that changes the
                         // building: one asset is a choice, several are a roll.
                         : `${filled.length} ${isMesh ? 'models' : 'textures'}, picked by seed`}
@@ -136,22 +145,48 @@ export default function BuildingTextures({
                   otherwise show a name and change nothing. */}
               {row.warn && <p className="btex__warn">{row.warn}</p>}
 
-              {/* The entries themselves, only once there is more than one to tell
-                  apart - a single binding is already named on the row above. */}
-              {filled.length > 1 && filled.map(({ key, entry }) => (
-                <div key={key} className="btex__entry">
+              {/* A MODEL ALWAYS LISTS ITS ENTRIES, however few, because each one
+                  carries a rotation and there is nowhere else to put it. An
+                  image row keeps the old rule - the entries only appear once
+                  there is more than one to tell apart, since a single binding is
+                  already named on the row above. */}
+              {(isMesh || filled.length > 1) && filled.map(({ key, entry }) => (
+                <div key={key} className={`btex__entry ${isMesh ? 'btex__entry--mesh' : ''}`}>
                   <span className="btex__entry-name">{entry.name || entry.ref}</span>
+                  {/* THREE ANGLES, in degrees, applied BEFORE the model is fitted
+                      to its opening - see slotMeshes.normalise. A balcony
+                      exported lying down is the case this exists for. */}
+                  {isMesh && onRotate && (
+                    <span className="btex__rot">
+                      {['X', 'Y', 'Z'].map((axis, index) => (
+                        <label key={axis} className="btex__rot-axis" title={`Turn about ${axis}`}>
+                          <span>{axis}</span>
+                          <input
+                            type="number"
+                            step="15"
+                            value={entry.rotation?.[index] ?? 0}
+                            onChange={event => {
+                              const next = [0, 1, 2].map(i => entry.rotation?.[i] ?? 0)
+                              next[index] = Number(event.target.value) || 0
+                              onRotate(key, next)
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </span>
+                  )}
                   <button
                     type="button"
+                    className="btex__entry-del"
                     onClick={() => onRemove(key)}
-                    title="Remove this one from the slot"
+                    title={filled.length > 1 ? 'Remove this one from the slot' : 'Clear this slot'}
                   >
                     <span className="material-symbols-outlined">close</span>
                   </button>
                 </div>
               ))}
 
-              {filled.length === 1 && (
+              {!isMesh && filled.length === 1 && (
                 <div className="btex__entry btex__entry--only">
                   <button
                     type="button"

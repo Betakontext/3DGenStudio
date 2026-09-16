@@ -44,7 +44,7 @@ import { SEVERITY } from '../../building/diagnostics.js'
 import {
   addWing, applyFix, canApplyFix, canMoveNode, ensureStarterGraph, insertNodeAfter,
   moveNode, orderedNodes, removeNode, resetPalette, setFootprint, setNodeEnabled,
-  setNodeMode, setNodeProp, setPaletteColor,
+  setMeshRotation, setNodeMode, setNodeProp, setPaletteColor,
 } from '../utils/building/edits'
 import './BuildingGenPage.css'
 
@@ -252,6 +252,15 @@ export default function BuildingGenPage() {
   const onMoveNode = useCallback((nodeId, direction) => {
     commit(current => moveNode(current, nodeId, direction), {
       undoLabel: direction < 0 ? 'Move Node Earlier' : 'Move Node Later',
+    })
+  }, [commit])
+
+  const onRotateMesh = useCallback((key, rotation) => {
+    commit(current => setMeshRotation(current, key, rotation), {
+      undoLabel: 'Turn Model',
+      // A number field fires per keystroke; one undo entry per model rather than
+      // one per digit typed.
+      coalesceKey: `rotate:${key}`,
     })
   }, [commit])
 
@@ -490,9 +499,10 @@ export default function BuildingGenPage() {
             onAdd={onAddTexture}
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
-            note={'A texture tints the slot’s palette colour rather than replacing it, '
-              + 'and tiles by metres. A Facade node can override the wall and windows on '
-              + 'the storeys it covers.'}
+            onRotate={onRotateMesh}
+            note={'A texture replaces the slot’s colour and tiles by metres. A Facade '
+              + 'node can override the wall and windows on the storeys it covers, and on '
+              + 'one side of them.'}
           />
 
           {/* The openings' own geometry. Separate from the Textures list above
@@ -506,6 +516,7 @@ export default function BuildingGenPage() {
             onAdd={onAddTexture}
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
+            onRotate={onRotateMesh}
             note={'A model is scaled to the bay the grammar worked out, so one fits any '
               + 'wall. Empty slots stay plain boxes.'}
           />
@@ -787,6 +798,7 @@ export default function BuildingGenPage() {
             onAddTexture={onAddTexture}
             onRemoveTexture={onRemoveTexture}
             onGenerateTexture={onGenerateTexture}
+            onRotateMesh={onRotateMesh}
           />
         </aside>
       </div>

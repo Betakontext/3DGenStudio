@@ -29,6 +29,7 @@
 
 import { instanceSeed, randomAt, slotId } from './random.js';
 import { SLOT_TYPE } from './ir.js';
+import { sideOfNormal } from './sides.js';
 import {
   STRETCH, bayParts, placeInCell, splitSpan, storeyParts, tileSpan,
 } from './grammar.js';
@@ -140,6 +141,13 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
     posts = 'none',
     postWidth = 0.45,
     postDepth = 0.45,
+    // WHICH SIDES get openings, and which get balconies.
+    //
+    // NULL MEANS NO FILTER; a Set is the filter, and an EMPTY Set means none -
+    // which is a real thing to ask for and was the bug here: treating empty as
+    // "all" made turning every side off identical to leaving them all on.
+    openingSides = null,
+    balconySides = null,
   } = rule;
 
   const out = {
@@ -152,6 +160,12 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
   if (!levels.length) return out;
 
   const covers = index => index >= floorFrom && index <= floorTo;
+  // A courtyard wall's normal points INWARD, so `sideOfNormal` answers for the
+  // compass direction it faces rather than which side of the building it is on.
+  // That is the right answer for both: a north-facing wall is a north-facing
+  // wall whether it looks at the street or at the light well.
+  const onSide = (set, edge) => !set
+    || set.has(sideOfNormal(edge.normal[0], edge.normal[1]));
 
   // One compile-time slot per drawn property, so a window's choice of variant is
   // stable when an unrelated node is edited. See building/random.js.
@@ -259,6 +273,13 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
             && door.face === face
             && door.bay === bay.index;
 
+          // A SIDE WITH NO OPENINGS IS A BLANK WALL, which is a real thing to
+          // want - a blind gable, a party wall, the back of a terrace. The DOOR
+          // is exempt: it is placed once for the whole building on the wall the
+          // author is meant to read as the front, and losing it to a side filter
+          // would leave a house with no way in.
+          if (!isDoor && !onSide(openingSides, edge)) continue;
+
           const natural = isDoor ? doorWidth : windowWidth;
           const placed = placeInCell(cell, { stretch: STRETCH.NONE, natural });
           if (placed.clamped) out.squashed = true;
@@ -309,6 +330,7 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
           // light well barely wider than itself.
           const wantsBalcony = balcony !== 'none'
             && !isDoor
+            && onSide(balconySides, edge)
             && ring === rings[0]
             && (balcony === 'all'
               || (balcony === 'upper' && !isGround)

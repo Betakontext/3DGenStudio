@@ -33,6 +33,7 @@ import {
   buildBuildingGeometry, buildRoofGeometry, buildSlotInstances, buildTrimGeometry,
 } from './mesh.js'
 import { buildMaterials } from './materials.js'
+import { tilesByMetres } from './textureSlots.js'
 
 /**
  * The detail levels, coarsest last.
@@ -173,7 +174,15 @@ export function buildExportObject(ir, textures = {}) {
     }
     return copy
   })
-  const tileOf = index => ir.materials[index]?.tile || 0
+  // ZERO FOR A CELL SLOT, which bakeTileIntoUvs reads as "do not divide". The
+  // preview and the export have to agree here: the preview expresses the same
+  // rule as a texture repeat, and a mismatch is a building that looks one way in
+  // the tab and another in the file.
+  const tileOf = index => {
+    const material = ir.materials[index]
+    if (!material || !tilesByMetres(material.slot)) return 0
+    return material.tile || 0
+  }
 
   const surfaces = [
     ['Walls', buildBuildingGeometry(ir)],
