@@ -414,7 +414,7 @@ export function buildingBounds(ir) {
   // shorter than the building under it - and then a 45-degree SHED over an 8m
   // span rose 8m, taller than the two storeys it sat on, and the preview cut the
   // top off. The roof looked broken when only the camera was.
-  for (const rung of ir.roof?.rungs || []) {
+  for (const rung of (ir.roofs || []).flatMap(roof => roof.rungs || [])) {
     for (const index of rung.polygons) {
       const polygon = ir.polygons[index]
       if (!polygon) continue
@@ -425,7 +425,7 @@ export function buildingBounds(ir) {
   }
   // Gable ends reach the ridge and can oversail nothing, but they are cheap to
   // include and a shed's high wall is the tallest thing on some buildings.
-  for (const gable of ir.roof?.gables || []) {
+  for (const gable of (ir.roofs || []).flatMap(roof => roof.gables || [])) {
     for (let i = 0; i + 2 < gable.path.length; i += 3) {
       add(gable.path[i], gable.path[i + 1], gable.path[i + 2])
     }
@@ -458,10 +458,12 @@ export function buildingBounds(ir) {
  * splits in two on the way up and there is no correspondence to find.
  */
 export function buildRoofGeometry(ir) {
-  const roof = ir?.roof
-  if (!roof || !Array.isArray(roof.rungs) || roof.rungs.length === 0) {
-    return { geometry: null, triangleCount: 0 }
-  }
+  // EVERY ROOF, into one geometry. A merged building has one per branch - a hall
+  // under a gable and its tower under a pyramid - and they share a material and
+  // a coordinate frame, so there is nothing to gain from separate meshes and a
+  // draw call to lose.
+  const roofs = (ir?.roofs || []).filter(roof => Array.isArray(roof?.rungs) && roof.rungs.length)
+  if (!roofs.length) return { geometry: null, triangleCount: 0 }
 
   const place = placer(ir)
   const builder = createBuilder({ recomputeNormals: place !== toThree })
@@ -475,51 +477,57 @@ export function buildRoofGeometry(ir) {
   }
   const rungPolygons = rung => rung.polygons.map(polygonAt).filter(Boolean)
 
-  for (let i = 1; i < roof.rungs.length; i++) {
-    const lower = roof.rungs[i - 1]
-    const upper = roof.rungs[i]
-    const lowerPolys = rungPolygons(lower)
-    const upperPolys = rungPolygons(upper)
+  // Split out so the per-roof body reads at one indent instead of two, which is
+  // what went wrong the first time this loop was added around it.
+  const addRoof = roof => {
+    for (let i = 1; i < roof.rungs.length; i++) {
+      const lower = roof.rungs[i - 1]
+      const upper = roof.rungs[i]
+      const lowerPolys = rungPolygons(lower)
+      const upperPolys = rungPolygons(upper)
 
-    // Classified by building/roof.js so the mesher and the tests agree rather
-    // than each deciding for itself.
-    const kind = rungKind(
-      { polygons: lowerPolys, z: lower.z },
-      { polygons: upperPolys, z: upper.z },
-    )
+      // Classified by building/roof.js so the mesher and the tests agree rather
+      // than each deciding for itself.
+      const kind = rungKind(
+        { polygons: lowerPolys, z: lower.z },
+        { polygons: upperPolys, z: upper.z },
+      )
 
-    if (kind === 'riser') {
-      // Straight up: the contour's own walls. Outward, because a riser is the
-      // face of a step and is seen from outside.
-      for (const polygon of lowerPolys) {
-        let u = addWalls(builder, polygon.outer, lower.z, upper.z, 0, place, () => roofGroup)
-        for (const hole of polygon.holes) {
-          u = addWalls(builder, hole, lower.z, upper.z, u, place, () => roofGroup)
+      if (kind === 'riser') {
+        // Straight up: the contour's own walls. Outward, because a riser is the
+        // face of a step and is seen from outside.
+        for (const polygon of lowerPolys) {
+          let u = addWalls(builder, polygon.outer, lower.z, upper.z, 0, place, () => roofGroup)
+          for (const hole of polygon.holes) {
+            u = addWalls(builder, hole, lower.z, upper.z, u, place, () => roofGroup)
+          }
         }
+        continue
       }
-      continue
-    }
-    if (kind === 'none') continue
+      if (kind === 'none') continue
 
-    // Slope or tread: the annulus between the two contours.
-    for (const band of differencePolygons(lowerPolys, upperPolys)) {
-      addRoofBand(builder, band, lower.z, upper.z, upperPolys, place, roofGroup)
+      // Slope or tread: the annulus between the two contours.
+      for (const band of differencePolygons(lowerPolys, upperPolys)) {
+        addRoofBand(builder, band, lower.z, upper.z, upperPolys, place, roofGroup)
+      }
+    }
+
+    // THE VERTICAL END WALLS, which no rung pair describes. Every other roof
+    // surface is the band between two contours; a gable end is the flat triangle
+    // that closes the roof where the contours did not shrink at all, so it
+    // travels beside the ladder - see building/roof.js endWalls and ir.js.
+    for (const gable of roof.gables || []) addGableWall(builder, gable.path, place, roofGroup)
+
+    // Whatever the ladder ends on gets a lid. A closed roof ends on a ridge so
+    // thin the cap is a sliver; a capped one ends on a real flat deck. Both need
+    // it, or the building has a hole where the sky is.
+    const top = roof.rungs[roof.rungs.length - 1]
+    for (const polygon of rungPolygons(top)) {
+      addCap(builder, polygon.outer, polygon.holes, top.z, true, place, roofGroup)
     }
   }
 
-  // THE VERTICAL END WALLS, which no rung pair describes. Every other roof
-  // surface is the band between two contours; a gable end is the flat triangle
-  // that closes the roof where the contours did not shrink at all, so it travels
-  // beside the ladder - see building/roof.js endWalls and the note in ir.js.
-  for (const gable of roof.gables || []) addGableWall(builder, gable.path, place, roofGroup)
-
-  // Whatever the ladder ends on gets a lid. A closed roof ends on a ridge so thin
-  // the cap is a sliver; a capped one ends on a real flat deck. Both need it, or
-  // the building has a hole where the sky is.
-  const top = roof.rungs[roof.rungs.length - 1]
-  for (const polygon of rungPolygons(top)) {
-    addCap(builder, polygon.outer, polygon.holes, top.z, true, place, roofGroup)
-  }
+  for (const roof of roofs) addRoof(roof)
 
   if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
   return { ...builder.build(), triangleCount: builder.triangleCount }
@@ -682,7 +690,10 @@ function addRoofBand(builder, band, lowerZ, upperZ, upperPolys, place = toThree,
  * bent building, which is what makes a cornice follow a twisted wall.
  */
 export function buildTrimGeometry(ir) {
-  const runs = (ir?.trims || []).filter(run => run.closed && run.path.length >= 9)
+  // A CLOSED run needs three stations, an OPEN one needs two. The old filter
+  // demanded `closed`, so every open run - a gable bargeboard, a timber stud -
+  // compiled into the IR and then rendered nothing at all.
+  const runs = (ir?.trims || []).filter(run => run.path.length >= (run.closed ? 9 : 6))
   if (!runs.length) return { geometry: null, triangleCount: 0 }
 
   // Normals come from the swept geometry itself: a moulding's section faces
@@ -701,33 +712,77 @@ export function buildTrimGeometry(ir) {
     const section = trimSection(run.profileId, run.projection, run.depth)
     if (section.length < 3) continue
 
+    const closed = Boolean(run.closed)
     const count = Math.floor(run.path.length / 3)
     const at = i => [run.path[i * 3], run.path[i * 3 + 1], run.path[i * 3 + 2]]
 
-    // One frame per station: an outward direction in plan, mitre-scaled.
+    // ONE FRAME PER STATION, and both kinds produce the same shape of answer: an
+    // OUT direction the section's first axis runs along, an UP direction its
+    // second runs along, and a mitre scale on whichever of the two the corner
+    // opens in.
+    //
+    // A closed run gets the treatment it always had - out is the mitred plan
+    // bisector, up is straight up - because that is what turns a cornice round a
+    // corner. An open run cannot have it: a vertical stud has no plan direction
+    // at all, and a gable rake lies in a plane its own points cannot tell from
+    // the mirror image. So an open run carries the direction it faces, and up
+    // falls out of that and the tangent.
     const frames = []
     let along = 0
-    for (let i = 0; i < count; i++) {
-      const previous = at((i - 1 + count) % count)
-      const point = at(i)
-      const next = at((i + 1) % count)
 
-      const inN = edgeNormal(previous, point)
-      const outN = edgeNormal(point, next)
-      if (!inN || !outN) { frames.push(null); continue }
+    if (closed) {
+      for (let i = 0; i < count; i++) {
+        const previous = at((i - 1 + count) % count)
+        const point = at(i)
+        const next = at((i + 1) % count)
 
-      let bx = inN[0] + outN[0]
-      let by = inN[1] + outN[1]
-      const bLen = Math.hypot(bx, by)
-      // A doubled-back edge cancels the bisector entirely; fall back to the
-      // outgoing edge's own normal rather than dividing by zero.
-      if (bLen < 1e-9) { bx = outN[0]; by = outN[1] } else { bx /= bLen; by /= bLen }
+        const inN = edgeNormal(previous, point)
+        const outN = edgeNormal(point, next)
+        if (!inN || !outN) { frames.push(null); continue }
 
-      const cos = bx * outN[0] + by * outN[1]
-      const miter = cos > 0.25 ? 1 / cos : 4
+        let bx = inN[0] + outN[0]
+        let by = inN[1] + outN[1]
+        const bLen = Math.hypot(bx, by)
+        // A doubled-back edge cancels the bisector entirely; fall back to the
+        // outgoing edge's own normal rather than dividing by zero.
+        if (bLen < 1e-9) { bx = outN[0]; by = outN[1] } else { bx /= bLen; by /= bLen }
 
-      frames.push({ point, nx: bx, ny: by, miter, along })
-      along += Math.hypot(next[0] - point[0], next[1] - point[1], next[2] - point[2])
+        const cos = bx * outN[0] + by * outN[1]
+        frames.push({
+          point,
+          out: [bx, by, 0],
+          up: [0, 0, 1],
+          outMiter: cos > 0.25 ? 1 / cos : 4,
+          upMiter: 1,
+          along,
+        })
+        along += Math.hypot(next[0] - point[0], next[1] - point[1], next[2] - point[2])
+      }
+    } else {
+      const out = unitOr(run.normal, [0, 0, 1])
+      for (let i = 0; i < count; i++) {
+        const point = at(i)
+        const tIn = i > 0 ? unitBetween(at(i - 1), point) : null
+        const tOut = i < count - 1 ? unitBetween(point, at(i + 1)) : null
+        const t = tIn && tOut
+          ? unitOr([tIn[0] + tOut[0], tIn[1] + tOut[1], tIn[2] + tOut[2]], tOut)
+          : (tOut || tIn)
+        if (!t) { frames.push(null); continue }
+
+        // The section's up axis is whatever is perpendicular both to the way it
+        // faces and to the way it is going. On a horizontal member that comes
+        // out straight up; on a VERTICAL one it comes out horizontal, which is
+        // why Depth reads as the width of a stud rather than as its thickness.
+        const up = unitOr(cross(out, t), [0, 0, 1])
+        // The corner opens in the up axis here, not the out axis: an open run
+        // turns within the plane it faces. Same 1/cos rule, same clamp.
+        const cos = tIn && tOut ? Math.max(0.25, dot(t, tOut)) : 1
+        frames.push({ point, out, up, outMiter: 1, upMiter: 1 / cos, along })
+        if (tOut) {
+          const next = at(i + 1)
+          along += Math.hypot(next[0] - point[0], next[1] - point[1], next[2] - point[2])
+        }
+      }
     }
 
     // Station i to station i+1, one quad strip per section edge.
@@ -739,16 +794,21 @@ export function buildTrimGeometry(ir) {
     }
 
     const placeSection = (frame, k) => {
-      const [out, up] = section[k]
-      const d = out * frame.miter
+      const [sOut, sUp] = section[k]
+      const o = sOut * frame.outMiter
+      const u = sUp * frame.upMiter
       return toThree(
-        frame.point[0] + frame.nx * d,
-        frame.point[1] + frame.ny * d,
-        frame.point[2] + up,
+        frame.point[0] + frame.out[0] * o + frame.up[0] * u,
+        frame.point[1] + frame.out[1] * o + frame.up[1] * u,
+        frame.point[2] + frame.out[2] * o + frame.up[2] * u,
       )
     }
 
-    for (let i = 0; i < count; i++) {
+    // An open run has one fewer span than it has stations: nothing joins the
+    // last back to the first, and wrapping would drive a timber through the
+    // building from the apex of a gable back down to its eave.
+    const spans = closed ? count : count - 1
+    for (let i = 0; i < spans; i++) {
       const a = frames[i]
       const b = frames[(i + 1) % count]
       if (!a || !b) continue
@@ -770,7 +830,7 @@ export function buildTrimGeometry(ir) {
         // The seed normal only has to pick a hemisphere - the builder derives the
         // real one from each triangle. Outward is right for the whole section
         // except its back face, which is buried in the wall.
-        const seed = [a.nx, 0, -a.ny]
+        const seed = toThree(a.out[0], a.out[1], a.out[2])
         builder.tri(A, B, C, seed, uA, uB, uC, trimGroup)
         builder.tri(A, C, D, seed, uA, uC, uD, trimGroup)
       }
@@ -779,6 +839,32 @@ export function buildTrimGeometry(ir) {
 
   if (builder.triangleCount === 0) return { geometry: null, triangleCount: 0 }
   return { ...builder.build(), triangleCount: builder.triangleCount }
+}
+
+/** a x b. */
+function cross(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ]
+}
+
+function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
+
+/** Normalised, or the fallback when it has no length to normalise. */
+function unitOr(v, fallback) {
+  if (!v || v.length !== 3) return fallback
+  const length = Math.hypot(v[0], v[1], v[2])
+  if (!(length > 1e-9)) return fallback
+  return [v[0] / length, v[1] / length, v[2] / length]
+}
+
+function unitBetween(a, b) {
+  const v = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+  const length = Math.hypot(v[0], v[1], v[2])
+  if (!(length > 1e-9)) return null
+  return [v[0] / length, v[1] / length, v[2] / length]
 }
 
 /** The outward normal in plan of the edge a -> b, or null if it has no length. */
@@ -827,7 +913,16 @@ export function buildSlotInstances(ir, slotMeshes = {}) {
     // wall, not glazing, and drawing it in the opening colour makes a facade
     // look like it has holes hanging off it.
     const materialSlot = slot.type === 'door' ? 'door'
-      : slot.type === 'balcony' ? 'trim' : 'opening'
+      : slot.type === 'balcony' ? 'trim'
+      // A ROOF ITEM IS NOT AN OPENING. A chimney is masonry and reads as the
+      // wall it is an extension of; a finial or a vent is an accessory and reads
+      // as trim. Neither is a hole, and drawing them in the opening colour puts
+      // dark voids on the skyline.
+        : slot.type === 'roof_item' ? (slot.styleSlot === 'chimney' ? 'wall' : 'trim')
+        // A post is structure. Trim, because that is where a style puts its
+        // stone dressings and its timber, and a column belongs with them.
+          : slot.type === 'pillar' ? 'trim'
+            : 'opening'
     const side = sideOfNormal(slot.transform[8], slot.transform[9])
     const material = resolveMaterialIndex(ir, materialSlot, slot.floorIndex, side)
     // AND BY WHICH MESH IT WEARS. A shopfront on the ground floor and windows

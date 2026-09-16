@@ -25,6 +25,7 @@ import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import BuildingViewport from '../components/building/BuildingViewport'
 import BuildingStylePanel from '../components/building/BuildingStylePanel'
+import BuildingPalette from '../components/building/BuildingPalette'
 import BuildingTextures from '../components/building/BuildingTextures'
 import BuildingAiPanel from '../components/building/BuildingAiPanel'
 import BuildingExportDialog from '../components/building/BuildingExportDialog'
@@ -38,10 +39,12 @@ import {
 } from '../../building/doc.js'
 import { buildingTextureRows, slotMeshRows } from '../utils/building/textureRows'
 import { CATALOG, CATALOG_ORDER, getNodeDef } from '../../building/catalog.js'
+import { paletteOf } from '../../building/stylepack.js'
 import { SEVERITY } from '../../building/diagnostics.js'
 import {
-  applyFix, canApplyFix, ensureStarterGraph, insertNodeAfter, orderedNodes,
-  removeNode, setFootprint, setNodeEnabled, setNodeMode, setNodeProp,
+  addWing, applyFix, canApplyFix, canMoveNode, ensureStarterGraph, insertNodeAfter,
+  moveNode, orderedNodes, removeNode, resetPalette, setFootprint, setNodeEnabled,
+  setNodeMode, setNodeProp, setPaletteColor,
 } from '../utils/building/edits'
 import './BuildingGenPage.css'
 
@@ -57,6 +60,11 @@ function canInsert(doc, afterId, type) {
   const source = doc.nodes.find(node => node.id === afterId)
   if (!def || !source) return false
   if (def.singleton && doc.nodes.some(node => node.type === type)) return false
+  // A NODE WITH TWO REQUIRED INPUTS CANNOT BE SPLICED. Splicing wires the first
+  // and leaves the second dangling, which compiles to "this node has nothing
+  // plugged into And" - a palette button whose only effect is an error. Merge is
+  // reached through "Add a wing" instead, which builds the second branch too.
+  if ((def.inputs || []).filter(port => port.required).length > 1) return false
   const sourcePort = getNodeDef(source.type)?.outputs?.[0]
   const input = def.inputs?.[0]
   return Boolean(sourcePort && input && sourcePort.kind === input.kind)
@@ -122,11 +130,6 @@ export default function BuildingGenPage() {
   // Pipeline order, not creation order - see orderedNodes.
   const nodeOrder = useMemo(() => orderedNodes(doc), [doc])
 
-  const footprintNode = useMemo(
-    () => doc.nodes.find(node => node.type === 'footprint') || null,
-    [doc.nodes],
-  )
-
   // DERIVED, not stored-and-synced. The selection has to survive the starter
   // graph arriving and any node being deleted, and doing that with an effect
   // that calls setSelectedId means an extra render on every document change -
@@ -136,6 +139,47 @@ export default function BuildingGenPage() {
     if (selectedId && doc.nodes.some(node => node.id === selectedId)) return selectedId
     return doc.nodes.find(node => node.type === 'mass')?.id || doc.nodes[0]?.id || null
   }, [doc.nodes, selectedId])
+
+  // Resolved through paletteOf rather than read off the document, so the panel
+  // shows the colours the building is ACTUALLY drawn in - a pack's, the
+  // defaults', or the author's own - and not an empty override table.
+  const palette = useMemo(() => paletteOf(doc), [doc])
+
+  const footprintNodes = useMemo(
+    () => doc.nodes.filter(node => node.type === 'footprint'),
+    [doc.nodes],
+  )
+
+  /**
+   * WHICH plan the editor edits. Not "the first one" any more: since a Merge
+   * node can join two branches a document has a footprint per wing, and taking
+   * the first meant clicking a wing and then dragging its hall's outline. The
+   * selected node decides - itself when it IS a footprint, otherwise the one
+   * upstream of it, which is what "the plan of the thing I am looking at" means.
+   */
+  const footprintNode = useMemo(() => {
+    const byId = new Map(doc.nodes.map(node => [node.id, node]))
+    const selectedNode = byId.get(selected)
+    if (selectedNode?.type === 'footprint') return selectedNode
+
+    // Walk back up the chain from whatever is selected. A node has one building
+    // input, so this terminates - and at a Merge it takes the FIRST branch,
+    // which is the only answer available without asking.
+    const from = new Map()
+    for (const edge of doc.edges) {
+      if (!from.has(edge.to.node)) from.set(edge.to.node, edge.from.node)
+    }
+    const seen = new Set()
+    let at = selected
+    while (at && !seen.has(at)) {
+      seen.add(at)
+      const node = byId.get(at)
+      if (node?.type === 'footprint') return node
+      at = from.get(at)
+    }
+    return doc.nodes.find(node => node.type === 'footprint') || null
+  }, [doc.nodes, doc.edges, selected])
+
 
   useEffect(() => {
     if (!message) return undefined
@@ -204,6 +248,29 @@ export default function BuildingGenPage() {
       undoLabel: `Add ${getNodeDef(type)?.label || type}`,
     })
   }, [commit, selected])
+
+  const onMoveNode = useCallback((nodeId, direction) => {
+    commit(current => moveNode(current, nodeId, direction), {
+      undoLabel: direction < 0 ? 'Move Node Earlier' : 'Move Node Later',
+    })
+  }, [commit])
+
+  const onPaletteColor = useCallback((slot, hex) => {
+    commit(current => setPaletteColor(current, slot, hex), {
+      undoLabel: 'Change Colour',
+      // Dragging a colour picker fires a change per frame; one undo entry per
+      // slot rather than per pixel of hue.
+      coalesceKey: `palette:${slot}`,
+    })
+  }, [commit])
+
+  const onPaletteReset = useCallback(() => {
+    commit(current => resetPalette(current), { undoLabel: 'Reset Colours' })
+  }, [commit])
+
+  const onAddWing = useCallback(() => {
+    commit(current => addWing(current), { undoLabel: 'Add Wing' })
+  }, [commit])
 
   const onRemoveNode = useCallback(nodeId => {
     commit(current => removeNode(current, nodeId), { undoLabel: 'Delete Node' })
@@ -406,6 +473,16 @@ export default function BuildingGenPage() {
             onApply={onApplyStyle}
           />
 
+          {/* Under the style picker and above the textures, which is the order
+              they are reached in: pick a look, adjust its colours, then bind
+              images that tint them. */}
+          <BuildingPalette
+            palette={palette}
+            overrides={doc.building.style?.palette || {}}
+            onChange={onPaletteColor}
+            onReset={onPaletteReset}
+          />
+
           <BuildingTextures
             doc={doc}
             title="Textures"
@@ -459,6 +536,32 @@ export default function BuildingGenPage() {
                       <span className="buildinggen__node-tag">{node.modes?.kind || 'hip'}</span>
                     )}
                   </button>
+                  {/* ORDER IS NOT COSMETIC. A Roof Detail reads the roof under
+                      it and a Trim reads it for its eave, so a node added in the
+                      wrong place quietly does nothing - which is how the missing
+                      chimney was reported. Greyed rather than hidden where a
+                      move is impossible, so the control does not appear and
+                      disappear as the selection walks the chain. */}
+                  {canMoveNode(doc, node.id, -1) || canMoveNode(doc, node.id, 1) ? (
+                    <span className="buildinggen__node-move">
+                      <button
+                        type="button"
+                        onClick={() => onMoveNode(node.id, -1)}
+                        disabled={!canMoveNode(doc, node.id, -1)}
+                        title="Move earlier in the chain"
+                      >
+                        <span className="material-symbols-outlined">keyboard_arrow_up</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onMoveNode(node.id, 1)}
+                        disabled={!canMoveNode(doc, node.id, 1)}
+                        title="Move later in the chain"
+                      >
+                        <span className="material-symbols-outlined">keyboard_arrow_down</span>
+                      </button>
+                    </span>
+                  ) : null}
                   {/* An Output cannot be deleted - the graph compiles to nothing
                       without one, and offering the button invites the mistake. */}
                   {!def?.singleton && (
@@ -489,6 +592,21 @@ export default function BuildingGenPage() {
                 {CATALOG[type].label}
               </button>
             ))}
+            {/* NOT A NODE BUTTON. A Merge needs two buildings, so the useful
+                action is "give me a second one": a Footprint, a Mass, a Roof and
+                the Merge, wired. It is how a tower, a porch or a wing is made,
+                and it is the only thing in this palette that adds more than one
+                node. */}
+            <button
+              type="button"
+              className="buildinggen__add-btn"
+              onClick={onAddWing}
+              title={'A second building - a tower, a wing, a porch - merged into this one. '
+                + 'It gets its own plan and its own roof.'}
+            >
+              <span className="material-symbols-outlined">add</span>
+              Wing
+            </button>
           </div>
 
           <div className="buildinggen__stats">
@@ -563,12 +681,36 @@ export default function BuildingGenPage() {
               aria-hidden={tab !== 'plan'}
             >
               {footprintNode ? (
-                <BuildingPlanEditor
-                  shape={footprintNode.props.shape}
-                  gridSize={footprintNode.props.gridSize}
-                  onChange={onPlanChange}
-                  onCommit={onPlanCommit}
-                />
+                <>
+                  {/* WHICH PLAN, once there is more than one to confuse. A
+                      merged building has a footprint per wing and they all look
+                      like "the plan"; the editor follows the selection, so this
+                      says what the selection currently is and offers the others.
+                      Hidden on a single-plan document, where it is noise. */}
+                  {footprintNodes.length > 1 && (
+                    <div className="buildinggen__planpick">
+                      <span>Editing</span>
+                      {footprintNodes.map((node, index) => (
+                        <button
+                          key={node.id}
+                          type="button"
+                          className={`buildinggen__planpick-btn ${
+                            node.id === footprintNode.id ? 'buildinggen__planpick-btn--on' : ''}`}
+                          onClick={() => setSelectedId(node.id)}
+                        >
+                          {index === 0 ? 'Main plan' : `Wing ${index}`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <BuildingPlanEditor
+                    planId={footprintNode.id}
+                    shape={footprintNode.props.shape}
+                    gridSize={footprintNode.props.gridSize}
+                    onChange={onPlanChange}
+                    onCommit={onPlanCommit}
+                  />
+                </>
               ) : (
                 <div className="buildinggen__placeholder">
                   <span className="material-symbols-outlined">architecture</span>

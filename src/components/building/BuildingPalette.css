@@ -1,0 +1,84 @@
+.bpal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bpal__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bpal__reset {
+  padding: 2px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.bpal__reset:hover {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+}
+
+.bpal__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bpal__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 2px;
+}
+
+/* The native swatch, stripped of its chrome. Browsers give the input a border
+   and inner padding that make a 22px control look like a 14px one. */
+.bpal__swatch {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.bpal__swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.bpal__swatch::-webkit-color-swatch { border: none; border-radius: 3px; }
+
+.bpal__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bpal__label {
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--on-surface);
+}
+
+.bpal__hex {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--on-surface-variant);
+}
+
+.bpal__note {
+  margin: 2px 2px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--on-surface-variant);
+}

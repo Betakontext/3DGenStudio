@@ -438,6 +438,28 @@ export const CATALOG = {
         hint: 'The share of openings that get one, rolled from the seed per opening.',
         showFor: { balcony: ['scattered'] },
       },
+      postWidth: {
+        type: PROP_TYPE.NUMBER,
+        label: 'Post width',
+        default: 0.45,
+        min: 0.05,
+        max: 5,
+        step: 0.05,
+        unit: 'm',
+        basic: true,
+        showFor: { posts: ['pier', 'colonnade'] },
+      },
+      postDepth: {
+        type: PROP_TYPE.NUMBER,
+        label: 'Post depth',
+        default: 0.45,
+        min: 0.05,
+        max: 5,
+        step: 0.05,
+        unit: 'm',
+        hint: 'A colonnade also stands this far clear of the wall.',
+        showFor: { posts: ['pier', 'colonnade'] },
+      },
       includeCourtyards: {
         type: PROP_TYPE.BOOL,
         label: 'Dress courtyards',
@@ -487,6 +509,29 @@ export const CATALOG = {
           },
           { value: 'arch', label: 'Arch', teach: 'Arcades, loggias, Roman ground floors.' },
           { value: 'louvre', label: 'Louvre', teach: 'Plant rooms, industrial and utility floors.' },
+        ],
+      },
+      posts: {
+        label: 'Posts',
+        default: 'none',
+        basic: true,
+        teach: 'A post on every bay boundary, and one more to close the run. '
+             + 'This is the slot the catalog has always declared and never '
+             + 'emitted - it is a colonnade, an arcade, a porch, and the corner '
+             + 'posts of a timber frame, depending on what model you bind to it.',
+        options: [
+          { value: 'none', label: 'None' },
+          {
+            value: 'pier',
+            label: 'Flush piers',
+            teach: 'In the plane of the wall. Structure rather than ornament.',
+          },
+          {
+            value: 'colonnade',
+            label: 'Standing clear',
+            teach: 'Pushed out in front of the wall, so the storey reads as an '
+                 + 'arcade with a walkway behind it.',
+          },
         ],
       },
       balcony: {
@@ -653,6 +698,221 @@ export const CATALOG = {
     },
   },
 
+  roofitem: {
+    type: 'roofitem',
+    label: 'Roof Detail',
+    category: CATEGORY.ROOF,
+    icon: 'chimney',
+    blurb: 'Stands chimneys, finials and vents on the roof.',
+    teach: 'Everything here is a SLOT, exactly like a window: the node decides '
+         + 'WHERE something stands and the model list decides WHAT stands there, '
+         + 'so a brick stack and a stone one are two assets rather than two '
+         + 'settings. Left empty it draws a plain box, which is already a '
+         + 'passable chimney. The foot is sunk into the roof on purpose - a '
+         + 'contour ladder is a staircase approximating a slope, so anything '
+         + 'sitting exactly on a contour floats above the pitch between rungs.',
+    inputs: [{ id: 'building', label: 'Building', kind: PORT_KIND.BUILDING, required: true }],
+    outputs: [{ id: 'out', label: 'Building', kind: PORT_KIND.BUILDING }],
+    props: {
+      count: {
+        type: PROP_TYPE.INT,
+        label: 'How many',
+        default: 1,
+        min: 1,
+        max: 40,
+        basic: true,
+        hint: 'Spread evenly along the contour.',
+        showFor: { where: ['ridge', 'slope', 'eave'] },
+      },
+      along: {
+        type: PROP_TYPE.NUMBER,
+        label: 'Position',
+        default: 0.5,
+        min: 0,
+        max: 1,
+        step: 0.05,
+        basic: true,
+        hint: 'Where the run starts, as a share of the way round. On Slope it '
+            + 'also picks how far up the roof the contour is.',
+        showFor: { where: ['ridge', 'slope', 'eave'] },
+      },
+      width: {
+        type: PROP_TYPE.NUMBER, label: 'Width', default: 0.9, min: 0.1, max: 12,
+        step: 0.05, unit: 'm', basic: true,
+      },
+      depth: {
+        type: PROP_TYPE.NUMBER, label: 'Depth', default: 0.9, min: 0.1, max: 12,
+        step: 0.05, unit: 'm',
+      },
+      height: {
+        type: PROP_TYPE.NUMBER, label: 'Height', default: 2.4, min: 0.1, max: 30,
+        step: 0.05, unit: 'm', basic: true,
+        hint: 'Measured from where the foot sits, so a taller stack rises further '
+            + 'above the ridge.',
+      },
+      sink: {
+        type: PROP_TYPE.NUMBER, label: 'Sink in', default: 0.35, min: 0, max: 5,
+        step: 0.05, unit: 'm',
+        hint: 'How far the foot is buried in the roof. Too little and it floats '
+            + 'off a pitch between two contours.',
+      },
+    },
+    modes: {
+      where: {
+        label: 'Where',
+        default: 'ridge',
+        basic: true,
+        options: [
+          { value: 'ridge', label: 'On the ridge', teach: 'The topmost contour: a ridge on a pitch, the far edge of a deck.' },
+          { value: 'slope', label: 'Out of a slope', teach: 'Partway up. Position below chooses how far.' },
+          { value: 'eave', label: 'At the eaves', teach: 'The roof’s lowest contour.' },
+          { value: 'apex', label: 'At the apex', teach: 'One, centred on the very top. Finials and spires.' },
+        ],
+      },
+      item: {
+        label: 'What',
+        default: 'chimney',
+        basic: true,
+        teach: 'A TAG, not a shape. It picks which model list is used and what '
+             + 'material the placeholder draws in - a chimney is masonry, the '
+             + 'rest are trim.',
+        options: [
+          { value: 'chimney', label: 'Chimney' },
+          { value: 'finial', label: 'Finial' },
+          { value: 'vent', label: 'Vent' },
+          { value: 'crest', label: 'Ridge crest' },
+        ],
+      },
+    },
+  },
+
+  merge: {
+    type: 'merge',
+    label: 'Merge',
+    category: CATEGORY.MASS,
+    icon: 'join',
+    blurb: 'Joins two buildings into one.',
+    teach: 'The node that makes a TOWER possible, and a porch, and a wing. Every '
+         + 'other node caps or dresses one massing, so a building had exactly '
+         + 'one roof and one silhouette however elaborate the plan was. Build '
+         + 'each part as its own Footprint - Mass - Roof chain, dress it, and '
+         + 'merge: each part keeps its own roof. A Deform or a Roof Detail after '
+         + 'the merge covers the whole thing, which is usually what you want; '
+         + 'anything meant for one part goes in that part’s branch, before '
+         + 'this node. Chain merges for three parts or more.',
+    inputs: [
+      { id: 'a', label: 'Building', kind: PORT_KIND.BUILDING, required: true },
+      { id: 'b', label: 'And', kind: PORT_KIND.BUILDING, required: true },
+    ],
+    outputs: [{ id: 'out', label: 'Building', kind: PORT_KIND.BUILDING }],
+    props: {},
+    modes: {},
+  },
+
+  frame: {
+    type: 'frame',
+    label: 'Frame',
+    category: CATEGORY.FACADE,
+    icon: 'grid_4x4',
+    blurb: 'Draws a timber frame over the walls.',
+    teach: 'Trim can only follow edges, and every edge a building has is '
+         + 'horizontal - which is why a half-timbered house was impossible until '
+         + 'this node existed. It adds the other two directions: studs standing '
+         + 'between the rails, and braces across the panels between them. It '
+         + 'uses the SAME bay width as the Facade, so set the two to match and '
+         + 'no stud lands through a window. Set Braces to Mixed and each panel '
+         + 'rolls its own pattern from the seed.',
+    inputs: [{ id: 'building', label: 'Building', kind: PORT_KIND.BUILDING, required: true }],
+    outputs: [{ id: 'out', label: 'Building', kind: PORT_KIND.BUILDING }],
+    props: {
+      bayWidth: {
+        type: PROP_TYPE.NUMBER, label: 'Panel width', default: 1.6, min: 0.3, max: 20,
+        step: 0.1, unit: 'm', basic: true,
+        hint: 'Nominal, and snapped to a whole number of panels per wall - the '
+            + 'same rule the Facade uses. Match them and the studs frame the '
+            + 'windows instead of crossing them.',
+      },
+      width: {
+        type: PROP_TYPE.NUMBER, label: 'Timber width', default: 0.16, min: 0.02, max: 2,
+        step: 0.01, unit: 'm', basic: true,
+      },
+      depth: {
+        type: PROP_TYPE.NUMBER, label: 'Stands out', default: 0.06, min: 0.01, max: 1,
+        step: 0.01, unit: 'm',
+        hint: 'How far the timber sits proud of the infill.',
+      },
+      margin: {
+        type: PROP_TYPE.NUMBER, label: 'Brace inset', default: 0, min: 0, max: 2,
+        step: 0.02, unit: 'm',
+        hint: 'Pulls the braces in from the studs either side.',
+      },
+      fromFloor: {
+        type: PROP_TYPE.INT, label: 'From storey', default: 0, min: 0, max: 200,
+        basic: true, hint: 'Counted from the ground. A stone ground floor usually '
+            + 'wants the frame to start at 1.',
+        showFor: { storeys: ['range'] },
+      },
+      toFloor: {
+        type: PROP_TYPE.INT, label: 'To storey', default: 0, min: 0, max: 200,
+        basic: true, hint: 'Inclusive.',
+        showFor: { storeys: ['range'] },
+      },
+      rails: {
+        type: PROP_TYPE.BOOL, label: 'Rails', default: true,
+        hint: 'The horizontal timber at the top and bottom of each storey. Off '
+            + 'when a string course is already doing that job.',
+      },
+      includeCourtyards: {
+        type: PROP_TYPE.BOOL, label: 'Frame courtyards', default: false,
+        hint: 'Off by default: a light well nobody can see is most of the '
+            + 'timber budget on a plan that has one.',
+      },
+    },
+    modes: {
+      storeys: {
+        label: 'Storeys',
+        default: 'upper',
+        basic: true,
+        teach: 'Defaults to ABOVE THE GROUND, because that is what a jettied '
+             + 'timber house does: masonry at the pavement, frame above it.',
+        options: [
+          { value: 'all', label: 'All storeys' },
+          { value: 'ground', label: 'Ground floor only' },
+          { value: 'upper', label: 'Above the ground' },
+          { value: 'top', label: 'Top storey only' },
+          { value: 'range', label: 'A range' },
+        ],
+      },
+      brace: {
+        label: 'Braces',
+        default: 'chevron',
+        basic: true,
+        options: [
+          { value: 'none', label: 'None', teach: 'Studs and rails only - close studding.' },
+          {
+            value: 'diagonal', label: 'Herringbone',
+            teach: 'One diagonal per panel, alternating direction along the wall.',
+          },
+          { value: 'cross', label: 'Cross', teach: 'Both diagonals: a St Andrew’s cross.' },
+          {
+            value: 'chevron', label: 'Chevron',
+            teach: 'Two braces meeting at the top centre. The most recognisable '
+                 + 'Tudor panel.',
+          },
+          {
+            value: 'lattice', label: 'Lattice',
+            teach: 'A cross with both midlines. Dense, and the most expensive.',
+          },
+          {
+            value: 'mixed', label: 'Mixed',
+            teach: 'Each panel rolls its own from the seed, which is what stops a '
+                 + 'long wall reading as wallpaper.',
+          },
+        ],
+      },
+    },
+  },
+
   trim: {
     type: 'trim',
     label: 'Trim',
@@ -718,6 +978,13 @@ export const CATALOG = {
             teach: 'A wall standing above a flat roof. On a pitched roof there is '
                  + 'no deck to stand on and it will follow the ridge instead.',
           },
+          {
+            value: 'rake', label: 'Bargeboard',
+            teach: 'The SLOPED edge of a gable, up one side and down the other. '
+                 + 'Needs a Gable or Shed roof - those are the only two with a '
+                 + 'rake to follow; every other shape closes all the way round '
+                 + 'and its edge is the eave.',
+          },
         ],
       },
     },
@@ -748,6 +1015,13 @@ export const CATALOG = {
         unit: 'deg', basic: true,
         hint: 'Which way it leans or bends, in plan. 0 is east.',
         showFor: { mode: ['lean', 'bend'] },
+      },
+      jitter: {
+        type: PROP_TYPE.NUMBER, label: 'Hand-set', default: 0, min: 0, max: 1, step: 0.05,
+        basic: true,
+        hint: 'Nudges each window, post and chimney off true by a little, each its '
+            + 'own way. Works on its own - set the Warp to None and you get a '
+            + 'straight building with hand-set joinery.',
       },
     },
     modes: {

@@ -81,7 +81,7 @@ test('an eave follows the ROOF, not the top of the wall', () => {
   // On a roof with an overhang those are different rings, and the eave belongs
   // to the roof - which is what makes an Asian eave oversail correctly.
   const roof = { rungs: [{ polygons: [rect(14, 10)], z: 12 }, { polygons: [rect(6, 4)], z: 15 }] };
-  const result = generateTrim({ levels: stack(4), roof, where: TRIM_WHERE.EAVE });
+  const result = generateTrim({ levels: stack(4), roofs: [roof], where: TRIM_WHERE.EAVE });
   assert.equal(result.runs.length, 1);
   assert.equal(zOf(result.runs[0]), 12);
   assert.equal(result.runs[0].path.length / 3, 4);
@@ -96,7 +96,7 @@ test('with no roof an eave falls back to the top of the wall', () => {
 
 test('a parapet stands on the roof it is given', () => {
   const roof = { rungs: [{ polygons: [rect(12, 8)], z: 9 }], closed: true, height: 0 };
-  const result = generateTrim({ levels: stack(3), roof, where: TRIM_WHERE.PARAPET });
+  const result = generateTrim({ levels: stack(3), roofs: [roof], where: TRIM_WHERE.PARAPET });
   assert.equal(zOf(result.runs[0]), 9);
 });
 

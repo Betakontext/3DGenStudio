@@ -46,6 +46,16 @@ export const TRIM_WHERE = {
   EAVE: 'eave',
   /** A wall standing above a flat roof. */
   PARAPET: 'parapet',
+  /**
+   * The SLOPED edge of a gable: a bargeboard.
+   *
+   * The only run that is not a closed horizontal ring, and the only one whose
+   * path was already sitting in the IR waiting for a consumer. roof.js emits a
+   * gable end as a 3D polygon wound up one rake, over the apex and down the
+   * other, closing along the base - so dropping the closing segment and sweeping
+   * the rest IS the bargeboard, with no new geometry at all.
+   */
+  RAKE: 'rake',
 };
 
 /**
@@ -80,6 +90,17 @@ export const TRIM_PROFILE = {
   // A parapet stands above the deck, so its whole section is positive.
   [TRIM_WHERE.PARAPET]: [
     [0, 0], [1, 0], [1, 0.85], [0.7, 1], [0, 1],
+  ],
+  // A frame timber: a plain rectangle. It is a sawn board, and any moulding on
+  // it would be invisible at the size these are drawn and would triple the
+  // triangle count of a wall that has a hundred of them.
+  frame: [
+    [0, -0.5], [1, -0.5], [1, 0.5], [0, 0.5],
+  ],
+  // A bargeboard: a flat board with a shallow lip, nailed to the rake. Squarer
+  // than the mouldings above because it is a sawn plank, not a run of masonry.
+  [TRIM_WHERE.RAKE]: [
+    [0, -0.5], [1, -0.5], [1, 0.35], [0.85, 0.5], [0, 0.5],
   ],
 };
 
@@ -137,13 +158,16 @@ function stringLevels(levels, every) {
  *
  * @param {object} options
  * @param {Array}  options.levels  the stack, from mass.stackMass
- * @param {object} options.roof    the roof, from roof.generateRoof (may be null)
+ * @param {Array}  options.roofs   every roof on this building (may be empty)
  * @param {string} options.where   a TRIM_WHERE
  * @returns {{runs: Array, truncated: boolean}}
  */
 export function generateTrim({
   levels = [],
-  roof = null,
+  // A LIST, because a building may now be several buildings merged - a hall and
+  // its tower - and each of them brought its own roof. An eave that followed
+  // only one of them would stop dead at the join.
+  roofs = [],
   where = TRIM_WHERE.CORNICE,
   every = 1,
   includeHoles = true,
@@ -181,9 +205,11 @@ export function generateTrim({
     case TRIM_WHERE.EAVE: {
       // The roof's own base, not the top of the wall: on a roof with an overhang
       // those are different rings, and the eave belongs to the roof.
-      const base = roof?.rungs?.[0];
-      if (base) {
-        for (const polygon of base.polygons) push(polygon, base.z, -1);
+      const bases = roofs.map(r => r?.rungs?.[0]).filter(Boolean);
+      if (bases.length) {
+        for (const base of bases) {
+          for (const polygon of base.polygons) push(polygon, base.z, -1);
+        }
       } else {
         const top = Math.max(...solid.map(level => level.z1));
         for (const level of solid.filter(level => level.z1 === top)) {
@@ -199,14 +225,40 @@ export function generateTrim({
       // that last rung is the ridge, which is the correct place for a ridge
       // capping and the wrong place for a parapet; the compiler warns rather
       // than silently drawing a fin along the ridge.
-      const last = roof?.rungs?.[roof.rungs.length - 1];
-      if (last) {
-        for (const polygon of last.polygons) push(polygon, last.z, -1);
+      const lasts = roofs.map(r => r?.rungs?.[r.rungs.length - 1]).filter(Boolean);
+      if (lasts.length) {
+        for (const last of lasts) {
+          for (const polygon of last.polygons) push(polygon, last.z, -1);
+        }
       } else {
         const top = Math.max(...solid.map(level => level.z1));
         for (const level of solid.filter(level => level.z1 === top)) {
           push(level.polygon, level.z1, level.index);
         }
+      }
+      break;
+    }
+
+    case TRIM_WHERE.RAKE: {
+      // AN OPEN RUN, and that is the whole trick. The gable outline closes along
+      // its base; sweeping it as stored would put a board across the top of the
+      // wall as well, which is where the eave already is. Dropping `closed`
+      // leaves exactly the two rakes and the apex between them.
+      for (const gable of roofs.flatMap(r => r?.gables || [])) {
+        if (runs.length >= MAX_TRIM_RUNS) break;
+        if (!Array.isArray(gable) || gable.length < 3) continue;
+        const path = [];
+        for (const point of gable) path.push(point[0], point[1], point[2]);
+        runs.push({
+          profileId: where,
+          path,
+          closed: false,
+          level: -1,
+          projection,
+          depth,
+          source,
+          normal: gableNormal(gable, solid),
+        });
       }
       break;
     }
@@ -222,6 +274,50 @@ export function generateTrim({
   }
 
   return { runs, truncated: runs.length >= MAX_TRIM_RUNS };
+}
+
+/**
+ * Which way a gable end faces.
+ *
+ * DERIVED, not passed down, because the roof knows its ridge axis and the trim
+ * does not - and threading it through would put a roof concept in three more
+ * signatures for one consumer. A gable is planar, so any two non-parallel edges
+ * of it cross to its plane normal; the only real question is the SIGN, and the
+ * building's own centre answers that. Getting it backwards would sweep the
+ * bargeboard into the roof instead of onto the face of it.
+ */
+function gableNormal(gable, levels) {
+  const a = gable[0];
+  let normal = null;
+  for (let i = 2; i < gable.length && !normal; i++) {
+    const u = [gable[1][0] - a[0], gable[1][1] - a[1], gable[1][2] - a[2]];
+    const v = [gable[i][0] - a[0], gable[i][1] - a[1], gable[i][2] - a[2]];
+    const n = [
+      u[1] * v[2] - u[2] * v[1],
+      u[2] * v[0] - u[0] * v[2],
+      u[0] * v[1] - u[1] * v[0],
+    ];
+    const length = Math.hypot(n[0], n[1], n[2]);
+    if (length > 1e-6) normal = [n[0] / length, n[1] / length, n[2] / length];
+  }
+  if (!normal) return [];
+
+  // Away from the middle of the plan. A gable end is vertical, so only the two
+  // horizontal components carry any information about which side it is on.
+  let cx = 0;
+  let cy = 0;
+  let n = 0;
+  for (const level of levels) {
+    for (const point of level.polygon.outer) { cx += point[0]; cy += point[1]; n++; }
+  }
+  if (n) {
+    cx /= n;
+    cy /= n;
+    if ((a[0] - cx) * normal[0] + (a[1] - cy) * normal[1] < 0) {
+      normal = [-normal[0], -normal[1], -normal[2]];
+    }
+  }
+  return normal;
 }
 
 /**

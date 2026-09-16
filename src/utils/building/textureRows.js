@@ -153,15 +153,32 @@ export function hasSideOverrides(doc, nodeId) {
  * that mitres at every corner, so a material change part-way round would fall
  * inside a mitred joint.
  */
-export function trimTextureRows(doc, nodeId) {
+export function trimTextureRows(doc, nodeId, { label = '', hint = '' } = {}) {
   const guide = SLOT_GUIDE.trim || {}
   return [{
     refKey: nodeTextureKey(nodeId, TRIM_TEXTURE_SLOT),
     guideSlot: TRIM_TEXTURE_SLOT,
-    label: guide.label || 'Trim',
-    hint: 'This run only. Other Trim nodes keep their own.',
+    label: label || guide.label || 'Trim',
+    hint: hint || 'This run only. Other Trim nodes keep their own.',
     fallback: 'same as the building',
   }]
+}
+
+/**
+ * One Frame node's override.
+ *
+ * THE SAME SLOT A TRIM RUN USES, and that is not a shortcut: a frame member IS a
+ * trim run - the compiler resolves both through `<node>.trim` keyed on the node
+ * that emitted them, so this row needed no compiler change at all. It exists
+ * because the timbers were reported as stuck on the style's colour with nowhere
+ * to change them; the Colours panel answers the colour half, and this answers
+ * the texture half.
+ */
+export function frameTextureRows(doc, nodeId) {
+  return trimTextureRows(doc, nodeId, {
+    label: 'Timber',
+    hint: 'This frame only. Left empty it uses the building-wide trim.',
+  })
 }
 
 /**

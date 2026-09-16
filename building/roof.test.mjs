@@ -397,10 +397,13 @@ test('THE RIDGE IS REACHED, not stopped a step short', () => {
   assert.equal(roof.closed, true);
 });
 
-test('a gable has TWO vertical end walls and a hip has none', () => {
+test('a gable has TWO vertical end walls, a shed THREE, and a hip none', () => {
   // The part the contour ladder cannot say, and the reason these were deferred.
+  // A shed gets a third: it closes from one side only, so its tall side is an
+  // open face that nothing else in the ladder describes. This test asserted two
+  // and was WRONG - see the shed wall tests below.
   assert.equal(roofOf(wide, { kind: ROOF_KIND.GABLE, pitch: 40 }).gables.length, 2);
-  assert.equal(roofOf(wide, { kind: ROOF_KIND.SHED, pitch: 40 }).gables.length, 2);
+  assert.equal(roofOf(wide, { kind: ROOF_KIND.SHED, pitch: 40 }).gables.length, 3);
   for (const kind of [ROOF_KIND.HIP, ROOF_KIND.MANSARD, ROOF_KIND.STEPPED, ROOF_KIND.FLAT]) {
     assert.deepEqual(roofOf(wide, { kind, pitch: 40 }).gables, [], kind);
   }
@@ -425,11 +428,12 @@ test('the end walls sit at the ends, span the full width, and reach the ridge', 
   assert.deepEqual([...ends].sort((a, b) => a - b), [0, 20], 'both walls are at the same end');
 });
 
-test('a shed leans the way the pitch points, both ends still walled', () => {
-  // A shed has no ridge, so both ends are right-angled triangles rather than
-  // symmetric ones - the same walls, a different outline.
+test('a shed leans the way the pitch points, every face walled', () => {
+  // A shed has no ridge, so its two ends are right-angled triangles rather than
+  // symmetric ones - the same walls, a different outline - and its tall side is
+  // a third wall the ladder does not describe either.
   const roof = generateRoof({ polygons: [wide], baseZ: 0, kind: ROOF_KIND.SHED, pitch: 45 });
-  assert.equal(roof.gables.length, 2);
+  assert.equal(roof.gables.length, 3);
   for (const wall of roof.gables) {
     const zs = wall.map(p => p[2]);
     assert.ok(Math.abs(Math.min(...zs)) < 1e-6);
@@ -499,6 +503,60 @@ test('a gable is deterministic', () => {
   const a = generateRoof({ polygons: [L_SHAPE], baseZ: 2, kind: ROOF_KIND.GABLE, pitch: 38 });
   const b = generateRoof({ polygons: [L_SHAPE], baseZ: 2, kind: ROOF_KIND.GABLE, pitch: 38 });
   assert.equal(JSON.stringify(a), JSON.stringify(b));
+});
+
+test('a SHED encloses its tall side, or the roof has a hole in it', () => {
+  // Reported as "only one side of the faces is visible". A shed closes from ONE
+  // side, so its fixed edge ends up metres above the wall it started on with
+  // nothing between them. A single-sided material does not show that as a hole -
+  // it shows the sloping plane vanishing, which is far harder to diagnose, and
+  // it is why this went unnoticed through the whole of Phase 3.
+  const shed = roofOf(rect(12, 8), { kind: ROOF_KIND.SHED, pitch: 35 });
+  const gable = roofOf(rect(12, 8), { kind: ROOF_KIND.GABLE, pitch: 35 });
+  assert.equal(gable.gables.length, 2, 'a gable has two ends and nothing else');
+  assert.equal(shed.gables.length, 3, 'a shed needs its two ends AND its tall side');
+
+  // The tall side spans the whole roof height, which neither triangular end
+  // does - those meet the slope.
+  const spanOf = wall => {
+    const zs = wall.map(point => point[2]);
+    return Math.max(...zs) - Math.min(...zs);
+  };
+  const tallest = Math.max(...shed.gables.map(spanOf));
+  assert.ok(Math.abs(tallest - shed.height) < 1e-3,
+    `the tall side spans ${tallest.toFixed(2)}m of a ${shed.height.toFixed(2)}m roof`);
+});
+
+test('the high edge of a shed is WALLED, whichever side it is on', () => {
+  const shed = roofOf(rect(12, 8), { kind: ROOF_KIND.SHED, pitch: 35 });
+  const top = shed.rungs[shed.rungs.length - 1].polygons[0].outer;
+
+  // Picking "the tallest wall" does not identify it: a shed's triangular ENDS
+  // span the full height too. What distinguishes the tall side is that the high
+  // edge lies in it - which is the property worth asserting anyway.
+  const contains = wall => {
+    const xs = wall.map(p => p[0]);
+    const ys = wall.map(p => p[1]);
+    const box = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    return top.every(point => {
+      const dx = Math.max(box[0] - point[0], point[0] - box[1], 0);
+      const dy = Math.max(box[2] - point[1], point[1] - box[3], 0);
+      return Math.hypot(dx, dy) < 0.01;
+    });
+  };
+  assert.ok(shed.gables.some(contains),
+    'no wall contains the high edge - the roof is open along its tall side');
+});
+
+test('a shed with no rise has no tall side to draw', () => {
+  const flatish = roofOf(rect(12, 8), {
+    kind: ROOF_KIND.SHED, pitch: 35, maxHeight: 0.0001,
+  });
+  for (const wall of flatish.gables) {
+    const zs = wall.map(p => p[2]);
+    assert.ok(Math.max(...zs) - Math.min(...zs) < 0.01,
+      'a roof with no height produced a wall with height');
+  }
 });
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`);

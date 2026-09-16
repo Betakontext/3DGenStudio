@@ -36,6 +36,25 @@ function graph({ shape, mass, seed = 12345 } = {}) {
   });
 }
 
+
+/** The minimum graph plus a chain of stages between the Mass and the Output. */
+function graphWithStages(stages, options = {}) {
+  const base = graph(options);
+  const nodes = [...base.nodes];
+  const edges = base.edges.filter(edge => edge.to.node !== 'out');
+  let previous = 'ms';
+  stages.forEach((stage, i) => {
+    const node = createNode(stage.type, `s${i}`);
+    Object.assign(node.props, stage.props || {});
+    Object.assign(node.modes, stage.modes || {});
+    nodes.push(node);
+    edges.push({ from: { node: previous, port: 'out' }, to: { node: node.id, port: 'building' } });
+    previous = node.id;
+  });
+  edges.push({ from: { node: previous, port: 'out' }, to: { node: 'out', port: 'building' } });
+  return normalizeBuildingDoc({ ...base, nodes, edges });
+}
+
 // --- the happy path ---------------------------------------------------------
 
 test('a minimal graph compiles to levels', () => {
@@ -382,6 +401,299 @@ test('no balconies means no balcony slots, and the IR is still clean', () => {
   assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
   assert.equal(slotsOf(result.ir, 'balcony').length, 0);
   assert.equal(validateIrJson(result.ir).length, 0);
+});
+
+// --- merge, and the things that only became possible with it -----------------
+//
+// Every node before this one caps or dresses ONE massing, so a building had one
+// roof and one silhouette however elaborate its plan. Merge is what makes a hall
+// with a tower - two chains, each with its own roof, joined at the end.
+
+/** Two branches: `a` stages then `b` stages, joined by a Merge into the Output. */
+function twoBranch(aStages, bStages, tail = [], seed = 4711) {
+  const nodes = [];
+  const edges = [];
+  const chain = (prefix, shape, stages) => {
+    const fp = createNode('footprint', `${prefix}fp`);
+    fp.props.shape = shape;
+    nodes.push(fp);
+    let previous = null;
+    stages.forEach((stage, i) => {
+      const node = createNode(stage.type, `${prefix}${i}`);
+      Object.assign(node.props, stage.props || {});
+      Object.assign(node.modes, stage.modes || {});
+      nodes.push(node);
+      if (previous === null) {
+        edges.push({ from: { node: fp.id, port: 'out' }, to: { node: node.id, port: 'shape' } });
+      } else {
+        edges.push({ from: { node: previous, port: 'out' }, to: { node: node.id, port: 'building' } });
+      }
+      previous = node.id;
+    });
+    return previous;
+  };
+  const left = chain('a', { outer: [[0, 0], [12, 0], [12, 8], [0, 8]], holes: [] }, aStages);
+  const right = chain('b', { outer: [[12, 1], [16, 1], [16, 6], [12, 6]], holes: [] }, bStages);
+
+  const merge = createNode('merge', 'mg');
+  nodes.push(merge);
+  edges.push({ from: { node: left, port: 'out' }, to: { node: 'mg', port: 'a' } });
+  edges.push({ from: { node: right, port: 'out' }, to: { node: 'mg', port: 'b' } });
+
+  let previous = 'mg';
+  tail.forEach((stage, i) => {
+    const node = createNode(stage.type, `t${i}`);
+    Object.assign(node.props, stage.props || {});
+    Object.assign(node.modes, stage.modes || {});
+    nodes.push(node);
+    edges.push({ from: { node: previous, port: 'out' }, to: { node: node.id, port: 'building' } });
+    previous = node.id;
+  });
+
+  const out = createNode('output', 'out');
+  nodes.push(out);
+  edges.push({ from: { node: previous, port: 'out' }, to: { node: 'out', port: 'building' } });
+  return normalizeBuildingDoc({ building: { seed }, nodes, edges });
+}
+
+// Both branches carry a Facade, so there are SLOTS to assert against - without
+// one a merged building has walls and a roof and nothing that moves, which is
+// how the deform test below first came to claim "nothing leaned" about code that
+// was working.
+const HALL = [
+  { type: 'mass', props: { levelCount: 3 } },
+  { type: 'facade', props: { bayWidth: 2.5 } },
+  { type: 'roof', modes: { kind: 'gable' }, props: { pitch: 55, maxHeight: 4 } },
+];
+const TOWER = [
+  { type: 'mass', props: { levelCount: 5 } },
+  { type: 'facade', props: { bayWidth: 1.8 } },
+  { type: 'roof', modes: { kind: 'hip' }, props: { pitch: 70 } },
+];
+
+test('a merged building keeps BOTH roofs', () => {
+  // The whole point. Before this, a second roof stacked on the first and a
+  // tower was impossible; now each branch keeps its own crown.
+  const result = compileBuilding(twoBranch(HALL, TOWER));
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.ir.roofs.length, 2);
+  const kinds = result.ir.roofs.map(roof => roof.kind).sort();
+  assert.deepEqual(kinds, ['gable', 'hip']);
+  // ...at different heights, which is what makes it read as two buildings.
+  const bases = result.ir.roofs.map(roof => roof.baseZ);
+  assert.notEqual(bases[0], bases[1]);
+});
+
+test('each branch stays its own SOLID', () => {
+  // ir.solids has been an array since the first phase for exactly this: an
+  // exporter that wants one object per part needs the split kept.
+  const ir = compileBuilding(twoBranch(HALL, TOWER)).ir;
+  assert.equal(ir.solids.length, 2);
+  const counted = ir.solids.reduce((total, solid) => total + solid.levels.length, 0);
+  assert.equal(counted, ir.levels.length, 'a level belongs to no solid, or to two');
+  // No level is claimed twice.
+  const all = ir.solids.flatMap(solid => solid.levels);
+  assert.equal(new Set(all).size, all.length);
+});
+
+test('a merged building is as tall as its TALLEST part, and as big as both', () => {
+  const ir = compileBuilding(twoBranch(HALL, TOWER)).ir;
+  const hall = compileBuilding(twoBranch(HALL, HALL)).ir;
+  assert.ok(ir.stats.height > hall.stats.height, 'the five-storey tower did not raise the height');
+  // Area adds up: that is what "floor area" means on a house with a tower.
+  assert.ok(ir.stats.footprintArea > 12 * 8, `footprint came out ${ir.stats.footprintArea}`);
+});
+
+test('merging one real branch with an empty one returns the real one', () => {
+  // A half-wired Merge must not take the building down.
+  const result = compileBuilding(twoBranch(HALL, [{ type: 'mass', props: { levelCount: 0 } }]));
+  assert.equal(result.ir.roofs.length, 1);
+});
+
+test('a Deform after a Merge covers everything', () => {
+  const straight = compileBuilding(twoBranch(HALL, TOWER)).ir;
+  const leaning = compileBuilding(twoBranch(HALL, TOWER, [
+    { type: 'deform', modes: { mode: 'lean' }, props: { amount: 2 } },
+  ])).ir;
+  assert.ok(leaning.deform, 'the deform did not reach the IR');
+  // Both parts moved: slots from the hall AND from the tower.
+  const moved = leaning.slots.filter((slot, i) => Math.abs(slot.transform[12] - straight.slots[i].transform[12]) > 1e-6);
+  assert.ok(moved.length > 0, 'nothing leaned');
+});
+
+test('a trim after a Merge follows EVERY roof, not one of them', () => {
+  // An eave that followed only the first would stop dead at the join.
+  const ir = compileBuilding(twoBranch(HALL, TOWER, [
+    { type: 'trim', modes: { where: 'eave' }, props: { projection: 0.3, depth: 0.3 } },
+  ])).ir;
+  const eaves = ir.trims.filter(run => run.profileId === 'eave');
+  assert.ok(eaves.length >= 2, `${eaves.length} eave runs for two roofs`);
+  const heights = new Set(eaves.map(run => run.path[2].toFixed(2)));
+  assert.ok(heights.size >= 2, `every eave is at ${[...heights]} - only one roof was followed`);
+});
+
+test('a roof item after a Merge goes on the TALLEST roof', () => {
+  const ir = compileBuilding(twoBranch(HALL, TOWER, [
+    { type: 'roofitem', modes: { where: 'apex', item: 'finial' } },
+  ])).ir;
+  const items = ir.slots.filter(slot => slot.type === 'roof_item');
+  assert.equal(items.length, 1);
+  const tallest = ir.roofs.reduce((best, roof) => (roof.baseZ + roof.height > best ? roof.baseZ + roof.height : best), 0);
+  assert.ok(items[0].transform[14] > tallest - 2,
+    `the finial is at ${items[0].transform[14].toFixed(1)}, the tallest roof tops out at ${tallest.toFixed(1)}`);
+});
+
+// --- bargeboards -------------------------------------------------------------
+
+test('a bargeboard follows the gable rake, and is OPEN', () => {
+  // The path was already in the IR waiting for a consumer: roof.js emits a
+  // gable end wound up one rake, over the apex and down the other.
+  const ir = compileBuilding(graphWithStages([
+    { type: 'roof', modes: { kind: 'gable' }, props: { pitch: 55 } },
+    { type: 'trim', modes: { where: 'rake' }, props: { projection: 0.2, depth: 0.3 } },
+  ])).ir;
+  const rakes = ir.trims.filter(run => run.profileId === 'rake');
+  assert.equal(rakes.length, ir.roofs[0].gables.length);
+  assert.ok(rakes.length > 0, 'a gable roof produced no rake');
+  assert.ok(rakes.every(run => run.closed === false),
+    'a closed rake would put a board across the top of the wall as well');
+  // It rises: a run whose z never changes is not following a rake.
+  for (const run of rakes) {
+    const zs = [];
+    for (let i = 2; i < run.path.length; i += 3) zs.push(run.path[i]);
+    assert.ok(Math.max(...zs) - Math.min(...zs) > 1, 'the rake is flat');
+  }
+});
+
+test('a bargeboard faces AWAY from the building', () => {
+  // Backwards and it sweeps into the roof instead of onto the face of it.
+  const ir = compileBuilding(graphWithStages([
+    { type: 'roof', modes: { kind: 'gable' }, props: { pitch: 55 } },
+    { type: 'trim', modes: { where: 'rake' }, props: { projection: 0.2, depth: 0.3 } },
+  ])).ir;
+  for (const run of ir.trims.filter(r => r.profileId === 'rake')) {
+    assert.equal(run.normal.length, 3);
+    const outward = (run.path[0] - 6) * run.normal[0] + (run.path[1] - 4) * run.normal[1];
+    assert.ok(outward > 0, `a rake at ${run.path[0]},${run.path[1]} faces inward`);
+  }
+});
+
+test('a roof with no rake says so instead of drawing nothing in silence', () => {
+  const result = compileBuilding(graphWithStages([
+    { type: 'roof', modes: { kind: 'hip' }, props: { pitch: 45 } },
+    { type: 'trim', modes: { where: 'rake' }, props: { projection: 0.2, depth: 0.3 } },
+  ]));
+  assert.ok(has(result, CODE.W_TRIM_NO_RUNS));
+});
+
+// --- posts -------------------------------------------------------------------
+
+test('posts land on bay boundaries and close the run', () => {
+  const ir = compileBuilding(graphWithStages([
+    { type: 'facade', modes: { posts: 'pier' }, props: { bayWidth: 4 } },
+  ])).ir;
+  const posts = ir.slots.filter(slot => slot.type === 'pillar');
+  // A 12m wall at a 4m nominal is 3 bays = 4 posts; an 8m wall is 2 = 3 posts.
+  // Three storeys, two walls of each length.
+  assert.equal(posts.length, (4 + 3) * 2 * 3, `${posts.length} posts`);
+});
+
+test('a colonnade stands CLEAR of the wall and a pier does not', () => {
+  const at = mode => compileBuilding(graphWithStages([
+    { type: 'facade', modes: { posts: mode }, props: { bayWidth: 4, postDepth: 0.6 } },
+  ])).ir.slots.filter(slot => slot.type === 'pillar');
+  const flush = at('pier');
+  const clear = at('colonnade');
+  assert.equal(flush.length, clear.length);
+  // Same bay, so compare the pair: the colonnade one is half its depth further
+  // out along the wall normal.
+  const d = Math.hypot(
+    clear[0].transform[12] - flush[0].transform[12],
+    clear[0].transform[13] - flush[0].transform[13],
+  );
+  assert.ok(Math.abs(d - 0.3) < 1e-6, `a colonnade stands ${d.toFixed(3)}m clear, wanted 0.3`);
+});
+
+test('a post is a full storey tall and carries its own depth', () => {
+  const ir = compileBuilding(graphWithStages([
+    { type: 'facade', modes: { posts: 'pier' }, props: { postWidth: 0.5, postDepth: 0.4 } },
+  ])).ir;
+  const ground = ir.slots.find(slot => slot.type === 'pillar' && slot.floorIndex === 0);
+  const level = ir.levels.find(l => l.index === 0);
+  assert.ok(Math.abs(ground.cellH - (level.z1 - level.z0)) < 1e-6,
+    `a post is ${ground.cellH}m on a ${(level.z1 - level.z0)}m storey`);
+  assert.equal(ground.cellW, 0.5);
+  assert.equal(ground.cellD, 0.4);
+});
+
+test('posts do not re-roll the windows', () => {
+  const print = mode => compileBuilding(graphWithStages([
+    { type: 'facade', modes: { posts: mode } },
+  ])).ir.slots.filter(s => s.type === 'window').map(s => s.seedKey).join(',');
+  assert.equal(print('pier'), print('none'));
+});
+
+// --- hand-set jitter ---------------------------------------------------------
+
+test('jitter moves the SLOTS and leaves the walls alone', () => {
+  // The whole difference from a warp: a warp is a coherent field over position
+  // and everything samples it; this is per-element and the wall is dead straight.
+  const at = amount => compileBuilding(graphWithStages([
+    { type: 'facade' },
+    { type: 'deform', modes: { mode: 'none' }, props: { amount: 0, jitter: amount } },
+  ])).ir;
+  const straight = at(0);
+  const handset = at(0.8);
+  assert.equal(JSON.stringify(straight.polygons), JSON.stringify(handset.polygons),
+    'the walls moved - that is a warp, not hand-setting');
+  const moved = handset.slots.filter((slot, i) => Math.abs(slot.transform[12] - straight.slots[i].transform[12])
+    + Math.abs(slot.transform[13] - straight.slots[i].transform[13])
+    + Math.abs(slot.transform[14] - straight.slots[i].transform[14]) > 1e-9);
+  assert.equal(moved.length, straight.slots.length, 'some slots were left exactly true');
+});
+
+test('jitter works with the warp set to NONE', () => {
+  // It used to be unreachable: the deform stage returned early on mode None, so
+  // a straight building with hand-set joinery was impossible to ask for.
+  const ir = compileBuilding(graphWithStages([
+    { type: 'facade' },
+    { type: 'deform', modes: { mode: 'none' }, props: { amount: 0, jitter: 0.5 } },
+  ])).ir;
+  assert.equal(ir.deform, null, 'a warp was created where none was asked for');
+  const plain = compileBuilding(graphWithStages([{ type: 'facade' }])).ir;
+  assert.notEqual(
+    JSON.stringify(ir.slots.map(s => s.transform)),
+    JSON.stringify(plain.slots.map(s => s.transform)),
+  );
+});
+
+test('jitter is bounded, so an opening never leaves its hole', () => {
+  const ir = compileBuilding(graphWithStages([
+    { type: 'facade' },
+    { type: 'deform', modes: { mode: 'none' }, props: { amount: 0, jitter: 1 } },
+  ])).ir;
+  const plain = compileBuilding(graphWithStages([{ type: 'facade' }])).ir;
+  let worst = 0;
+  ir.slots.forEach((slot, i) => {
+    worst = Math.max(worst, Math.hypot(
+      slot.transform[12] - plain.slots[i].transform[12],
+      slot.transform[13] - plain.slots[i].transform[13],
+      slot.transform[14] - plain.slots[i].transform[14],
+    ));
+  });
+  assert.ok(worst < 0.2, `an opening moved ${worst.toFixed(3)}m at full jitter`);
+  assert.ok(worst > 0.02, `full jitter moved nothing further than ${worst.toFixed(3)}m`);
+});
+
+test('jitter is deterministic, and per element rather than per stream', () => {
+  const run = () => compileBuilding(graphWithStages([
+    { type: 'facade' },
+    { type: 'deform', modes: { mode: 'none' }, props: { amount: 0, jitter: 0.7 } },
+  ])).ir.slots.map(s => s.transform.join(','));
+  assert.deepEqual(run(), run());
+  // Two slots must not have received the same nudge.
+  const offsets = new Set(run());
+  assert.ok(offsets.size > 1);
 });
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`);

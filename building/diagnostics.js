@@ -55,6 +55,12 @@ export const CODE = {
   // --- roof ---
   W_ROOF_FALLBACK: 'W_ROOF_FALLBACK',
   W_ROOF_ON_RIDGE: 'W_ROOF_ON_RIDGE',
+  /** A Roof Detail node with no roof under it. */
+  W_ROOF_ITEM_NO_ROOF: 'W_ROOF_ITEM_NO_ROOF',
+  /** A Frame node covering no storeys. */
+  W_FRAME_NO_MEMBERS: 'W_FRAME_NO_MEMBERS',
+  /** A Frame node that hit the member cap. */
+  W_FRAME_TRUNCATED: 'W_FRAME_TRUNCATED',
   I_ROOF_OPEN: 'I_ROOF_OPEN',
   I_ROOF_STACKED: 'I_ROOF_STACKED',
 

@@ -95,7 +95,11 @@ export function nodeTextureKey(nodeId, slot, side = '') {
  * is choosing between. Binding on the type instead would mean one mesh for every
  * opening in the building, which is the placeholder box with extra steps.
  */
-export const MESH_SLOTS = ['window', 'shopfront', 'arch', 'balcony', 'louvre', 'door'];
+export const MESH_SLOTS = [
+  'window', 'shopfront', 'arch', 'balcony', 'louvre', 'door',
+  // Roof items. Same machinery, different placer - see roofitems.js.
+  'chimney', 'finial', 'vent', 'crest', 'pillar',
+];
 
 /** The BUILDING-WIDE key an opening mesh binds through. Invariant 3 in doc.js. */
 export function meshKey(tag) {
@@ -129,6 +133,16 @@ export const FACADE_MESH_SLOT = 'openingMesh';
 export const FACADE_BALCONY_SLOT = 'balconyMesh';
 
 /**
+ * The slot a Roof Detail node overrides its model through.
+ *
+ * NOT KEYED ON THE TAG, for the same reason the facade's is not: the node has
+ * one `item` mode, so switching it from Chimney to Vent must not orphan the
+ * binding. No per-SIDE variant, though - a roof item stands on a contour rather
+ * than on a wall, and "the north chimney" is not a thing anyone means.
+ */
+export const ROOFITEM_MESH_SLOT = 'itemMesh';
+
+/**
  * The slots a Facade node can override.
  *
  * Only two, and not the other three: a Facade node claims STOREYS and dresses
@@ -153,6 +167,7 @@ export const TRIM_TEXTURE_SLOT = 'trim';
 export const VOCABULARY_SLOTS = [
   'window', 'door', 'pillar', 'cornice', 'roof_edge', 'wall', 'sign',
   'shopfront', 'arch', 'balcony', 'louvre',
+  'chimney', 'finial', 'vent', 'crest',
 ];
 
 /** What a vocabulary entry can be. `profile` is a trim section, not a mesh. */
@@ -173,7 +188,17 @@ const str = (v, fallback = '') => (typeof v === 'string' ? v : fallback);
  * overwrite it, or picking a style would delete their work. The Output is a
  * singleton and is not a style decision. Everything between them is fair game.
  */
-export const RESERVED_STAGES = new Set(['footprint', 'output']);
+export const RESERVED_STAGES = new Set([
+  'footprint',
+  'output',
+  // MERGE IS RESERVED, for a structural reason rather than a policy one: a pack
+  // is an ORDERED CHAIN of stages that applyStylePack wires one to the next, and
+  // a merge takes TWO buildings. There is no place in a linear recipe for it, so
+  // a pack that declared one would produce a graph with a dangling required
+  // input and refuse to compile. A tower is hand-wired, or a later format grows
+  // a way to say "branch here".
+  'merge',
+]);
 
 /** An empty pack, for an author starting one from scratch. */
 export function createStylePack(overrides = {}) {

@@ -11,9 +11,14 @@ import {
 } from '../../../building/doc.js'
 import { irDigest } from '../../../building/ir.js'
 import {
-  ensureStarterGraph, insertNodeAfter, orderedNodes, removeNode, setNodeMode,
-  setNodeProp,
+  addWing, applyFix, canApplyFix, canMoveNode, createStarterGraph, ensureStarterGraph,
+  insertNodeAfter, moveNode, moveNodeAfterType, orderedNodes, removeNode, resetPalette,
+  setNodeMode,
+  setNodeProp, setPaletteColor,
 } from './edits.js'
+import { CODE } from '../../../building/diagnostics.js'
+import { normalizeBuildingDoc } from '../../../building/doc.js'
+import { paletteOf } from '../../../building/stylepack.js'
 
 let passed = 0
 function test(name, fn) {
@@ -233,7 +238,7 @@ test('a second Roof CONTINUES the first rather than replacing it', () => {
   doc = setNodeProp(doc, first, 'stepRise', 0.8)
   doc = setNodeProp(doc, first, 'maxHeight', 2)
 
-  const platform = compileBuilding(doc).ir.roof
+  const platform = compileBuilding(doc).ir.roofs[0]
 
   doc = insertNodeAfter(doc, first, 'roof')
   const second = doc.nodes.filter(n => n.type === 'roof')[1].id
@@ -241,25 +246,25 @@ test('a second Roof CONTINUES the first rather than replacing it', () => {
   doc = setNodeProp(doc, second, 'pitch', 40)
 
   const { ir, diagnostics } = compileBuilding(doc)
-  assert.ok(ir.roof.rungs.length > platform.rungs.length, 'the cap added no rungs')
-  assert.ok(ir.roof.height > platform.height, 'the cap added no height')
-  assert.equal(ir.roof.baseZ, platform.baseZ, 'the stack restarted instead of continuing')
-  assert.equal(ir.roof.kind, 'stacked')
+  assert.ok(ir.roofs[0].rungs.length > platform.rungs.length, 'the cap added no rungs')
+  assert.ok(ir.roofs[0].height > platform.height, 'the cap added no height')
+  assert.equal(ir.roofs[0].baseZ, platform.baseZ, 'the stack restarted instead of continuing')
+  assert.equal(ir.roofs[0].kind, 'stacked')
   assert.ok(diagnostics.some(d => d.code === 'I_ROOF_STACKED'))
   // The platform's own rungs survive intact underneath.
-  assert.deepEqual(ir.roof.rungs.slice(0, platform.rungs.length), platform.rungs)
+  assert.deepEqual(ir.roofs[0].rungs.slice(0, platform.rungs.length), platform.rungs)
 })
 
 test('a roof on top of one that closed to a ridge is refused, not mangled', () => {
   // The starter roof is a hip with no height cap, so it runs to a ridge and
   // there is nothing left to stand on. Saying so beats building a sliver.
   let doc = starter()
-  const before = compileBuilding(doc).ir.roof
+  const before = compileBuilding(doc).ir.roofs[0]
 
   doc = insertNodeAfter(doc, idOf(doc, 'roof'), 'roof')
   const { ir, diagnostics } = compileBuilding(doc)
 
-  assert.deepEqual(ir.roof, before, 'the second roof changed the first')
+  assert.deepEqual(ir.roofs[0], before, 'the second roof changed the first')
   assert.ok(diagnostics.some(d => d.code === 'W_ROOF_ON_RIDGE'))
 })
 
@@ -340,6 +345,241 @@ test('trim and deform survive a round trip through the document', () => {
   doc = setNodeProp(doc, idOf(doc, 'deform'), 'amount', 25)
   const reloaded = parseBuildingDoc(serializeBuildingDoc(doc))
   assert.equal(irDigest(compileBuilding(reloaded).ir), irDigest(compileBuilding(doc).ir))
+})
+
+// --- wings -------------------------------------------------------------------
+
+test('Add Wing builds a whole second branch, not a dangling Merge', () => {
+  // The reason this is an action rather than a palette entry for the Merge node:
+  // splicing a Merge wires one input and leaves the other empty, which compiles
+  // to an error and nothing else.
+  const doc = addWing(createStarterGraph());
+  const types = doc.nodes.map(node => node.type);
+  assert.equal(types.filter(t => t === 'merge').length, 1);
+  assert.equal(types.filter(t => t === 'footprint').length, 2);
+  const result = compileBuilding(doc);
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.ir.roofs.length, 2, 'the wing brought no roof of its own');
+  assert.equal(result.ir.solids.length, 2, 'the wing is not its own solid');
+});
+
+test('a wing gets its own plan, clear of the ones already there', () => {
+  // Two footprints occupying the same ground would be one building with doubled
+  // walls, and indistinguishable in the plan editor.
+  const doc = addWing(createStarterGraph());
+  const plans = doc.nodes.filter(node => node.type === 'footprint')
+    .map(node => node.props.shape.outer);
+  const xsOf = ring => ring.map(p => p[0]);
+  const a = xsOf(plans[0]);
+  const b = xsOf(plans[1]);
+  assert.ok(Math.min(...b) >= Math.max(...a), 'the wing overlaps the plan it joins');
+});
+
+test('wings chain, so a third volume is another Add Wing', () => {
+  const doc = addWing(addWing(createStarterGraph()));
+  const result = compileBuilding(doc);
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.ir.roofs.length, 3);
+  assert.equal(result.ir.solids.length, 3);
+});
+
+test('Add Wing on a document with no Output changes nothing', () => {
+  const doc = { ...createStarterGraph() };
+  doc.nodes = doc.nodes.filter(node => node.type !== 'output');
+  assert.equal(addWing(doc).nodes.length, doc.nodes.length);
+});
+
+// --- moving a node along the chain -------------------------------------------
+//
+// Order is not cosmetic here: a Roof Detail reads the roof under it. Added in
+// the wrong place it quietly places nothing, which is how a missing chimney was
+// reported - and until this existed the only remedy was to delete everything
+// downstream and re-add it.
+
+const chainOf = doc => orderedNodes(doc).map(node => node.type).join(' > ')
+
+test('a node moves later in the chain, and the edges follow', () => {
+  let doc = createStarterGraph()
+  const facade = doc.nodes.find(node => node.type === 'facade')
+  doc = insertNodeAfter(doc, facade.id, 'roofitem')
+  assert.equal(chainOf(doc), 'footprint > mass > facade > roofitem > roof > output')
+
+  const item = doc.nodes.find(node => node.type === 'roofitem')
+  doc = moveNode(doc, item.id, 1)
+  assert.equal(chainOf(doc), 'footprint > mass > facade > roof > roofitem > output')
+})
+
+test('...and that is what makes the chimney appear', () => {
+  // The user-visible point of the whole operation.
+  let doc = createStarterGraph()
+  const facade = doc.nodes.find(node => node.type === 'facade')
+  doc = insertNodeAfter(doc, facade.id, 'roofitem')
+  const before = compileBuilding(doc)
+  assert.equal(before.ir.slots.filter(slot => slot.type === 'roof_item').length, 0)
+  assert.ok(before.diagnostics.some(d => d.code === CODE.W_ROOF_ITEM_NO_ROOF))
+
+  const item = doc.nodes.find(node => node.type === 'roofitem')
+  const after = compileBuilding(moveNode(doc, item.id, 1))
+  assert.equal(after.ir.slots.filter(slot => slot.type === 'roof_item').length, 1)
+  assert.ok(!after.diagnostics.some(d => d.code === CODE.W_ROOF_ITEM_NO_ROOF))
+})
+
+test('the warning carries a one-click fix that does exactly that', () => {
+  let doc = createStarterGraph()
+  const facade = doc.nodes.find(node => node.type === 'facade')
+  doc = insertNodeAfter(doc, facade.id, 'roofitem')
+  const warning = compileBuilding(doc).diagnostics.find(d => d.code === CODE.W_ROOF_ITEM_NO_ROOF)
+  assert.ok(canApplyFix(warning.fix), 'the fix is not applicable by this build')
+  assert.equal(chainOf(applyFix(doc, warning.fix)),
+    'footprint > mass > facade > roof > roofitem > output')
+})
+
+test('the one-click fix travels the whole way, not one place', () => {
+  // The label says "Move it after the Roof". A single swap only achieves that
+  // when the node happened to sit directly before the roof - from two places
+  // away it left the warning standing and the button saying it had moved it.
+  let doc = createStarterGraph()
+  const mass = doc.nodes.find(node => node.type === 'mass')
+  doc = insertNodeAfter(doc, mass.id, 'roofitem')
+  assert.equal(chainOf(doc), 'footprint > mass > roofitem > facade > roof > output')
+
+  const warning = compileBuilding(doc).diagnostics.find(d => d.code === CODE.W_ROOF_ITEM_NO_ROOF)
+  const fixed = applyFix(doc, warning.fix)
+  assert.equal(chainOf(fixed), 'footprint > mass > facade > roof > roofitem > output')
+  assert.ok(!compileBuilding(fixed).diagnostics.some(d => d.code === CODE.W_ROOF_ITEM_NO_ROOF),
+    'the warning survived its own fix')
+})
+
+test('moveNodeAfterType stops rather than spinning when it cannot succeed', () => {
+  const doc = createStarterGraph()
+  const mass = doc.nodes.find(node => node.type === 'mass')
+  // There is no Trim to get behind, and a Mass cannot swap at all.
+  assert.equal(chainOf(moveNodeAfterType(doc, mass.id, 'trim')), chainOf(doc))
+})
+
+test('the Output is listed last even when a Merge puts it mid-walk', () => {
+  // The walk reaches the Output down the main chain before it has started on the
+  // wing's Footprint, which read as "... Merge, Output, Footprint, Mass, Roof" -
+  // an end in the middle of the list.
+  const order = orderedNodes(addWing(createStarterGraph())).map(node => node.type)
+  assert.equal(order[order.length - 1], 'output')
+  assert.equal(order.filter(type => type === 'output').length, 1)
+})
+
+test('moving is reversible, and two moves travel two places', () => {
+  let doc = createStarterGraph()
+  const facade = doc.nodes.find(node => node.type === 'facade')
+  doc = insertNodeAfter(doc, facade.id, 'trim')
+  const trim = doc.nodes.find(node => node.type === 'trim')
+  const original = chainOf(doc)
+  const moved = moveNode(doc, trim.id, 1)
+  assert.notEqual(chainOf(moved), original)
+  assert.equal(chainOf(moveNode(moved, trim.id, -1)), original, 'the move did not reverse')
+
+  // Two places, from the middle to the end.
+  let far = moveNode(doc, trim.id, 1)
+  far = moveNode(far, trim.id, 1)
+  assert.equal(chainOf(far), 'footprint > mass > facade > roof > trim > output')
+})
+
+test('the ends of the chain do not move', () => {
+  const doc = createStarterGraph()
+  for (const type of ['footprint', 'output']) {
+    const node = doc.nodes.find(candidate => candidate.type === type)
+    assert.equal(canMoveNode(doc, node.id, -1), false, type)
+    assert.equal(canMoveNode(doc, node.id, 1), false, type)
+    assert.equal(chainOf(moveNode(doc, node.id, 1)), chainOf(doc))
+  }
+})
+
+test('a Mass will not swap in either direction', () => {
+  // The kinds have to survive the swap, and a Mass is the one node that takes a
+  // SHAPE: swapping it earlier would plug a Building into the Footprint's place,
+  // and swapping it later would plug a Shape into the Facade's Building port.
+  // Both are graphs the compiler rejects, so neither move is offered.
+  const doc = createStarterGraph()
+  const mass = doc.nodes.find(node => node.type === 'mass')
+  assert.equal(canMoveNode(doc, mass.id, -1), false)
+  assert.equal(canMoveNode(doc, mass.id, 1), false)
+  // The nodes downstream of it move freely.
+  const facade = doc.nodes.find(node => node.type === 'facade')
+  assert.equal(canMoveNode(doc, facade.id, 1), true)
+})
+
+test('a branch refuses to move rather than guessing', () => {
+  // A Merge has two building inputs, so "the previous node" has no answer, and
+  // picking one would silently rewire a wing into the wrong hall.
+  const doc = addWing(createStarterGraph())
+  const merge = doc.nodes.find(node => node.type === 'merge')
+  assert.equal(canMoveNode(doc, merge.id, -1), false)
+  assert.equal(canMoveNode(doc, merge.id, 1), false)
+  assert.equal(chainOf(moveNode(doc, merge.id, -1)), chainOf(doc))
+})
+
+test('a moved graph still compiles', () => {
+  let doc = createStarterGraph()
+  const mass = doc.nodes.find(node => node.type === 'mass')
+  doc = insertNodeAfter(doc, mass.id, 'trim')
+  const trim = doc.nodes.find(node => node.type === 'trim')
+  const moved = moveNode(moveNode(doc, trim.id, 1), trim.id, 1)
+  const result = compileBuilding(moved)
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics))
+})
+
+// --- the palette -------------------------------------------------------------
+//
+// Every surface takes its colour from one of six slots, and until this existed
+// the only way to set them was to apply a style pack - so "the timbers are the
+// wrong brown" had no answer short of editing a file on disk.
+
+test('a colour set on the document reaches the compiled building', () => {
+  const doc = setPaletteColor(createStarterGraph(), 'trim', '#4A3526')
+  assert.equal(paletteOf(doc).trim, '#4a3526', 'stored, but not lower-cased')
+  const trim = compileBuilding(doc).ir.materials.find(entry => entry.slot === 'trim')
+  assert.equal(trim.color, '#4a3526')
+})
+
+test('it works with no style pack applied, which is the case that needed it', () => {
+  const doc = normalizeBuildingDoc(createStarterGraph())
+  assert.equal(doc.building.style, null, 'a starter document should carry no style')
+  assert.equal(paletteOf(setPaletteColor(doc, 'wall', '#112233')).wall, '#112233')
+})
+
+test('a bad slot or a bad colour changes nothing', () => {
+  const doc = setPaletteColor(createStarterGraph(), 'trim', '#4a3526')
+  for (const [slot, value] of [['notaslot', '#000000'], ['wall', 'red'], ['wall', ''], ['roof', '#ff']]) {
+    assert.deepEqual(setPaletteColor(doc, slot, value).building.style.palette, { trim: '#4a3526' })
+  }
+})
+
+test('reset drops the colours and keeps the style name', () => {
+  let doc = createStarterGraph()
+  doc = {
+    ...doc,
+    building: { ...doc.building, style: { name: 'Roman Villa', palette: { trim: '#4a3526' } } },
+  }
+  const back = resetPalette(doc)
+  assert.equal(back.building.style.name, 'Roman Villa')
+  assert.deepEqual(back.building.style.palette, {})
+  // ...and with no name there is nothing left to keep.
+  assert.equal(resetPalette(setPaletteColor(createStarterGraph(), 'trim', '#123456'))
+    .building.style, null)
+})
+
+test('a colour change does not disturb the geometry', () => {
+  // It is a material, and recompiling should not move a wall. Derived from ONE
+  // document: node ids are minted fresh per createStarterGraph() call and a
+  // slot's seed is hashed from the node that emitted it, so two starter graphs
+  // legitimately differ in every seedKey.
+  const doc = normalizeBuildingDoc(createStarterGraph())
+  const plain = compileBuilding(doc).ir
+  const painted = compileBuilding(setPaletteColor(doc, 'wall', '#a0b0c0')).ir
+  assert.deepEqual(painted.polygons, plain.polygons)
+  assert.deepEqual(painted.slots, plain.slots)
+  assert.notEqual(
+    painted.materials.find(m => m.slot === 'wall').color,
+    plain.materials.find(m => m.slot === 'wall').color,
+  )
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

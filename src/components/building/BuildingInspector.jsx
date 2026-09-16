@@ -22,7 +22,8 @@ import {
 } from '../../../building/catalog.js'
 import BuildingTextures from './BuildingTextures'
 import {
-  facadeMeshRows, facadeTextureRows, hasSideOverrides, trimTextureRows,
+  facadeMeshRows, facadeTextureRows, frameTextureRows, hasSideOverrides,
+  trimTextureRows,
 } from '../../utils/building/textureRows'
 import { PROP_TYPE } from '../../../building/catalog.js'
 // The VFX curve editor, unchanged. A profile curve is the same object a VFX
@@ -278,6 +279,23 @@ export default function BuildingInspector({
           - see stylepack.js TRIM_TEXTURE_SLOT. Left empty it uses the
           building-wide trim slot, so a plinth and a cornice match by default and
           differ only when asked. */}
+      {/* A Frame's timbers resolve through the same per-node slot a Trim run
+          does, so one row here is the whole feature. The COLOUR is set in the
+          Colours panel; this tints it with an image. */}
+      {node.type === 'frame' && onAddTexture && (
+        <section className="binspect__section binspect__section--textures">
+          <BuildingTextures
+            doc={doc}
+            title="Texture"
+            rows={frameTextureRows(doc, node.id)}
+            onAdd={onAddTexture}
+            onRemove={onRemoveTexture}
+            onGenerate={onGenerateTexture}
+            note="Timbers draw in the Trim colour. Change it under Colours."
+          />
+        </section>
+      )}
+
       {node.type === 'trim' && onAddTexture && (
         <section className="binspect__section binspect__section--textures">
           <BuildingTextures

@@ -76,6 +76,15 @@ export const SLOT_TYPE = {
    * which is not what a balcony is.
    */
   BALCONY: 'balcony',
+  /**
+   * Something standing ON the roof: a chimney, a finial, a vent, a ridge crest.
+   *
+   * Its own type because it is the one slot with no storey - `floorIndex` is -1
+   * - and because every consumer that reasons about walls (which side is it on,
+   * which facade claimed it, does a material selector cover its floor) has to
+   * leave it alone rather than get a plausible wrong answer.
+   */
+  ROOF_ITEM: 'roof_item',
   PILLAR: 'pillar',
   CORNICE: 'cornice',
   ROOF_EDGE: 'roof_edge',
@@ -174,7 +183,17 @@ export function createBuildingIr({ seed = 0 } = {}) {
     solids: [],
     slots: [],
     trims: [],
-    roof: null,
+    /**
+     * Every roof, not one.
+     *
+     * A LIST because a Merge node joins two buildings and each brought its own -
+     * a hall under a gable and its tower under a pyramid are two roofs on one
+     * building, and there is no honest way to call either of them "the" roof.
+     * The singular field it replaces is gone rather than kept as an alias: a
+     * consumer reading `ir.roof` on a merged building would silently draw one of
+     * the two and no one would know which.
+     */
+    roofs: [],
     // How the finished building is bent. A DESCRIPTOR, not baked coordinates:
     // the slots and trims in this IR are already warped, but walls and roofs are
     // generated from the 2D polygons by the consumer, which needs the function
@@ -368,12 +387,23 @@ export function resolveMaterialIndex(ir, slot, floorIndex = -1, side = '') {
  */
 export function makeTrim({
   profileId = '', path = [], closed = false, level = 0, projection = 0, depth = 0,
-  material = 0,
+  material = 0, normal = [],
 }) {
   return {
     profileId: String(profileId || ''),
     path: path.map(quantize),
     closed: Boolean(closed),
+    /**
+     * Which way the section faces, for an OPEN run. Empty on a closed one.
+     *
+     * A closed run is a horizontal ring and its outward direction is derivable -
+     * the mitred bisector of the two edges meeting at each station, which is
+     * what makes a cornice turn a corner properly. An open run has no such
+     * luxury: a vertical timber stud has no plan direction at all, and a gable
+     * rake lies in a plane the path alone cannot distinguish from its mirror. So
+     * the emitter says which way is out, once, for the whole run.
+     */
+    normal: normal.length === 3 ? normal.map(quantize) : [],
     level: level | 0,
     // The RUN carries its own section size rather than the consumer looking it
     // up from the node that made it. A consumer of the IR has no nodes - see the

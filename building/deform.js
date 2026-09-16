@@ -274,3 +274,87 @@ export function warpPath(warp, path) {
   }
   return out;
 }
+
+/**
+ * Nudge one slot off its exact place.
+ *
+ * WHY THIS IS NOT A WARP. Every mode above is a coherent field: a lean shears
+ * the whole building, a sag droops it, and the walls, the roof and the openings
+ * all move together because they are all sampling one function of position. That
+ * is exactly what you want for a building that SETTLED, and exactly what you do
+ * not want for a building that was BUILT BY HAND - where the point is that no
+ * two windows agree, and the wall they sit in is dead straight.
+ *
+ * So this is per-element and deliberately outside the warp: each slot gets its
+ * own small offset and its own small turn, hashed from its own identity. The
+ * wall does not move. Nothing else sees it.
+ *
+ * MOVED IN ITS OWN FRAME, not in world axes: sliding a window along the wall and
+ * rocking it in its opening is a thing carpentry does, and pushing it out along
+ * the wall NORMAL is a thing carpentry does not. The normal offset is a third of
+ * the others for that reason - enough to catch the light, not enough to leave
+ * the reveal.
+ *
+ * @param {Array<number>} transform column-major 4x4
+ * @param {number} amount 0..1
+ * @param {(index: number) => number} draw a seeded draw in [0, 1) by index
+ */
+export function jitterTransform(transform, amount, draw) {
+  const a = Math.max(0, Math.min(1, Number(amount) || 0));
+  if (a <= 0) return transform;
+
+  const signed = index => draw(index) * 2 - 1;
+  const along = [transform[0], transform[1], transform[2]];
+  const up = [transform[4], transform[5], transform[6]];
+  const normal = [transform[8], transform[9], transform[10]];
+
+  // 90mm at full amount, which is about a hand's width - past that an opening
+  // stops reading as hand-set and starts reading as broken.
+  const shift = 0.09 * a;
+  const dx = signed(0) * shift;
+  const dy = signed(1) * shift;
+  const dz = signed(2) * shift / 3;
+
+  // Rocked about the wall normal - the axis a frame actually racks around.
+  // 2.5 degrees at full amount.
+  const angle = signed(3) * 2.5 * a * Math.PI / 180;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const turnedAlong = [
+    along[0] * c + up[0] * s,
+    along[1] * c + up[1] * s,
+    along[2] * c + up[2] * s,
+  ];
+  const turnedUp = [
+    up[0] * c - along[0] * s,
+    up[1] * c - along[1] * s,
+    up[2] * c - along[2] * s,
+  ];
+
+  return [
+    turnedAlong[0], turnedAlong[1], turnedAlong[2], 0,
+    turnedUp[0], turnedUp[1], turnedUp[2], 0,
+    normal[0], normal[1], normal[2], 0,
+    transform[12] + along[0] * dx + up[0] * dy + normal[0] * dz,
+    transform[13] + along[1] * dx + up[1] * dy + normal[1] * dz,
+    transform[14] + along[2] * dx + up[2] * dy + normal[2] * dz,
+    1,
+  ];
+}
+
+/**
+ * Carry a direction through the warp, at a point.
+ *
+ * `warp.basis` is the Jacobian applied to a vector - the same machinery that
+ * keeps a window lying in a leaning wall - and an OPEN trim run needs it for
+ * exactly the same reason: its section faces a stored direction, and a lean that
+ * shears the wall must shear the direction a timber's face points with it, or
+ * the frame stands proud of a wall that has moved out from under it.
+ */
+export function warpNormalAt(warp, normal, x, y, z) {
+  if (warp.isIdentity || normal.length !== 3) return normal;
+  const out = warp.basis(x, y, z, normal[0], normal[1], normal[2]);
+  const length = Math.hypot(out[0], out[1], out[2]);
+  if (!(length > 1e-9)) return normal;
+  return [out[0] / length, out[1] / length, out[2] / length];
+}

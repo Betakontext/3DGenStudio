@@ -406,6 +406,85 @@ function directionalLadder(base, baseZ, kind, options) {
  * angled), for a height-capped roof (the outline stops at the deck) and for a
  * plan that is not a rectangle.
  */
+/**
+ * The tall wall a SHED stands against.
+ *
+ * THE FACE NOBODY ASKED FOR AND EVERY SHED HAS. A gable closes from both sides,
+ * so its only unroofed faces are the two ends, which endWalls draws. A shed
+ * closes from ONE side: the contour marches away from a fixed edge, and that
+ * fixed edge ends up metres above the wall it started on with nothing between
+ * them. The result is a roof with a hole in its tall side - and because the
+ * material is single-sided you do not see a hole, you see the sloping plane
+ * vanish, which is how it was reported: "only one side of the faces is visible".
+ *
+ * TRACED FROM THE RUNGS, the same way and for the same reason as endWalls: the
+ * ladder already knows how far the roof reaches at every height, so threading
+ * those spans up one side and back down the other IS the wall - and it stays
+ * right for a height-capped shed, for a non-rectangular plan, and for a plan
+ * whose contour splits on the way up.
+ *
+ * Returns [] for anything that is not a shed, and for a shed whose contour never
+ * moved (a zero-pitch roof has no wall to draw).
+ */
+function shedWall(rungs, axis) {
+  if (rungs.length < 2) return [];
+  const perp = [-axis[1], axis[0]];
+
+  // WHICH SIDE IS FIXED. A shed's contour recedes from one perpendicular bound
+  // and leaves the other where it was; the fixed one is the high side. Compared
+  // between the first and last rung rather than assumed, because `cutTo` is free
+  // to keep either.
+  const boundsAt = rung => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const polygon of rung.polygons) {
+      for (const point of polygon.outer) {
+        const p = alongDir(point, perp);
+        if (p < lo) lo = p;
+        if (p > hi) hi = p;
+      }
+    }
+    return { lo, hi };
+  };
+  const first = boundsAt(rungs[0]);
+  const last = boundsAt(rungs[rungs.length - 1]);
+  if (!Number.isFinite(first.lo) || !Number.isFinite(last.lo)) return [];
+
+  const keptLo = Math.abs(last.lo - first.lo) < Math.abs(last.hi - first.hi);
+  const end = keptLo ? first.lo : first.hi;
+  // The side that moved has to have moved: a flat shed has no wall.
+  if (Math.abs(keptLo ? last.hi - first.hi : last.lo - first.lo) < 1e-6) return [];
+
+  // The span the roof covers ON THAT PLANE at each height, exactly as endWalls
+  // does on the two axis ends.
+  const profile = [];
+  for (const rung of rungs) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const polygon of rung.polygons) {
+      for (const point of polygon.outer) {
+        if (Math.abs(alongDir(point, perp) - end) > 1e-3) continue;
+        const a = alongDir(point, axis);
+        if (a < lo) lo = a;
+        if (a > hi) hi = a;
+      }
+    }
+    if (!Number.isFinite(lo)) break;
+    profile.push({ lo, hi, z: rung.z });
+  }
+  if (profile.length < 2) return [];
+
+  const at = (a, z) => [perp[0] * end + axis[0] * a, perp[1] * end + axis[1] * a, z];
+  const points = [];
+  for (const entry of profile) points.push(at(entry.lo, entry.z));
+  for (let i = profile.length - 1; i >= 0; i--) {
+    // One point where the span has collapsed, two where it has not - the same
+    // apex rule endWalls uses, so a shed over a tapering plan closes cleanly.
+    if (profile[i].hi - profile[i].lo > 1e-6) points.push(at(profile[i].hi, profile[i].z));
+  }
+  return points.length >= 3 ? [points] : [];
+}
+
 function endWalls(rungs, axis) {
   if (rungs.length < 2) return [];
   const perp = [-axis[1], axis[0]];
@@ -548,7 +627,16 @@ export function generateRoof({
   out.rungs = built.rungs;
   out.closed = built.closed;
   out.height = built.rungs[built.rungs.length - 1].z - baseZ;
-  if (directional) out.gables = endWalls(built.rungs, options.ridgeAxis);
+  if (directional) {
+    out.gables = endWalls(built.rungs, options.ridgeAxis);
+    // A SHED ALSO NEEDS ITS TALL SIDE. Kept in `gables` rather than a field of
+    // its own because it is the same thing to every consumer - a vertical
+    // polygon that travels beside the ladder - and because a bargeboard along
+    // its verge is correct for a shed too.
+    if (kind === ROOF_KIND.SHED) {
+      out.gables = [...out.gables, ...shedWall(built.rungs, options.ridgeAxis)];
+    }
+  }
   return out;
 }
 

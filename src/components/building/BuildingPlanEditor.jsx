@@ -131,6 +131,12 @@ export default function BuildingPlanEditor({
   onChange,
   onCommit,
   disabled = false,
+  // WHICH plan this is. Only used to decide when to re-fit the view: a merged
+  // building has a footprint per wing and switching between them does not
+  // remount this component, so without it the editor stayed framed on the plan
+  // the author had just left and the new one sat off the edge of the canvas -
+  // which looks exactly like not being able to edit it.
+  planId = '',
 }) {
   const canvasRef = useRef(null)
   const wrapRef = useRef(null)
@@ -666,9 +672,9 @@ export default function BuildingPlanEditor({
   // large empty grid - which, with nothing obviously draggable under the
   // pointer, reads as an empty canvas. Runs once per mount, and only after the
   // canvas has a real size, so it cannot fight a view the author has set.
-  const fittedRef = useRef(false)
+  const fittedRef = useRef('')
   useEffect(() => {
-    if (fittedRef.current) return
+    if (fittedRef.current === (planId || 'only')) return
     if (!(rings[0]?.points?.length >= 3)) return
     // Deferred a frame rather than run inline: the canvas is sized by a layout
     // effect and a ResizeObserver, so the size this reads is only trustworthy
@@ -677,11 +683,11 @@ export default function BuildingPlanEditor({
     const handle = requestAnimationFrame(() => {
       const size = canvasSize()
       if (size.width < 50 || size.height < 50) return
-      fittedRef.current = true
+      fittedRef.current = planId || 'only'
       fit()
     })
     return () => cancelAnimationFrame(handle)
-  }, [canvasSize, fit, rings])
+  }, [canvasSize, fit, rings, planId])
 
   const canDrawHole = (shape?.outer?.length || 0) >= 3
 

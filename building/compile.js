@@ -40,17 +40,21 @@ import {
   RIDGE, ROOF_KIND, generateRoof, roofIsCapped, roofTop, stackRoofs,
 } from './roof.js';
 import { MAX_TRIM_RUNS, TRIM_WHERE, generateTrim } from './trim.js';
-import { DEFORM_MODE, makeDeform, makeWarp, warpPath, warpTransform } from './deform.js';
+import {
+  DEFORM_MODE, jitterTransform, makeDeform, makeWarp, warpNormalAt, warpPath, warpTransform,
+} from './deform.js';
 import { MAX_SLOTS, generateFacade } from './facade.js';
+import { placeRoofItems } from './roofitems.js';
+import { MAX_FRAME_MEMBERS, generateFrame } from './frame.js';
 import { isFlatCurve } from './param.js';
 import {
   FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, FACADE_TEXTURE_SLOTS, PALETTE_SLOTS,
-  TRIM_TEXTURE_SLOT, meshKey,
+  ROOFITEM_MESH_SLOT, TRIM_TEXTURE_SLOT, meshKey,
   nodeTextureKey, paletteOf, textureKey,
 } from './stylepack.js';
 import { SIDE_ORDER, sideOfNormal } from './sides.js';
 import { normalizeBuildingDoc, referenceListKeys } from './doc.js';
-import { slotId, weightedPick } from './random.js';
+import { randomAt, slotId, weightedPick } from './random.js';
 import { normalizePolygon, polygonArea, validateRing } from './poly.js';
 
 /** Below this a footprint is almost certainly a mis-drag rather than a plan. */
@@ -210,7 +214,7 @@ export function compileBuilding(document) {
     if (missing) continue;
 
     values.set(node.id, evaluateNode(
-      node, def, inputValue, diagnostics, doc.building.seed, doc.references,
+      node, def, inputValue, diagnostics, doc.building.seed, doc.references, doc.nodes,
     ));
   }
 
@@ -275,17 +279,33 @@ export function compileBuilding(document) {
     // the window rather than instead of it, so sharing one list would roll a
     // balustrade into the hole. A door has none at all.
     const facadeSlot = slot.type === 'balcony' ? FACADE_BALCONY_SLOT
-      : slot.type === 'door' ? '' : FACADE_MESH_SLOT;
+      : slot.type === 'roof_item' ? ROOFITEM_MESH_SLOT
+        : slot.type === 'door' ? '' : FACADE_MESH_SLOT;
     const candidates = [];
     if (slot.source && facadeSlot) {
-      const side = sideOfNormal(slot.transform[8], slot.transform[9]);
-      candidates.push(nodeTextureKey(slot.source, facadeSlot, side));
+      // NO PER-SIDE RUNG FOR A ROOF ITEM: it stands on a contour, not on a wall,
+      // and `sideOfNormal` of a ridge direction is an answer to a question
+      // nobody asked.
+      if (slot.type !== 'roof_item') {
+        const side = sideOfNormal(slot.transform[8], slot.transform[9]);
+        candidates.push(nodeTextureKey(slot.source, facadeSlot, side));
+      }
       candidates.push(nodeTextureKey(slot.source, facadeSlot));
     }
     candidates.push(meshKey(tag));
     for (const prefix of candidates) if (listSize(prefix) > 0) return prefix;
     return '';
   };
+
+  // WHICH SUB-STREAM A SLOT DRAWS FROM. Window 0, door 1, balcony 2, roof item
+  // 3, post 4 - and facade.js hashes its seedKey with the same numbers, so the
+  // two agree by construction rather than by coincidence.
+  const subOf = slot => (slot.type === 'door' ? 1
+    : slot.type === 'balcony' ? 2
+      : slot.type === 'roof_item' ? 3
+        : slot.type === 'pillar' ? 4 : 0);
+  const jitterAmount = result.jitter || 0;
+  const jitterSlot = slotId('deform', 'jitter');
 
   for (const slot of result.slots || []) {
     const meshSlot = resolveMeshSlot(slot);
@@ -303,19 +323,46 @@ export function compileBuilding(document) {
         // Matches facade.js's seedKey: window 0, door 1, balcony 2. A balcony
         // and the window it hangs on must not roll in lockstep, or every model-3
         // window would carry a model-3 balustrade.
-        sub: slot.type === 'door' ? 1 : slot.type === 'balcony' ? 2 : 0,
+        sub: subOf(slot),
       }, new Array(count).fill(1))
       : 0;
+    // AFTER THE WARP, never before: the warp is a function of position, so
+    // jittering first would feed it a position the building does not have and
+    // the nudge would be re-scaled by whatever the warp does there.
+    const placed = warpTransform(warp, slot.transform);
     ir.slots.push(makeSlot({
       ...slot,
       meshSlot,
       variant: variant >= 0 ? variant : 0,
-      transform: warpTransform(warp, slot.transform),
+      transform: jitterAmount
+        ? jitterTransform(placed, jitterAmount, index => randomAt(
+          doc.building.seed, jitterSlot, {
+            face: slot.faceIndex, floor: slot.floorIndex, bay: slot.bayIndex,
+            sub: subOf(slot),
+          }, index,
+        ))
+        : placed,
     }));
   }
 
   ir.polygons = polygons.all();
-  ir.solids = [makeSolid({ levels: levelIndices, name: doc.name || 'building' })];
+  // ONE SOLID PER PART. A building that was never merged has one part and this
+  // reduces to what it always did; a merged one keeps its wings distinguishable,
+  // which is the whole reason the field was a list from the start.
+  const parts = result.parts?.length
+    ? result.parts
+    : [{ count: result.levels.length, name: doc.name || 'building' }];
+  let taken = 0;
+  ir.solids = parts.map((part, index) => {
+    const slice = levelIndices.slice(taken, taken + part.count);
+    taken += part.count;
+    return makeSolid({
+      levels: slice,
+      name: parts.length > 1
+        ? `${doc.name || 'building'} ${index + 1}`
+        : (doc.name || 'building'),
+    });
+  }).filter(solid => solid.levels.length);
 
   // The palette travels into the IR as material slots, ALWAYS - defaulted when
   // no style has been applied - so a consumer never has to know whether this
@@ -377,29 +424,36 @@ export function compileBuilding(document) {
     ir.trims.push(makeTrim({
       ...run,
       path: warpPath(warp, run.path),
+      // Taken at the run's FIRST station rather than at some average: a warp is
+      // a field, so a direction only means anything at a place, and a timber is
+      // short enough that its ends agree.
+      normal: run.normal
+        ? warpNormalAt(warp, run.normal, run.path[0], run.path[1], run.path[2])
+        : [],
       material: trimMaterialBySource.get(run.source) ?? buildingTrim,
     }));
   }
 
-  if (result.roof && result.roof.rungs?.length) {
-    ir.roof = {
-      kind: result.roof.kind,
-      height: result.roof.height,
-      baseZ: result.roof.rungs[0].z,
-      closed: Boolean(result.roof.closed),
+  for (const entry of roofsOf(result)) {
+    if (!entry?.rungs?.length) continue;
+    ir.roofs.push({
+      kind: entry.kind,
+      height: entry.height,
+      baseZ: entry.rungs[0].z,
+      closed: Boolean(entry.closed),
       // Interned into the SAME table the levels use, so a stepped roof whose
       // tread and riser share a shape stores it once and a flat roof reuses the
       // top level's polygon outright.
-      rungs: result.roof.rungs.map(rung => makeRoofRung({
+      rungs: entry.rungs.map(rung => makeRoofRung({
         polygons: rung.polygons.map(polygon => polygons.intern(polygon)),
         z: rung.z,
       })),
       // Deformed like everything else that travels as coordinates - a gable end
       // on a leaning building has to lean with it.
-      gables: (result.roof.gables || []).map(points => makeGable({
+      gables: (entry.gables || []).map(points => makeGable({
         path: warpPath(warp, points.flat()),
       })),
-    };
+    });
   }
 
   // References travel into the IR so a consumer resolves textures through one
@@ -424,7 +478,10 @@ export function compileBuilding(document) {
     footprintArea: result.footprintArea,
     floorArea: result.floorArea,
     polygonCount: ir.polygons.length,
-    roofHeight: ir.roof ? ir.roof.height : 0,
+    // THE TALLEST, not the sum and not the first: this is the number the HUD
+    // shows as "+Nm roof", and on a hall with a tower it means the crown the eye
+    // reads, which is the taller of the two.
+    roofHeight: ir.roofs.reduce((tallest, roof) => Math.max(tallest, roof.height), 0),
     trimCount: ir.trims.length,
     trimLength: ir.trims.reduce((total, run) => total + pathLength(run.path, run.closed), 0),
   };
@@ -455,7 +512,32 @@ function finish(ir, diagnostics) {
  * rule 1 in catalog.js. The switch is deliberately flat: a registry of functions
  * would be tidier and would also hide the fact that there are only a handful.
  */
-function evaluateNode(node, def, inputValue, diagnostics, seed, references = {}) {
+/**
+ * Every roof on a building.
+ *
+ * A building that has never been merged has one, and `roof` and `roofs[0]` are
+ * the same object. Written as a function rather than assumed because a value
+ * flowing through the graph may predate either field - a Mass with no Roof yet
+ * has neither - and three call sites would otherwise each guard it differently.
+ */
+function roofsOf(building) {
+  if (building?.roofs?.length) return building.roofs;
+  return building?.roof ? [building.roof] : [];
+}
+
+/** The roof that reads as the main one: the one that reaches highest. */
+function tallestRoof(building) {
+  let best = null;
+  for (const roof of roofsOf(building)) {
+    const top = roof?.rungs?.[roof.rungs.length - 1]?.z;
+    if (!Number.isFinite(top)) continue;
+    const bestTop = best?.rungs?.[best.rungs.length - 1]?.z ?? -Infinity;
+    if (top > bestTop) best = roof;
+  }
+  return best;
+}
+
+function evaluateNode(node, def, inputValue, diagnostics, seed, references = {}, nodes = []) {
   switch (node.type) {
     case 'footprint': {
       const raw = readProp(node, 'shape');
@@ -623,6 +705,9 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
           balconyWidth: readProp(node, 'balconyWidth'),
           balconyHeight: readProp(node, 'balconyHeight'),
           balconyChance: readProp(node, 'balconyChance'),
+          posts: readMode(node, 'posts'),
+          postWidth: readProp(node, 'postWidth'),
+          postDepth: readProp(node, 'postDepth'),
         },
       });
 
@@ -781,7 +866,12 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
         );
       }
 
-      if (!below) return { ...building, roof };
+      // `roofs` is every roof on the building and `roof` is the one still OPEN
+      // for stacking. They are the same thing until a Merge node joins two
+      // branches, at which point there are several roofs and none of them is
+      // open - see the Merge case for why.
+      const others = (building.roofs || []).filter(entry => entry !== below);
+      if (!below) return { ...building, roof, roofs: [...others, roof] };
 
       const stacked = stackRoofs(below, roof);
       if (stacked.rungs.length > below.rungs.length) {
@@ -792,7 +882,169 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
           { nodeId: node.id },
         );
       }
-      return { ...building, roof: stacked };
+      return { ...building, roof: stacked, roofs: [...others, stacked] };
+    }
+
+    case 'merge': {
+      // TWO BUILDINGS, ONE BUILDING. Everything a building is - levels, slots,
+      // trims, roofs - is a list, so joining two is concatenation and nothing
+      // else. That is not luck: the IR has carried a `solids` ARRAY since the
+      // first phase precisely so that a building could one day be more than one
+      // volume, and this is the node that finally makes one.
+      const a = inputValue(node, 'a');
+      const b = inputValue(node, 'b');
+      if (!a?.levels?.length) return b;
+      if (!b?.levels?.length) return a;
+
+      const roofs = [...(a.roofs || []), ...(b.roofs || [])];
+      return {
+        levels: [...a.levels, ...b.levels],
+        slots: [...(a.slots || []), ...(b.slots || [])],
+        trims: [...(a.trims || []), ...(b.trims || [])],
+        materialOverrides: [
+          ...(a.materialOverrides || []), ...(b.materialOverrides || []),
+        ],
+        // THE DEFORMATION AND THE JITTER COME FROM THE FIRST BRANCH, because a
+        // warp is a field over one coordinate frame and two of them would fight
+        // over the same points. Put the Deform after the Merge and it covers
+        // everything, which is almost always what a leaning street wants.
+        deform: a.deform || b.deform,
+        jitter: a.jitter || b.jitter,
+        roofs,
+        // THE AGGREGATE NUMBERS, because a merged building has no single mass
+        // stage to have computed them. Height is the TALLER of the two - a
+        // merged building is as tall as its tallest part - while the areas add
+        // up, which is what "floor area" means on a house with a tower.
+        height: Math.max(a.height || 0, b.height || 0),
+        footprintArea: (a.footprintArea || 0) + (b.footprintArea || 0),
+        floorArea: (a.floorArea || 0) + (b.floorArea || 0),
+        // Each branch stays its own SOLID. ir.solids has been an array since the
+        // first phase for exactly this, and an exporter that wants one object per
+        // part - which is what a game engine wants - needs the split kept.
+        parts: [
+          ...(a.parts || [{ count: a.levels.length, name: 'part' }]),
+          ...(b.parts || [{ count: b.levels.length, name: 'part' }]),
+        ],
+        // NOTHING IS OPEN FOR STACKING after a merge: "the roof below" is now
+        // ambiguous, and a Roof node here would have to pick one arbitrarily. It
+        // builds over the merged top instead, which is the honest answer, and a
+        // roof meant for one wing belongs in that wing's branch.
+        roof: null,
+      };
+    }
+
+    case 'frame': {
+      const building = inputValue(node, 'building');
+      if (!building?.levels?.length) return building;
+
+      const storeys = new Set(
+        building.levels.filter(l => l.kind !== 'plinth').map(l => l.index),
+      );
+      const top = storeys.size ? Math.max(...storeys) : 0;
+      const range = resolveStoreyRange(readMode(node, 'storeys'), {
+        top,
+        from: readProp(node, 'fromFloor'),
+        to: readProp(node, 'toFloor'),
+      });
+
+      const frame = generateFrame({
+        levels: building.levels,
+        seed,
+        nodeId: node.id,
+        rule: {
+          floorFrom: range.from,
+          floorTo: range.to,
+          bayWidth: readProp(node, 'bayWidth'),
+          brace: readMode(node, 'brace'),
+          width: readProp(node, 'width'),
+          depth: readProp(node, 'depth'),
+          margin: readProp(node, 'margin'),
+          rails: readProp(node, 'rails'),
+          includeCourtyards: readProp(node, 'includeCourtyards'),
+        },
+      });
+
+      if (!frame.runs.length) {
+        diagnostics.warn(
+          CODE.W_FRAME_NO_MEMBERS,
+          'This Frame covered no storeys, so no timber was drawn.',
+          {
+            nodeId: node.id,
+            hint: 'Widen the storey range. A Frame set to "Above the ground" on a '
+                + 'single-storey building covers nothing.',
+          },
+        );
+      } else if (frame.truncated) {
+        diagnostics.warn(
+          CODE.W_FRAME_TRUNCATED,
+          `This Frame hit the ${MAX_FRAME_MEMBERS}-timber limit and stopped there.`,
+          {
+            nodeId: node.id,
+            hint: 'Widen the panels, use a simpler brace, or cover fewer storeys.',
+          },
+        );
+      }
+
+      // TIMBERS ARE TRIM RUNS, so they accumulate with the mouldings for the
+      // same reason those accumulate with each other - and so that everything
+      // downstream (the deformation, the exporter, the material selector) needs
+      // no knowledge that this node exists.
+      return { ...building, trims: [...(building.trims || []), ...frame.runs] };
+    }
+
+    case 'roofitem': {
+      const building = inputValue(node, 'building');
+      if (!building?.levels?.length) return building;
+
+      // THE TALLEST ROOF, not the last one added. After a merge there are
+      // several and "the roof" means the one the eye reads as the main one; a
+      // chimney meant for a wing belongs in that wing's branch, before the
+      // merge, where there is only one roof to be on.
+      const placed = placeRoofItems({
+        roof: tallestRoof(building),
+        seed,
+        nodeId: node.id,
+        rule: {
+          where: readMode(node, 'where'),
+          item: readMode(node, 'item'),
+          count: readProp(node, 'count'),
+          along: readProp(node, 'along'),
+          width: readProp(node, 'width'),
+          depth: readProp(node, 'depth'),
+          height: readProp(node, 'height'),
+          sink: readProp(node, 'sink'),
+        },
+      });
+
+      if (placed.reason === 'no-roof') {
+        // ORDER, not a missing node, is nearly always the cause: the palette
+        // appends after whatever is selected, so a Roof Detail added while the
+        // Facade was selected lands BEFORE the roof and reads nothing. Say which
+        // it is, and offer the move.
+        const roofAfter = nodes.some(other => other.type === 'roof');
+        diagnostics.warn(
+          CODE.W_ROOF_ITEM_NO_ROOF,
+          roofAfter
+            ? 'This sits BEFORE the Roof, so there was no roof for it to stand on '
+              + 'and nothing was placed.'
+            : 'There is no roof for this to stand on, so nothing was placed.',
+          {
+            nodeId: node.id,
+            hint: roofAfter
+              ? 'Move it after the Roof node.'
+              : 'Add a Roof node before this one. A chimney needs a roof even '
+                + 'when the roof is flat.',
+            fix: roofAfter
+              ? fix('Move it after the Roof', 'moveAfterType', { nodeId: node.id, type: 'roof' })
+              : fix('Add a Roof', 'addNode', { type: 'roof' }),
+          },
+        );
+      }
+
+      // ACCUMULATE, like trims and unlike facades: a building has a chimney AND
+      // a finial, and a second node that replaced the first would make the
+      // ordinary case impossible.
+      return { ...building, slots: [...(building.slots || []), ...placed.slots] };
     }
 
     case 'trim': {
@@ -802,7 +1054,7 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
       const where = readMode(node, 'where');
       const { runs, truncated } = generateTrim({
         levels: building.levels,
-        roof: building.roof,
+        roofs: roofsOf(building),
         where,
         every: readProp(node, 'every'),
         includeHoles: readProp(node, 'includeHoles'),
@@ -845,7 +1097,7 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
       // roofIsCapped, not `closed`: a FLAT roof is trivially closed and its whole
       // deck is exactly what a parapet wants to stand on. What disqualifies a
       // roof is having closed after rising.
-      if (where === TRIM_WHERE.PARAPET && roofIsCapped(building.roof)) {
+      if (where === TRIM_WHERE.PARAPET && roofsOf(building).some(roofIsCapped)) {
         diagnostics.warn(
           CODE.W_PARAPET_ON_PITCH,
           'This roof closes to a ridge, so the parapet follows the ridge rather '
@@ -871,7 +1123,13 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
 
       const mode = readMode(node, 'mode');
       const amount = readProp(node, 'amount');
-      if (mode === DEFORM_MODE.NONE || !amount) return building;
+      // JITTER IS INDEPENDENT OF THE WARP, and the early return used to make
+      // that impossible: a straight building with hand-set joinery is a real and
+      // common thing to want, and it is Warp = None with Hand-set turned up.
+      const jitter = readProp(node, 'jitter') || 0;
+      const warped = mode !== DEFORM_MODE.NONE && amount;
+      if (!warped && !jitter) return building;
+      if (!warped) return { ...building, jitter };
 
       // The warp is normalised over the building's own height and turns about
       // its own centre, so the same settings mean the same thing on a cottage
@@ -883,6 +1141,7 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {})
 
       return {
         ...building,
+        jitter,
         deform: makeDeform({
           mode,
           amount,

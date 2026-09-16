@@ -86,7 +86,7 @@ test('the coarsest level has no openings and no trim at all', () => {
   assert.equal(ir.stats.trimCount, 0)
   // ...but is still a building.
   assert.ok(ir.stats.height > 0)
-  assert.ok(ir.roof, 'the massing level lost its roof')
+  assert.ok(ir.roofs[0], 'the massing level lost its roof')
 })
 
 test('dropping a middle node HEALS the chain rather than severing it', () => {

@@ -560,3 +560,69 @@
   border-color: var(--primary);
   color: var(--primary);
 }
+
+/* Which plan the editor is on, when a merged building has several. Sits over
+   the canvas rather than above it: the plan editor sizes itself to its pane, and
+   a row in the flow would shrink the drawing area every time a wing is added. */
+.buildinggen__planpick {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 999px;
+  background: var(--surface-container);
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.buildinggen__planpick-btn {
+  padding: 3px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.buildinggen__planpick-btn:hover {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+}
+
+.buildinggen__planpick-btn--on {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* Move a node up or down the chain. Two small arrows rather than drag-and-drop:
+   the list is short, the operation is a SWAP with its neighbour, and a drag
+   target on a row that is also a selection button is a fight. */
+.buildinggen__node-move {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+}
+
+.buildinggen__node-move button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 13px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.buildinggen__node-move button:hover:not(:disabled) { color: var(--primary); }
+.buildinggen__node-move button:disabled { opacity: 0.25; cursor: default; }
+.buildinggen__node-move .material-symbols-outlined { font-size: 15px; }

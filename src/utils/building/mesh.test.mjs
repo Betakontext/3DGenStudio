@@ -297,7 +297,7 @@ function roofGraph({ shape = SQUARE, kind = 'hip', roof = {}, mass = {} } = {}) 
 
 test('a hip roof meshes, and sits ON TOP of the walls', () => {
   const ir = compileBuilding(roofGraph({ kind: 'hip', roof: { pitch: 40 } })).ir
-  assert.ok(ir.roof, 'no roof in the IR')
+  assert.ok(ir.roofs[0], 'no roof in the IR')
   const { geometry, triangleCount } = buildRoofGeometry(ir)
   assert.ok(geometry, 'the roof produced no geometry')
   assert.ok(triangleCount > 8, `only ${triangleCount} triangles`)
@@ -312,7 +312,7 @@ test('a hip roof meshes, and sits ON TOP of the walls', () => {
   // The eave is the top of the walls; the ridge is above it.
   assert.ok(Math.abs(minY - ir.stats.height) < 1e-3, `eave at ${minY}, walls end at ${ir.stats.height}`)
   assert.ok(maxY > minY + 1, 'the roof is flat')
-  assert.ok(Math.abs(maxY - minY - ir.roof.height) < 1e-3)
+  assert.ok(Math.abs(maxY - minY - ir.roofs[0].height) < 1e-3)
 })
 
 test('roof triangles face UPWARD, not into the building', () => {
@@ -339,7 +339,7 @@ test('a flat roof meshes as a lid and nothing else', () => {
   const { geometry, triangleCount } = buildRoofGeometry(ir)
   assert.ok(geometry)
   assert.equal(triangleCount, 2, 'a flat lid over a rectangle is two triangles')
-  assert.equal(ir.roof.height, 0)
+  assert.equal(ir.roofs[0].height, 0)
 })
 
 test('a stepped roof produces vertical risers as well as flat treads', () => {
@@ -652,7 +652,7 @@ test('a gable end wall is drawn, and faces outward', () => {
   const ir = irOf(graphWith([
     { type: 'roof', modes: { kind: 'gable' }, props: { pitch: 45 } },
   ], { shape: { outer: [[0, 0], [20, 0], [20, 10], [0, 10]], holes: [] } }))
-  assert.equal(ir.roof.gables.length, 2)
+  assert.equal(ir.roofs[0].gables.length, 2)
 
   const tris = triangles(buildRoofGeometry(ir).geometry)
   // The ridge runs along X, so the end walls are the faces whose normal is +/-X.

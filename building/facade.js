@@ -136,10 +136,14 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
     balconyWidth = 2,
     balconyHeight = 1.05,
     balconyChance = 0.5,
+    // Posts. 'none' | 'pier' | 'colonnade'.
+    posts = 'none',
+    postWidth = 0.45,
+    postDepth = 0.45,
   } = rule;
 
   const out = {
-    slots: [], truncated: false, squashed: false, doorCount: 0, balconyCount: 0,
+    slots: [], truncated: false, squashed: false, doorCount: 0, balconyCount: 0, postCount: 0,
     // Which storeys this node actually claimed. The compiler needs it to decide
     // what an earlier facade's slots should be replaced by - see the override
     // rule there - and to tell the author when a facade covers nothing.
@@ -195,6 +199,46 @@ export function generateFacade({ levels = [], seed = 0, nodeId = 'facade', rule 
         if (edge.length < MIN_WALL) continue;
 
         const { cells } = tileSpan(edge.length, bayWidth);
+
+        // POSTS GO ON THE BAY BOUNDARIES, not in the bays, so a run of them
+        // frames the openings instead of standing in front of them. One at the
+        // start of every bay plus one at the far end closes the run - without it
+        // a colonnade is missing its last column, which is the first thing
+        // anyone notices about a portico.
+        if (posts !== 'none' && cells.length) {
+          const postZ = level.z0 + height / 2;
+          for (let i = 0; i <= cells.length; i++) {
+            if (out.slots.length >= MAX_SLOTS) { out.truncated = true; return out; }
+            const at = i < cells.length ? cells[i].start : edge.length;
+            const centre = slotTransform(edge, at, postZ);
+            // A PIER is flush with the wall and reads as structure; a COLONNADE
+            // stands clear of it and reads as an arcade. Same slot, one offset.
+            if (posts === 'colonnade') {
+              centre[12] += edge.normal[0] * postDepth / 2;
+              centre[13] += edge.normal[1] * postDepth / 2;
+            }
+            out.slots.push({
+              type: SLOT_TYPE.PILLAR,
+              styleSlot: 'pillar',
+              source: nodeId,
+              transform: centre,
+              cellW: postWidth,
+              cellH: height,
+              cellD: postDepth,
+              faceIndex: face,
+              floorIndex: level.index,
+              bayIndex: i,
+              // `sub: 4` - window 0, door 1, balcony 2, roof item 3. Its own
+              // number so a post does not roll the variant its neighbouring
+              // window rolled.
+              seedKey: instanceSeed(seed, variantSlot, {
+                face, floor: level.index, bay: i, sub: 4,
+              }),
+            });
+            out.postCount++;
+          }
+        }
+
         for (const bay of cells) {
           if (out.slots.length >= MAX_SLOTS) {
             out.truncated = true;
