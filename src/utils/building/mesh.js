@@ -935,9 +935,10 @@ export function buildSlotInstances(ir, slotMeshes = {}) {
       // as trim. Neither is a hole, and drawing them in the opening colour puts
       // dark voids on the skyline.
         : slot.type === 'roof_item' ? (slot.styleSlot === 'chimney' ? 'wall' : 'trim')
-        // A post is structure. Trim, because that is where a style puts its
-        // stone dressings and its timber, and a column belongs with them.
-          : slot.type === 'pillar' ? 'trim'
+        // A POST HAS ITS OWN SLOT. It borrowed the trim's until a colonnade
+        // turned up wearing the cornice's texture; a column is its own element
+        // in every style that has one.
+          : slot.type === 'pillar' ? 'pillar'
             : 'opening'
     const side = sideOfNormal(slot.transform[8], slot.transform[9])
     const material = resolveMaterialIndex(ir, materialSlot, slot.floorIndex, side)

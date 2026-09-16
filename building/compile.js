@@ -49,7 +49,7 @@ import { MAX_FRAME_MEMBERS, generateFrame } from './frame.js';
 import { isFlatCurve } from './param.js';
 import {
   FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, FACADE_TEXTURE_SLOTS, PALETTE_SLOTS,
-  ROOFITEM_MESH_SLOT, TRIM_TEXTURE_SLOT, meshKey,
+  FACADE_POST_SLOT, ROOFITEM_MESH_SLOT, TRIM_TEXTURE_SLOT, meshKey,
   nodeTextureKey, paletteOf, textureKey,
 } from './stylepack.js';
 import { SIDE_ORDER, sideOfNormal } from './sides.js';
@@ -280,7 +280,8 @@ export function compileBuilding(document) {
     // balustrade into the hole. A door has none at all.
     const facadeSlot = slot.type === 'balcony' ? FACADE_BALCONY_SLOT
       : slot.type === 'roof_item' ? ROOFITEM_MESH_SLOT
-        : slot.type === 'door' ? '' : FACADE_MESH_SLOT;
+        : slot.type === 'pillar' ? FACADE_POST_SLOT
+          : slot.type === 'door' ? '' : FACADE_MESH_SLOT;
     const candidates = [];
     if (slot.source && facadeSlot) {
       // NO PER-SIDE RUNG FOR A ROOF ITEM: it stands on a contour, not on a wall,

@@ -23,11 +23,12 @@ import './BuildingPalette.css'
 /** What each slot actually paints, in the author's terms rather than the IR's. */
 const WHAT = {
   wall: 'Walls, and anything masonry - including chimneys.',
-  trim: 'Mouldings, timber framing, posts and balconies.',
+  trim: 'Mouldings, timber framing and balconies.',
   roof: 'Every roof surface.',
   opening: 'Windows and the other openings.',
   door: 'Doors.',
   accent: 'Reserved for style packs.',
+  pillar: 'Columns, piers and porch posts.',
 }
 
 const LABEL = {
@@ -37,6 +38,7 @@ const LABEL = {
   opening: 'Windows',
   door: 'Doors',
   accent: 'Accent',
+  pillar: 'Posts',
 }
 
 /**

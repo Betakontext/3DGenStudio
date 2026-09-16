@@ -55,7 +55,15 @@ export const STYLE_PACK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;
  * pack author picks six colours, not a material graph. Phase 6 replaces these
  * with generated textures, and the keys carry over as the albedo slot names.
  */
-export const PALETTE_SLOTS = ['wall', 'trim', 'roof', 'opening', 'door', 'accent'];
+export const PALETTE_SLOTS = [
+  'wall', 'trim', 'roof', 'opening', 'door', 'accent',
+  // A POST IS NOT TRIM, however much it looks like it. They shared a slot until
+  // a colonnade turned up wearing the cornice's texture and, worse, the window's
+  // MODEL - because a post fell through to the openings' mesh chain. A column is
+  // its own element in every style that has one, and giving it its own slot is
+  // what lets a stone colonnade stand against a rendered wall.
+  'pillar',
+];
 
 /**
  * The palette slots a TEXTURE can be bound to, and the reference key each uses.
@@ -64,7 +72,7 @@ export const PALETTE_SLOTS = ['wall', 'trim', 'roof', 'opening', 'door', 'accent
  * and cannot carry an image. Offering a slot that silently does nothing is the
  * failure this whole feature keeps having to fix.
  */
-export const TEXTURE_SLOTS = ['wall', 'trim', 'roof', 'opening', 'door'];
+export const TEXTURE_SLOTS = ['wall', 'trim', 'roof', 'opening', 'door', 'pillar'];
 
 /** The doc.references key a BUILDING-WIDE texture slot binds through. Invariant 3. */
 export function textureKey(slot) {
@@ -143,6 +151,16 @@ export const FACADE_BALCONY_SLOT = 'balconyMesh';
 export const ROOFITEM_MESH_SLOT = 'itemMesh';
 
 /**
+ * The slot a Facade node overrides its POSTS' model through.
+ *
+ * Its own slot, and the reason is a bug rather than a preference: a post used to
+ * fall through to FACADE_MESH_SLOT, so binding a window model to a facade put
+ * windows on its columns. A post and an opening are the two things a Facade
+ * places, and they need two chains.
+ */
+export const FACADE_POST_SLOT = 'postMesh';
+
+/**
  * The slots a Facade node can override.
  *
  * Only two, and not the other three: a Facade node claims STOREYS and dresses
@@ -150,7 +168,7 @@ export const ROOFITEM_MESH_SLOT = 'itemMesh';
  * and a plinth are not - they belong to the Roof and Trim nodes, and offering
  * them here would be a control that silently does nothing.
  */
-export const FACADE_TEXTURE_SLOTS = ['wall', 'opening'];
+export const FACADE_TEXTURE_SLOTS = ['wall', 'opening', 'pillar'];
 
 /**
  * What a Trim node can override: its own run, and only as a whole.
@@ -498,6 +516,9 @@ export const DEFAULT_PALETTE = {
   opening: '#2f3a44',
   door: '#7a6248',
   accent: '#6d7480',
+  // Close to the trim's stone, since that is what a column usually is, but its
+  // own value so the two can be told apart at a glance.
+  pillar: '#bcc0c7',
 };
 
 export function paletteOf(doc) {

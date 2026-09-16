@@ -26,12 +26,18 @@ export const TILEABLE_SUFFIX = 'seamless tileable texture, flat even lighting, '
  * texture's repeat is 1/tileMetres and brickwork is the same size on a cottage
  * and on a tower. That is the whole reason the tile size exists.
  *
- * An OPENING or a DOOR is not a material, it is a THING: one window, one door,
- * drawn on an instanced unit box whose UVs run 0..1 across the cell. Tiling it
- * samples a fraction of the image - at a 1.5m tile, the bottom-left two thirds
- * of the window and nothing else. It has to fill the cell exactly.
+ * An OPENING, a DOOR or a POST is not a material, it is a THING: one window, one
+ * door, one column, drawn on an instanced unit box whose UVs run 0..1 across the
+ * cell. Tiling it samples a fraction of the image - at a 1.5m tile, the
+ * bottom-left two thirds of the window and nothing else. It has to fill exactly.
+ *
+ * The line is really "is it drawn on an instanced box or on a swept surface",
+ * and it is drawn per material SLOT because that is what a texture is bound to.
+ * Balconies and roof items are the remaining instanced slots that borrow a
+ * tiling slot's material (trim and wall); they are unaffected until someone
+ * binds a texture there, and the fix for them is the same as this one.
  */
-export const CELL_SLOTS = new Set(['opening', 'door'])
+export const CELL_SLOTS = new Set(['opening', 'door', 'pillar'])
 
 /** Whether a slot's texture repeats by metres rather than filling its cell. */
 export function tilesByMetres(slot) {
@@ -89,6 +95,16 @@ export const SLOT_GUIDE = {
     prompts: [
       ['Plank door', 'heavy vertical oak plank door with iron studs'],
       ['Panelled door', 'painted panelled timber door, six panels'],
+    ],
+  },
+  pillar: {
+    label: 'Posts',
+    tile: 1,
+    hint: 'Columns, piers and porch posts. Fills the post rather than tiling.',
+    prompts: [
+      ['Stone column', 'weathered limestone column shaft with a moulded base'],
+      ['Timber post', 'square oak post, visible grain and adze marks'],
+      ['Marble', 'polished veined marble column shaft'],
     ],
   },
 }

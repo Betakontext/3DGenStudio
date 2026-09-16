@@ -21,8 +21,8 @@
 // only has to describe it truthfully.
 
 import {
-  FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, FACADE_TEXTURE_SLOTS, MESH_SLOTS,
-  TEXTURE_SLOTS, TRIM_TEXTURE_SLOT,
+  FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, FACADE_POST_SLOT, FACADE_TEXTURE_SLOTS,
+  MESH_SLOTS, TEXTURE_SLOTS, TRIM_TEXTURE_SLOT,
   meshKey, nodeTextureKey, textureKey,
 } from '../../../building/stylepack.js'
 import { referenceListKeys } from '../../../building/doc.js'
@@ -85,7 +85,7 @@ export function facadeTextureRows(doc, nodeId, { expanded = false } = {}) {
  * switching the Facade from Window to Arch keeps the binding; see
  * FACADE_MESH_SLOT for why.
  */
-export function facadeMeshRows(doc, nodeId, { expanded = false, balconies = false } = {}) {
+export function facadeMeshRows(doc, nodeId, { expanded = false, balconies = false, posts = false } = {}) {
   const group = (slot, label, what, idle = '', warn = '') => {
     const hasFacade = referenceListKeys(doc.references, nodeTextureKey(nodeId, slot)).length > 0
     const rows = [{
@@ -128,12 +128,20 @@ export function facadeMeshRows(doc, nodeId, { expanded = false, balconies = fals
       // are off puts a name on the row and nothing on the building, which is the
       // same silence in a different disguise.
       balconies ? '' : 'This facade places no balconies — set Balconies above.'),
+    // A POST HAS ITS OWN ROW, and had to: without one it fell through to the
+    // openings' chain, so binding a window model to a facade put windows on its
+    // columns. Same idle wording, same reason.
+    ...group(FACADE_POST_SLOT, 'Post model', 'posts',
+      posts ? '' : 'nothing to place yet',
+      posts ? '' : 'This facade places no posts — set Posts above.'),
   ]
 }
 
 /** Whether a Facade node has any per-side binding at all, so the UI can open. */
 export function hasSideOverrides(doc, nodeId) {
-  for (const slot of [...FACADE_TEXTURE_SLOTS, FACADE_MESH_SLOT, FACADE_BALCONY_SLOT]) {
+  for (const slot of [
+    ...FACADE_TEXTURE_SLOTS, FACADE_MESH_SLOT, FACADE_BALCONY_SLOT, FACADE_POST_SLOT,
+  ]) {
     for (const side of SIDE_ORDER) {
       // A LIST, so ask whether the list has anything - a bare key has not
       // existed since reference slots became lists.
@@ -191,17 +199,25 @@ export function frameTextureRows(doc, nodeId) {
  * them one.
  */
 export function slotMeshRows() {
+  // EVERY tag, or the row shows the raw slot name. The roof items and the post
+  // were added to MESH_SLOTS without labels and appeared in the sidebar as
+  // "chimney", "finial", "vent", "crest" and "pillar" among properly-cased rows.
   const LABELS = {
     window: 'Window', shopfront: 'Shopfront', arch: 'Arch',
     balcony: 'Balcony', louvre: 'Louvre', door: 'Door',
+    chimney: 'Chimney', finial: 'Finial', vent: 'Vent', crest: 'Ridge crest',
+    pillar: 'Post',
   }
+  const ROOF_ITEMS = new Set(['chimney', 'finial', 'vent', 'crest'])
   return MESH_SLOTS.map(tag => ({
     refKey: meshKey(tag),
-    guideSlot: tag === 'door' ? 'door' : 'opening',
+    guideSlot: tag === 'door' ? 'door'
+      : tag === 'pillar' ? 'pillar'
+        : ROOF_ITEMS.has(tag) ? 'trim' : 'opening',
     assetType: 'mesh',
     label: LABELS[tag] || tag,
-    hint: `The model placed in every ${LABELS[tag] || tag} opening. Scaled to the `
-      + 'bay the grammar worked out, so one model fits any wall.',
+    hint: `The model used for every ${LABELS[tag] || tag}. Scaled to the cell the `
+      + 'grammar worked out, so one model fits any wall.',
     fallback: 'a plain box',
   }))
 }

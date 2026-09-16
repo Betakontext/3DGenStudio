@@ -8,7 +8,9 @@ import { createNode } from './catalog.js';
 import { MASS_PROFILE } from './mass.js';
 import { appendReference, normalizeBuildingDoc } from './doc.js';
 import { sideOfNormal } from './sides.js';
-import { FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, meshKey, nodeTextureKey } from './stylepack.js';
+import {
+  FACADE_BALCONY_SLOT, FACADE_MESH_SLOT, FACADE_POST_SLOT, meshKey, nodeTextureKey,
+} from './stylepack.js';
 
 let passed = 0;
 function test(name, fn) {
@@ -787,6 +789,59 @@ test('only a MESH can be turned; an image has no orientation to fix', () => {
   });
   assert.equal(doc.references['tex_wall.0'].rotation, undefined);
 });
+
+test('a POST does not wear the window model', () => {
+  // Reported as "the Posts use the same mesh as the window". A post had no slot
+  // of its own, so resolveMeshSlot fell through to FACADE_MESH_SLOT and a window
+  // model bound to the facade went onto its columns.
+  let doc = graphWithStages([
+    { type: 'facade', modes: { posts: 'colonnade' }, props: { bayWidth: 3 } },
+  ])
+  const facade = doc.nodes.find(node => node.type === 'facade')
+  doc = appendReference(doc, nodeTextureKey(facade.id, FACADE_MESH_SLOT), {
+    kind: 'mesh', ref: 'asset:10',
+  })
+  const ir = compileBuilding(doc).ir
+  const used = type => [...new Set(ir.slots.filter(s => s.type === type).map(s => s.meshSlot))]
+  assert.deepEqual(used('window'), [nodeTextureKey(facade.id, FACADE_MESH_SLOT)])
+  assert.deepEqual(used('pillar'), [''], 'a post picked up the openings’ model')
+})
+
+test('a post follows its OWN chain: side, then facade, then building', () => {
+  let doc = graphWithStages([
+    { type: 'facade', modes: { posts: 'pier' }, props: { bayWidth: 3 } },
+  ])
+  const facade = doc.nodes.find(node => node.type === 'facade')
+  doc = appendReference(doc, meshKey('pillar'), { kind: 'mesh', ref: 'asset:30' })
+  let ir = compileBuilding(doc).ir
+  const used = () => [...new Set(ir.slots.filter(s => s.type === 'pillar').map(s => s.meshSlot))].sort()
+  assert.deepEqual(used(), [meshKey('pillar')])
+
+  doc = appendReference(doc, nodeTextureKey(facade.id, FACADE_POST_SLOT), {
+    kind: 'mesh', ref: 'asset:20',
+  })
+  ir = compileBuilding(doc).ir
+  assert.deepEqual(used(), [nodeTextureKey(facade.id, FACADE_POST_SLOT)])
+
+  doc = appendReference(doc, nodeTextureKey(facade.id, FACADE_POST_SLOT, 'north'), {
+    kind: 'mesh', ref: 'asset:21',
+  })
+  ir = compileBuilding(doc).ir
+  assert.deepEqual(used(), [
+    nodeTextureKey(facade.id, FACADE_POST_SLOT),
+    nodeTextureKey(facade.id, FACADE_POST_SLOT, 'north'),
+  ])
+})
+
+test('a post has its own palette slot, so it is not painted as trim', () => {
+  const ir = compileBuilding(graphWithStages([
+    { type: 'facade', modes: { posts: 'colonnade' } },
+  ])).ir
+  const pillar = ir.materials.find(entry => entry.slot === 'pillar')
+  const trim = ir.materials.find(entry => entry.slot === 'trim')
+  assert.ok(pillar, 'no pillar material in the table')
+  assert.notEqual(pillar.color, trim.color, 'a post is indistinguishable from a cornice')
+})
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`);
 else console.log(`compile.test.mjs: ${passed} passed`);

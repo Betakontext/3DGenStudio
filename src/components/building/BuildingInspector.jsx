@@ -325,6 +325,7 @@ export default function BuildingInspector({
                 // The balcony rows appear only once this facade actually places
                 // balconies - see facadeMeshRows.
                 balconies: activeMode('balcony') !== 'none',
+                posts: activeMode('posts') !== 'none',
               }),
             ]}
             onAdd={onAddTexture}
