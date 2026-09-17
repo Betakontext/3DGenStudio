@@ -618,6 +618,32 @@ export const BAKE_COVERAGE_COMPLETE = 0.95
 // two boxes count as the same object at the same scale. Sized for the extremities
 // simplification shaves off, which move the box without changing the object.
 const BAKE_SCALE_TOLERANCE = 0.05
+// A source at a different scale is still alignable when all three axes agree on
+// ONE factor — the same shape in different units, which is what a mesh simplified
+// outside the editor looks like next to a texturing pass that normalised its
+// output. Kept in step with ALIGN_UNIFORM_TOLERANCE / ALIGN_MIN_AXIS_FRAC /
+// ALIGN_MIN_SCALE_DELTA in bake_worker.py, which decides the same thing on the
+// service: the two must not disagree about whether a bake is worth starting.
+const BAKE_UNIFORM_TOLERANCE = 0.02
+const BAKE_MIN_AXIS_FRAC = 0.01
+const BAKE_MIN_SCALE_DELTA = 0.005
+
+// The single factor that takes `sourceSize` to `targetSize`, or null when the
+// three axes disagree about what it is. Disagreement is the answer, not a
+// nuisance: one ratio on every axis measures a units change, three different
+// ratios mean two different objects. Axes too thin to divide by contribute no
+// ratio, and one axis alone is not evidence — it agrees with itself.
+function uniformScaleRatio(targetSize, sourceSize, diagonal) {
+  const floor = BAKE_MIN_AXIS_FRAC * Math.max(diagonal, 1e-9)
+  const ratios = ['x', 'y', 'z']
+    .filter(axis => targetSize[axis] > floor && sourceSize[axis] > floor)
+    .map(axis => targetSize[axis] / sourceSize[axis])
+  if (ratios.length < 2) return null
+  const mean = ratios.reduce((sum, r) => sum + r, 0) / ratios.length
+  if (!(mean > 0)) return null
+  if (ratios.some(r => Math.abs(r - mean) > BAKE_UNIFORM_TOLERANCE * mean)) return null
+  return Math.abs(mean - 1) <= BAKE_MIN_SCALE_DELTA ? null : mean
+}
 
 // Will this high-poly source actually reach the mesh we want to bake onto?
 //
@@ -632,10 +658,11 @@ const BAKE_SCALE_TOLERANCE = 0.05
 // Reported as the WORST axis, not the volume ratio, because the volume ratio hides
 // exactly this: a source offset along one axis still overlaps perfectly on the
 // other two, so its volume ratio stays respectable while half the mesh has nothing
-// to sample. `aligned` is that same measure after virtually re-centring the source,
-// which is what the service will really do — so a source that only needs
-// re-centring reports poor `overlap` but perfect `alignedOverlap`, and must not be
-// refused. Degenerate axes (a flat plane) are skipped rather than counted as a
+// to sample. `alignedOverlap` is that same measure after virtually applying the
+// alignment the service will really perform — re-centring a same-scale source, and
+// rescaling one that differs by a single uniform factor — so a source that only
+// needs lining up reports poor `overlap` but perfect `alignedOverlap`, and must not
+// be refused. Degenerate axes (a flat plane) are skipped rather than counted as a
 // total miss.
 export function measureBakeOverlap(targetBox, sourceBox) {
   if (!targetBox || !sourceBox || targetBox.isEmpty() || sourceBox.isEmpty()) return null
@@ -646,27 +673,43 @@ export function measureBakeOverlap(targetBox, sourceBox) {
   const axes = ['x', 'y', 'z']
   const scale = Math.max(targetSize.x, targetSize.y, targetSize.z)
 
-  const worstAxis = (offset) => axes.reduce((worst, axis) => {
+  // Coverage of the target by a source box given as a centre and a size, so the
+  // "after alignment" case can vary both — a rescale changes the size, and every
+  // alignment the service performs leaves the two boxes concentric.
+  const worstAxis = (centre, size) => axes.reduce((worst, axis) => {
     const extent = targetSize[axis]
     if (extent <= scale * 1e-4) return worst
-    const span = Math.min(targetBox.max[axis], sourceBox.max[axis] + offset[axis])
-      - Math.max(targetBox.min[axis], sourceBox.min[axis] + offset[axis])
+    const span = Math.min(targetBox.max[axis], centre[axis] + size[axis] / 2)
+      - Math.max(targetBox.min[axis], centre[axis] - size[axis] / 2)
     return Math.min(worst, Math.max(span, 0) / extent)
   }, 1)
 
-  const shift = targetBox.getCenter(new THREE.Vector3()).sub(sourceBox.getCenter(new THREE.Vector3()))
+  const targetCentre = targetBox.getCenter(new THREE.Vector3())
+  const sourceCentre = sourceBox.getCenter(new THREE.Vector3())
+  const shift = targetCentre.clone().sub(sourceCentre)
   const sameScale = axes.every(axis =>
     Math.abs(targetSize[axis] - sourceSize[axis]) <= BAKE_SCALE_TOLERANCE * Math.max(diagonal, 1e-9))
+  // Only asked when the sizes actually differ; a same-scale pair needs no factor
+  // and a ratio of ~1 is that pair described the long way round.
+  const uniformScale = sameScale ? null : uniformScaleRatio(targetSize, sourceSize, diagonal)
+  const untouched = worstAxis(sourceCentre, sourceSize)
 
   return {
-    overlap: worstAxis({ x: 0, y: 0, z: 0 }),
-    // Only claimed when re-centring is something the service will agree to do:
-    // at a different scale it refuses to guess, so promising the alignment here
-    // would wave through a bake that comes back empty.
-    alignedOverlap: sameScale ? worstAxis(shift) : worstAxis({ x: 0, y: 0, z: 0 }),
+    overlap: untouched,
+    // Only claimed when the service will really perform that alignment: it
+    // re-centres a same-scale source and rescales a uniformly-scaled one, but
+    // still refuses to guess at a non-uniform mismatch. Promising an alignment it
+    // will not make would wave through a bake that comes back empty.
+    alignedOverlap: sameScale
+      ? worstAxis(targetCentre, sourceSize)
+      : (uniformScale
+        ? worstAxis(targetCentre, sourceSize.clone().multiplyScalar(uniformScale))
+        : untouched),
     offset: shift,
     distance: shift.length(),
     sameScale,
+    // The factor the service will apply, or null when there is no single one.
+    uniformScale,
     diagonal,
   }
 }

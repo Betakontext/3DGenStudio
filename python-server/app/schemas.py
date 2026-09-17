@@ -204,12 +204,16 @@ class BakeOptions(BaseModel):
                         description="Texels of island dilation, so filtering cannot sample the empty gutter "
                                     "and bleed seams into the surface.")
     align_source: bool = Field(default=True,
-                               description="Re-centre the source onto the target when the two are the same "
-                                           "object at the same scale but different pivots. A bake is ray "
-                                           "casting, so an offset source returns blank texels wherever the "
-                                           "two stop overlapping — and moving a pivot between picking the "
-                                           "source and baking is enough to cause it. Sources at a different "
-                                           "scale are never moved; that case is reported instead.")
+                               description="Put the source into the target's space before baking. A bake is "
+                                           "ray casting, so a source that sits elsewhere returns blank texels "
+                                           "wherever the two stop overlapping — and moving a pivot between "
+                                           "picking the source and baking is enough to cause it. Re-centres a "
+                                           "source that is the same size, and rescales one whose box is the "
+                                           "target's times the SAME factor on all three axes (a mesh "
+                                           "simplified outside the editor against a texturing pass that "
+                                           "normalised its output). A source whose axes disagree about that "
+                                           "factor is a different object and is never moved; that case is "
+                                           "reported in stats.alignment instead.")
     require_overlap: float = Field(default=0.5, ge=0.0, le=1.0,
                                    description="Refuse the bake when, after alignment, the source covers less "
                                                "than this fraction of the target's smallest axis. Fails in "

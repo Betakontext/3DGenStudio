@@ -8163,7 +8163,10 @@ export default function MeshEditorPage() {
     // re-centre, and refusing it would refuse the common case.
     const fit = source.bounds ? measureBakeOverlap(geometryWorldBox(geometry), source.bounds) : null
     if (bakeSourceIsMisaligned(fit)) {
-      setError(`"${source.label}" does not overlap this mesh — it covers only ${(fit.alignedOverlap * 100).toFixed(0)}% of the mesh's smallest axis, and ${fit.sameScale ? 'lining the two up does not bring them together' : 'the two are at different scales, so they cannot be lined up automatically'}. A bake casts rays from this mesh onto the source, so it could only come back blank. Pick the source this mesh was derived from.`)
+      const why = fit.sameScale || fit.uniformScale
+        ? 'lining the two up does not bring them together'
+        : 'the two differ in size by a different amount on each axis, so no single factor lines them up'
+      setError(`"${source.label}" does not overlap this mesh — it covers only ${(fit.alignedOverlap * 100).toFixed(0)}% of the mesh's smallest axis, and ${why}. A bake casts rays from this mesh onto the source, so it could only come back blank. Pick the source this mesh was derived from.`)
       return
     }
     setBakeRunning(true)
@@ -8200,7 +8203,9 @@ export default function MeshEditorPage() {
       const coverage = typeof stats?.coverage === 'number' ? stats.coverage : null
       const realigned = stats?.alignment?.mode === 'applied'
         ? ` The source was re-centred onto the mesh by ${stats.alignment.distance?.toFixed(3)}m first.`
-        : ''
+        : stats?.alignment?.mode === 'scaled'
+          ? ` The source was rescaled onto the mesh by ${stats.alignment.scale?.toFixed(3)}x and re-centred first.`
+          : ''
       if (coverage !== null && coverage < BAKE_COVERAGE_COMPLETE) {
         // Not thrown away — a partial bake is still worth looking at, and the maps
         // stay on screen. But it is an error rather than feedback, because

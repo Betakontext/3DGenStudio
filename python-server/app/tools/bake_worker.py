@@ -87,10 +87,27 @@ ORM_NEUTRAL = {"ao": 255, "roughness": 255, "metallic": 0}
 #
 # Two meshes at the same SCALE whose bounding boxes are merely offset are the same
 # object with different pivots, and re-centring the source is unambiguously right.
-# Different scales mean we are looking at different objects (or a unit mismatch),
-# where a guess would be worse than the honest report — so that case is measured
-# and left alone.
+#
+# A UNIFORM scale difference is the same story one step out, and it is not a guess
+# when it is measured rather than assumed: if the target's box is the source's box
+# times the same ratio on all three axes, the two are the same shape in different
+# units. That case is common and arrives entirely from outside this editor — a mesh
+# simplified in a ComfyUI graph rather than by Auto Retopo/Optimize keeps the
+# original's space, while the texturing pass it is meant to be baked against
+# normalises its output to a unit bounding box at the origin (Trellis2 does exactly
+# this). The two then differ by a clean uniform factor, which is recoverable; only
+# a NON-uniform mismatch means different objects, and that is still reported and
+# left alone. Uniform is also the only scale a bake tolerates: it leaves normals
+# and ray directions untouched, where a per-axis one would skew both.
 ALIGN_SCALE_TOLERANCE = 0.05  # per-axis extent agreement required to re-centre
+# How far the three per-axis ratios may disagree (relative to their mean) and still
+# count as one uniform scale. Sized well above the noise simplification introduces
+# — measured at 0.06% on a 60k → 4.7k decimation — and far below any coincidence
+# between two genuinely different objects. Ratios are only taken on axes with real
+# extent; a flat axis divides by nothing useful.
+ALIGN_UNIFORM_TOLERANCE = 0.02
+ALIGN_MIN_AXIS_FRAC = 0.01  # axes thinner than this fraction of the diagonal give no ratio
+ALIGN_MIN_SCALE_DELTA = 0.005  # ratios this close to 1 are the same scale, not a rescale
 ALIGN_MIN_OFFSET_FRAC = 0.001  # offsets below this fraction of the diagonal are noise
 
 
@@ -222,15 +239,47 @@ def box_overlap(target: tuple, source: tuple) -> float:
     return worst
 
 
-def align_source(low, high_objects) -> dict:
-    """Re-centre the high-poly onto the low-poly when the two are the same object.
+def uniform_scale_ratio(t_extent, s_extent, diagonal) -> float | None:
+    """The single factor that takes the source's box to the target's, or None.
 
-    Returns a report dict (always), having translated `high_objects` in place when
+    None whenever the three axes disagree about what that factor is — which is the
+    whole point: one ratio repeated on every axis is a measurement of a units
+    change, three different ratios are two different objects, and only the first
+    can be undone. Axes too thin to divide by (a flat panel's depth) contribute no
+    ratio rather than a huge one; fewer than two usable axes is not enough evidence
+    to rescale on, since a single axis agrees with itself by construction.
+    """
+    ratios = []
+    floor = ALIGN_MIN_AXIS_FRAC * max(diagonal, 1e-9)
+    for axis in range(3):
+        if t_extent[axis] <= floor or s_extent[axis] <= floor:
+            continue
+        ratios.append(t_extent[axis] / s_extent[axis])
+    if len(ratios) < 2:
+        return None
+    mean = sum(ratios) / len(ratios)
+    if mean <= 0:
+        return None
+    if any(abs(r - mean) > ALIGN_UNIFORM_TOLERANCE * mean for r in ratios):
+        return None
+    return mean
+
+
+def align_source(low, high_objects) -> dict:
+    """Put the high-poly into the low-poly's space when the two are the same object.
+
+    Returns a report dict (always), having transformed `high_objects` in place when
     it decided to. Centre-to-centre is the estimator rather than min-to-min: the
     low-poly is normally a simplification of the high-poly, and simplification
     shaves the extremities at BOTH ends, so the centres stay put where either end
     of the box drifts. The residual after re-centring is a few thousandths of the
     model — well inside the cage extrusion, which is 2% of the diagonal.
+
+    Two modes do the work. "applied" is a translation, for a source that is the
+    same size but pivoted elsewhere. "scaled" adds a uniform factor measured off
+    the bounding boxes, for a source that is the same shape in different units —
+    see the ALIGN_* constants for why that is a measurement rather than a guess.
+    Both then leave the two boxes concentric, which is what a bake needs.
     """
     from mathutils import Matrix, Vector
 
@@ -262,8 +311,37 @@ def align_source(low, high_objects) -> dict:
         for i in range(3)
     )
     if not scale_matches:
-        report["mode"] = "skipped-scale"
-        report["overlap"] = report["overlap_before"]
+        # Different sizes, so the question is only whether they differ by ONE
+        # factor. If they do, undo it; if they do not, this is the honest refusal
+        # it has always been.
+        ratio = uniform_scale_ratio(t_extent, s_extent, diagonal)
+        if ratio is None or abs(ratio - 1.0) <= ALIGN_MIN_SCALE_DELTA:
+            report["mode"] = "skipped-scale"
+            report["overlap"] = report["overlap_before"]
+            if ratio is None:
+                report["scale_axes"] = [
+                    round(t_extent[i] / s_extent[i], 4) if s_extent[i] > 1e-9 else None
+                    for i in range(3)
+                ]
+            return report
+
+        # Scale about the SOURCE's own centre and land it on the target's, in one
+        # matrix. Doing it as a plain Matrix.Scale would scale the source's offset
+        # from the origin along with it and throw the mesh across the scene.
+        s_centre = Vector([(s_min[i] + s_max[i]) / 2 for i in range(3)])
+        t_centre = Vector([(t_min[i] + t_max[i]) / 2 for i in range(3)])
+        transform = (Matrix.Translation(t_centre)
+                     @ Matrix.Scale(ratio, 4)
+                     @ Matrix.Translation(-s_centre))
+        for obj in high_objects:
+            obj.matrix_world = transform @ obj.matrix_world
+        import bpy
+        bpy.context.view_layer.update()
+
+        report["mode"] = "scaled"
+        report["scale"] = round(ratio, 6)
+        report["distance"] = round(distance, 6)
+        report["overlap"] = round(box_overlap(target, world_bounds(high_objects)), 4)
         return report
 
     if distance <= ALIGN_MIN_OFFSET_FRAC * max(diagonal, 1e-9):
@@ -598,6 +676,9 @@ def main() -> None:
         offset = alignment["offset"]
         emit("align", 0.23,
              f"Source re-centred onto the target by ({offset[0]:.3f}, {offset[1]:.3f}, {offset[2]:.3f})m")
+    elif alignment["mode"] == "scaled":
+        emit("align", 0.23,
+             f"Source rescaled onto the target by {alignment['scale']:.4f}x and re-centred")
 
     # Pre-flight rather than post-mortem: a bake with nothing to hit costs the same
     # minutes of Cycles time as a good one and then hands back maps that look
@@ -610,7 +691,8 @@ def main() -> None:
         s_min, s_max = alignment.get("source_bounds", ([0, 0, 0], [0, 0, 0]))
         fmt = lambda v: "(" + ", ".join(f"{x:.3f}" for x in v) + ")"  # noqa: E731
         reason = {
-            "skipped-scale": "their scales differ too much to re-centre automatically",
+            "skipped-scale": "their sizes differ by a different amount on each axis, so they are "
+                             "not one object at two scales and no single factor can line them up",
             "disabled": "automatic alignment is switched off",
         }.get(alignment["mode"], "re-centring them did not bring them together")
         fail(3,

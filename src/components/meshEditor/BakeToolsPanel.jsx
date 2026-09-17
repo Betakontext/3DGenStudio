@@ -150,10 +150,25 @@ export default function BakeToolsPanel({
             </span>
           )}
 
+          {result.stats?.alignment?.mode === 'scaled' && (
+            <span className="mesh-editor-panel__hint">
+              The source was {result.stats.alignment.scale > 1 ? 'enlarged' : 'shrunk'} by{' '}
+              {result.stats.alignment.scale?.toFixed(3)}x and re-centred onto this mesh first — the two
+              were the same shape in different units, which is what a mesh simplified outside the editor
+              looks like beside a texturing pass that normalised its output.
+            </span>
+          )}
+
           {result.stats?.alignment?.mode === 'skipped-scale' && (
             <span className="mesh-editor-panel__hint" style={{ color: '#e0a030' }}>
-              The source is a different size from this mesh, so it was baked where it stands rather than
-              being lined up automatically — lining up meshes at different scales would be a guess.
+              The source is a different size from this mesh
+              {result.stats.alignment.scale_axes
+                ? ` by a different amount on each axis (${result.stats.alignment.scale_axes
+                  .map(axis => (axis == null ? '—' : `${axis.toFixed(2)}x`)).join(', ')})`
+                : ''}
+              , so it was baked where it stands rather than being lined up automatically. One factor
+              shared by all three axes is a units change and gets undone; three different ones mean two
+              different objects, and lining those up would be a guess.
             </span>
           )}
 
@@ -229,7 +244,7 @@ export default function BakeToolsPanel({
         <span className="mesh-editor-panel__section-title">Alignment</span>
         <ToggleField label="Align source to mesh" value={o.align_source !== false}
           onChange={v => setOption('align_source', v)} disabled={fieldsDisabled}
-          hint="A bake casts rays from this mesh onto the source, so the two must occupy the same space. Moving the pivot after picking a source separates them, and the bake then comes back blank where they no longer overlap. This re-centres a source that is the same size as the mesh; one at a different scale is never moved." />
+          hint="A bake casts rays from this mesh onto the source, so the two must occupy the same space. Moving the pivot after picking a source separates them, and the bake then comes back blank where they no longer overlap. This re-centres a source that is the same size as the mesh, and rescales one that differs by a single factor on all three axes — the case you get when the low-poly was simplified outside the editor. A source whose axes disagree about the factor is a different object and is never moved." />
         <ToggleField label="Refuse a source that does not overlap" value={(o.require_overlap ?? 0.5) > 0}
           onChange={v => setOption('require_overlap', v ? 0.5 : 0)} disabled={fieldsDisabled}
           hint="Stops in seconds rather than spending minutes of ray casting to return blank maps. Turn off to bake a source that only covers part of the mesh on purpose." />
