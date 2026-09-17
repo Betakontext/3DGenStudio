@@ -9527,6 +9527,7 @@ async function spawnGltfpack(inputBuffer, ratio, flags = {}) {
     permissive = false,
     aggressive = false,
     lockBorder = false,
+    update = false,
   } = flags;
   const binaryPath = resolveGltfpackPath();
   if (!existsSync(binaryPath)) {
@@ -9569,6 +9570,21 @@ async function spawnGltfpack(inputBuffer, ratio, flags = {}) {
     // -slb pins border vertices, so a mesh that is one piece of a larger set
     // does not pull away from its neighbours along the shared edge.
     if (lockBorder) args.push('-slb');
+    // -sv routes simplification through meshopt_simplifyWithUpdate instead of
+    // meshopt_simplifyWithAttributes: surviving vertices are *moved* to better
+    // approximate the original surface, and their normals, colors and UV0 are
+    // rewritten to match. Triangle count is unchanged — this is a quality knob,
+    // not a reduction one, so it never substitutes for the error budget.
+    //
+    // NOTE: this flag existed in gltfpack 1.2 as an accepted no-op ("attribute
+    // aware simplification is enabled by default"). Upstream repurposed the same
+    // spelling in Sep 2026, so it only does anything on binaries built after
+    // that; older ones take it and silently ignore it.
+    //
+    // gltfpack itself declines the update on meshes with morph targets or a
+    // second UV set, since it does not update UV1 and moving vertices would
+    // distort it. Those fall back to the ordinary path with no error.
+    if (update) args.push('-sv');
 
     const report = await new Promise((resolve, reject) => {
       const proc = spawn(binaryPath, args, { windowsHide: true });
@@ -9660,13 +9676,18 @@ async function runGltfpack(inputBuffer, ratio, {
   permissive = false,
   lockBorder = false,
   aggressive = null,
+  simplifyUpdate = false,
 } = {}) {
   // `aggressive` splits the destructive pass out from the seam permission so the
   // UI can offer it separately. Existing callers (MCP tools, saved Kanban steps)
   // send only allow_seam_breaking and must keep reaching their target, so when
   // it is unset it follows the seam permission exactly as before.
   const allowAggressive = aggressive == null ? !!allowSeamBreaking : !!aggressive;
-  const base = { error: simplifyError, permissive, lockBorder };
+  // `update` rides along in `base`, so the aggressive retry below keeps it too:
+  // -sv and -sa are orthogonal (one moves surviving vertices, the other changes
+  // which vertices survive), and dropping it on the retry would make the two
+  // passes differ by more than the thing being escalated.
+  const base = { error: simplifyError, permissive, lockBorder, update: simplifyUpdate };
   const first = await spawnGltfpack(inputBuffer, ratio, base);
   const achieved = (result) => ({
     ...result,
@@ -9724,6 +9745,7 @@ function readSimplifyOptions(options = {}) {
     permissive: !!options.permissive,
     lockBorder: !!options.lock_border,
     aggressive: options.aggressive == null ? null : !!options.aggressive,
+    simplifyUpdate: !!options.simplify_update,
   };
 }
 

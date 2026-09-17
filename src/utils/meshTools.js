@@ -314,6 +314,12 @@ export const DEFAULT_SIMPLIFY_OPTIONS = {
   // always did. It is separated from allow_seam_breaking only so it can be
   // turned off on its own, which is the setting that protects hard edges.
   aggressive: true,
+  // gltfpack's -sv. Off by default: it rewrites vertex positions, normals and
+  // UV0 rather than only choosing which vertices survive, so turning it on
+  // silently would change the output of every existing saved step and preset.
+  // It costs nothing in triangle count — it is opt-in for reviewability, not
+  // because it is risky.
+  simplify_update: false,
 }
 
 function simplifyPayload(options = {}) {
@@ -322,6 +328,7 @@ function simplifyPayload(options = {}) {
     permissive: !!options.permissive,
     lock_border: !!options.lock_border,
     aggressive: options.aggressive ?? DEFAULT_SIMPLIFY_OPTIONS.aggressive,
+    simplify_update: !!options.simplify_update,
   }
 }
 

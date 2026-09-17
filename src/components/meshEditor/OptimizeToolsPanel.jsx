@@ -103,6 +103,14 @@ export default function OptimizeToolsPanel({
           </span>
         )}
 
+        {/* The one knob here that improves the result without trading anything
+            away: it does not change the triangle count, so it neither helps nor
+            hinders reaching the ratio. It sits above the seam section because it
+            belongs with "get a better mesh", not with "get a smaller one". */}
+        <ToggleField label="Optimize vertex positions" value={!!o.simplify_update}
+          onChange={v => setOption('simplify_update', v)} disabled={fieldsDisabled}
+          hint="gltfpack's -sv: instead of only choosing which vertices survive, move the survivors to sit closer to the original surface and rewrite their normals, colours and UVs to match. The triangle count is identical either way — this buys a better-looking mesh at the same cost, so it is worth leaving on unless you need the output to match an earlier run. Meshes with morph targets or a second UV set skip it automatically." />
+
         <ToggleField label="Lock border vertices" value={!!o.lock_border}
           onChange={v => setOption('lock_border', v)} disabled={fieldsDisabled}
           hint="Pins vertices on an open edge, so a mesh that is one piece of a larger set does not pull away from its neighbours along the shared edge. Costs some reduction." />
