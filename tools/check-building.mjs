@@ -28,6 +28,12 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const testDirs = [
   path.join(repoRoot, 'building'),
   path.join(repoRoot, 'src', 'utils', 'building'),
+  // AND THE AGENT-FACING SURFACE. The catalog tool is generic over CATALOG, so a
+  // new node property reaches an agent for free - nothing else is. A new field on
+  // a reference, or a wiring shape the tools cannot express, is invisible from
+  // outside: the tool answers, the document compiles, and what was asked for is
+  // quietly not there.
+  path.join(repoRoot, 'mcp'),
 ];
 
 const tests = [];

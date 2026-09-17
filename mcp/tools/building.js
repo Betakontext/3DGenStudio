@@ -80,7 +80,17 @@ function summarise(doc, compiled) {
     })),
     edges: doc.edges.map((edge) => `${edge.from.node}:${edge.from.port} -> ${edge.to.node}:${edge.to.port}`),
     references: Object.entries(doc.references || {}).map(([slot, entry]) => ({
-      slot, kind: entry.kind, ref: entry.ref, name: entry.name || '',
+      slot,
+      kind: entry.kind,
+      ref: entry.ref,
+      name: entry.name || '',
+      // THE TILING TRAVELS WITH THE BINDING, or an agent reading a building back
+      // cannot see how its textures are scaled and has no way to tell a 2m brick
+      // from a 0.4m one. Absent on a model, and the second axis is absent when
+      // the tile is square - which is what one number has always meant.
+      ...(entry.tileMetres ? { tileMetres: entry.tileMetres } : {}),
+      ...(entry.tileMetresY ? { tileMetresY: entry.tileMetresY } : {}),
+      ...(entry.rotation ? { rotation: entry.rotation } : {}),
     })),
     stats: ir?.stats || null,
     slotsByType: byType,
@@ -294,6 +304,15 @@ export function registerBuildingTools(server, { api, notifyMutation }) {
       if (stage.type === 'footprint' || stage.type === 'output') {
         throw new Error(`"${stage.type}" is created for you - list only the stages between them.`);
       }
+      // A MERGE CANNOT BE A STAGE. It takes TWO buildings and a chain can only
+      // fill the first, which compiles to "Merge has nothing plugged into And"
+      // and no building at all. What an author means by reaching for one is a
+      // second volume, and that is a whole branch - see add_building_wing.
+      if (stage.type === 'merge') {
+        throw new Error('"merge" is created for you by add_building_wing, which builds the '
+          + "second volume and wires BOTH of the Merge's inputs. Listing it as a stage leaves "
+          + 'its second input dangling and the building will not compile.');
+      }
       const node = createNode(stage.type, `n${index}`);
       Object.assign(node.modes, stage.modes || {});
       Object.assign(node.props, stage.props || {});
@@ -320,6 +339,98 @@ export function registerBuildingTools(server, { api, notifyMutation }) {
     });
     const compiled = compileBuilding(doc);
     return { ok: compiled.ok, graph: doc, summary: summarise(doc, compiled) };
+  }));
+
+  server.registerTool('add_building_wing', {
+    title: 'Add a wing, tower or porch',
+    description: 'Join a SECOND volume to a building: a tower beside a hall, a porch in front of one, a cross gable, a chancel. Each volume keeps its OWN roof, which is the only way to get two roofs on one building - a Mass has one roof, and chaining a second Roof continues the first rather than starting a new one. This is also the only way to reach a Merge: it takes TWO buildings, so splicing one into a chain leaves its second input dangling and compiles to an error. Call it again for a third volume. It does NOT save; pass the result to save_building.',
+    inputSchema: {
+      graph: DOC_SHAPE.describe('The document to add to. It must already have an Output.'),
+      shape: z.object({
+        outer: z.array(z.array(z.number())).min(3)
+          .describe('The wing\'s plan as [x, y] pairs in METRES, in the SAME coordinate space as the existing plans - that is what decides where it stands. Overlap is fine and usual: a porch in front of a hall shares its wall.'),
+        holes: z.array(z.array(z.array(z.number()))).optional(),
+      }).optional().describe('Defaults to a 5m square placed clear of every existing plan, which is a starting point rather than a placement.'),
+      stages: z.array(z.object({
+        type: z.string().describe('A node type from describe_building_catalog, except footprint, output and merge.'),
+        modes: z.record(z.string(), z.string()).optional(),
+        props: z.record(z.string(), z.any()).optional(),
+      })).min(1).describe('The wing\'s own chain, IN ORDER, starting with a Mass. Give it a Roof of its own or it will have none.'),
+    },
+  }, toolHandler(({ graph, shape, stages }) => {
+    const doc = normalizeBuildingDoc(graph);
+    const output = doc.nodes.find((node) => node.type === 'output');
+    if (!output) throw new Error('This document has no Output node to join the wing to.');
+    // WHATEVER FEEDS THE OUTPUT is the building the wing joins, and that edge is
+    // re-pointed through the Merge rather than replaced - so calling this twice
+    // nests the merges and every volume survives.
+    const feed = doc.edges.find((edge) => edge.to.node === output.id && edge.to.port === 'building');
+    if (!feed) throw new Error('Nothing is plugged into the Output, so there is no building to join a wing to.');
+
+    const taken = new Set(doc.nodes.map((node) => node.id));
+    const idFor = (type) => {
+      let n = 1;
+      while (taken.has(`${type}${n}`)) n += 1;
+      taken.add(`${type}${n}`);
+      return `${type}${n}`;
+    };
+
+    // Clear of every existing plan, so an unplaced wing does not land inside one
+    // the author has already drawn.
+    let maxX = 0;
+    for (const node of doc.nodes) {
+      if (node.type !== 'footprint') continue;
+      for (const point of node.props?.shape?.outer || []) maxX = Math.max(maxX, point[0]);
+    }
+
+    const footprint = createNode('footprint', idFor('footprint'));
+    footprint.props.shape = shape || {
+      outer: [[maxX + 1, 1], [maxX + 6, 1], [maxX + 6, 6], [maxX + 1, 6]],
+      holes: [],
+    };
+
+    const nodes = [footprint];
+    const edges = [];
+    let previous = footprint.id;
+    let previousPort = 'out';
+    for (const stage of stages) {
+      if (!CATALOG[stage.type]) throw new Error(`No such node type: "${stage.type}". Ask describe_building_catalog.`);
+      if (stage.type === 'footprint' || stage.type === 'output' || stage.type === 'merge') {
+        throw new Error(`"${stage.type}" is created for you - list only the wing's own stages.`);
+      }
+      const node = createNode(stage.type, idFor(stage.type));
+      Object.assign(node.modes, stage.modes || {});
+      Object.assign(node.props, stage.props || {});
+      nodes.push(node);
+      const port = (CATALOG[stage.type].inputs || [])[0];
+      edges.push({
+        from: { node: previous, port: previousPort },
+        to: { node: node.id, port: port?.id || 'building' },
+      });
+      previous = node.id;
+      previousPort = 'out';
+    }
+
+    const merge = createNode('merge', idFor('merge'));
+    nodes.push(merge);
+    edges.push(
+      { from: { ...feed.from }, to: { node: merge.id, port: 'a' } },
+      { from: { node: previous, port: 'out' }, to: { node: merge.id, port: 'b' } },
+      { from: { node: merge.id, port: 'out' }, to: { node: output.id, port: 'building' } },
+    );
+
+    const patched = normalizeBuildingDoc({
+      ...doc,
+      nodes: [...doc.nodes, ...nodes],
+      edges: [...doc.edges.filter((edge) => edge !== feed), ...edges],
+    });
+    const compiled = compileBuilding(patched);
+    return {
+      ok: compiled.ok,
+      wing: { footprint: footprint.id, merge: merge.id, nodes: nodes.map((node) => node.id) },
+      graph: patched,
+      summary: summarise(patched, compiled),
+    };
   }));
 
   server.registerTool('list_building_styles', {
@@ -381,13 +492,15 @@ export function registerBuildingTools(server, { api, notifyMutation }) {
       kind: z.enum(['image', 'mesh']).describe('Which kind the slot takes. A texture slot takes an image; an opening, balcony, post or roof-item slot takes a mesh.'),
       name: z.string().max(200).optional().describe('Shown in the editor. Defaults to the slot name.'),
       tileMetres: z.number().positive().max(100).optional()
-        .describe('Images on a WALL, ROOF or TRIM only: how many metres one tile covers. An opening, door or post texture FILLS its cell and ignores this.'),
+        .describe('Images on a WALL, ROOF or TRIM only: how many metres one tile covers ACROSS the surface. An opening, door or post texture FILLS its cell and ignores this.'),
+      tileMetresY: z.number().positive().max(100).optional()
+        .describe('The same, UP the surface. The two axes are independent - courses of roof tile are wide and short, a timber board is long and narrow - and one number for both makes such a texture wrong in one direction. Omit for a square tile.'),
       rotation: z.array(z.number()).length(3).optional()
         .describe('Meshes only: degrees about X, Y and Z, applied before the model is fitted to its cell. For a model exported lying down.'),
       replace: z.boolean().default(false)
         .describe('Clear the slot\'s existing entries first, instead of adding to the list.'),
     },
-  }, toolHandler(({ graph, slot, assetId, kind, name, tileMetres, rotation, replace }) => {
+  }, toolHandler(({ graph, slot, assetId, kind, name, tileMetres, tileMetresY, rotation, replace }) => {
     const doc = normalizeBuildingDoc(graph);
     const prefix = String(slot).replace(/\.\d+$/, '');
     const references = { ...doc.references };
@@ -412,6 +525,7 @@ export function registerBuildingTools(server, { api, notifyMutation }) {
       ref: `asset:${assetId}`,
       name: name || prefix,
       ...(kind === 'image' && tileMetres ? { tileMetres } : {}),
+      ...(kind === 'image' && tileMetresY ? { tileMetresY } : {}),
       ...(kind === 'mesh' && rotation ? { rotation } : {}),
     };
     const patched = normalizeBuildingDoc({ ...doc, references });

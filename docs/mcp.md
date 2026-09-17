@@ -121,12 +121,12 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Asset library | `import_library_assets`, `rename_library_asset`, `delete_library_asset` |
 | Procedural trees | `list_tree_presets`, `preview_tree_skeleton`, `generate_tree` |
 | Particle effects | `describe_vfx_catalog`, `list_vfx_assets`, `get_vfx_graph`, `compile_vfx_graph`, `list_vfx_sprites`, `install_vfx_sprite`, `set_vfx_texture`, `render_vfx_preview`, `save_vfx_graph`, `export_vfx_bundle` |
-| Buildings | `describe_building_catalog`, `list_buildings`, `get_building`, `compile_building`, `create_building_graph`, `list_building_styles`, `apply_building_style`, `set_building_reference`, `save_building` |
+| Buildings | `describe_building_catalog`, `list_buildings`, `get_building`, `compile_building`, `create_building_graph`, `list_building_styles`, `apply_building_style`, `set_building_reference`, `add_building_wing`, `save_building` |
 | System | `get_settings` (secrets redacted), `update_settings`, `get_system_stats` |
 
 ### Context cost and loading only the groups you need
 
-An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 91 tools cost ~115 KB of JSON plus ~5 KB of server instructions — roughly **33,000 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~33k tokens: the question is ~10 tokens, the connection is the rest.
+An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 92 tools cost ~115 KB of JSON plus ~5 KB of server instructions — roughly **33,000 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~33k tokens: the question is ~10 tokens, the connection is the rest.
 
 Clients that load tool schemas lazily (Claude Code fetches them on demand) pay almost nothing. For clients that load everything eagerly — most local LLM stacks — load only the groups you need, either with the `--tools` flag or the `MCP_TOOLS` environment variable:
 
@@ -158,7 +158,7 @@ Unset, empty, or `all` loads every group, so nothing changes for an existing con
 
 | Selector | Tools | Catalog | Saved |
 |---|---|---|---|
-| *(unset)* / `all` | 91 | ~31,600 tokens | — |
+| *(unset)* / `all` | 92 | ~31,600 tokens | — |
 | `-mesh` | 77 | ~23,000 | 27% |
 | `-mesh,-actions` | 67 | ~16,700 | 47% |
 | `projects,graph,workflows,assets` | 34 | ~8,600 | 73% |

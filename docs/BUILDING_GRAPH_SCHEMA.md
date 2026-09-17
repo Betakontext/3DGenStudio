@@ -121,6 +121,7 @@ Every slot holds a **list**, keyed by a numeric tail:
 ```jsonc
 "references": {
   "tex_wall.0":            { "kind": "image", "ref": "asset:41", "name": "Brick", "tileMetres": 2 },
+  "tex_roof.0":            { "kind": "image", "ref": "asset:44", "tileMetres": 3, "tileMetresY": 2.4 },
   "tex_wall.1":            { "kind": "image", "ref": "asset:42", "name": "Stone", "tileMetres": 2 },
   "mesh_window.0":         { "kind": "mesh",  "ref": "asset:55", "name": "Sash" },
   "mesh_balcony.0":        { "kind": "mesh",  "ref": "asset:56", "rotation": [90, 0, 0] },
@@ -164,7 +165,8 @@ to Arch keeps the binding: `openingMesh`, `balconyMesh`, `postMesh`. A Roof Deta
 | `kind` | all | `image` or `mesh` |
 | `ref` | all | `'asset:<id>'` — invariant 4 |
 | `name` | all | shown in the editor |
-| `tileMetres` | images | metres per tile. **Ignored** by `opening`, `door` and `pillar`, whose textures fill their cell (see `tilesByMetres`) |
+| `tileMetres` | images | metres per tile **across** the surface. **Ignored** by `opening`, `door` and `pillar`, whose textures fill their cell (see `tilesByMetres`) |
+| `tileMetresY` | images | metres per tile **up** the surface. Optional, and written only when it differs from `tileMetres` — absent means square, which is what one number always meant. The two axes are independent: courses of roof tile are wide and short, a timber board is long and narrow |
 | `rotation` | meshes | degrees about X, Y, Z, applied **before** the unit-box fit |
 
 ---
