@@ -56,7 +56,14 @@ function loadTexture(url, tileMetres, tiles = true, tileMetresY = 0) {
           texture.repeat.set(1, 1)
         }
         texture.colorSpace = THREE.SRGBColorSpace
-        texture.anisotropy = 4
+        // SIXTEEN, not four. A building texture is seen at a grazing angle more
+        // often than anything else in the app - a roof slope IS a grazing angle -
+        // and four samples is not enough to resolve a fine repeating pattern
+        // there: a scale-tiled roof aliased into a coarse diamond moiré that
+        // looked like the texture's own pattern rather than a sampling artefact.
+        // three.js clamps this to whatever the GPU supports, so asking for more
+        // than the hardware has is safe.
+        texture.anisotropy = 16
         resolve(texture)
       },
       undefined,
