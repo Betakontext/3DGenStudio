@@ -8225,7 +8225,8 @@ app.post('/api/assets/:id/edits', assetIngestUpload, async (req, res) => {
       width: payload.width,
       height: payload.height,
       createdAt: payload.createdAt || Date.now(),
-      projectId: payload.projectId ?? null
+      projectId: payload.projectId ?? null,
+      metadata: payload.metadata || {}
     });
     // createAssetEditRecord has no thumbnail argument, so apply one separately.
     res.status(201).json(thumbnailPath && saved?.id
@@ -8751,6 +8752,18 @@ app.post('/api/meshes/auto-uv', meshToolsUpload.single('meshFile'), async (req, 
   } catch (err) {
     console.error('Auto UV proxy failed:', err);
     if (!res.headersSent) res.status(500).json({ error: err.message || 'Auto UV failed' });
+  }
+});
+
+// Impostor bake — a hemi-octahedral atlas for a distant LOD. SSE like the other
+// bakes: sixty-four views of a real building is tens of seconds, and a single
+// event at the start leaves the dialog looking hung for all of it.
+app.post('/api/meshes/impostor', meshToolsUpload.single('meshFile'), async (req, res) => {
+  try {
+    await proxyMeshTool('/meshes/impostor', req, res);
+  } catch (err) {
+    console.error('Impostor proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Impostor failed' });
   }
 });
 

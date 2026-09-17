@@ -330,3 +330,110 @@
   font-size: 11px;
   color: var(--text-dim, #8b93a1);
 }
+
+/* Merge and impostor: not levels, so they sit below the list with their own
+   rule above them rather than reading as a fifth checkbox in the chain. */
+.bexport__extras {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle, #2a2f3a);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bexport__extra {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.bexport__extra input { margin-top: 3px; }
+.bexport__extra small {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-dim, #8b93a1);
+  line-height: 1.45;
+}
+.bexport__atlas {
+  display: flex;
+  gap: 16px;
+  margin: -4px 0 0 26px;
+}
+.bexport__atlas label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim, #8b93a1);
+}
+.bexport__atlas select,
+.bexport__atlas input {
+  padding: 5px 8px;
+  background: var(--surface-2, #171b24);
+  border: 1px solid var(--border-subtle, #2a2f3a);
+  border-radius: 6px;
+  color: inherit;
+}
+.bexport__atlas input { width: 72px; }
+
+/* The feasibility line under the atlas fields. Warning carries a one-click fix,
+   because "too small" is useless without the size that is not. */
+.bexport__atlas-warn,
+.bexport__atlas-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 0 26px;
+  font-size: 12px;
+}
+.bexport__atlas-warn { color: var(--warn, #e0b341); }
+.bexport__atlas-ok { color: var(--text-dim, #8b93a1); }
+.bexport__atlas-warn .material-symbols-outlined { font-size: 16px; }
+.bexport__atlas-warn button {
+  margin-left: 4px;
+  padding: 3px 8px;
+  background: var(--surface-2, #171b24);
+  border: 1px solid var(--border-subtle, #2a2f3a);
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.bexport__atlas-ok button {
+  margin-left: 6px;
+  padding: 2px 8px;
+  background: var(--surface-2, #171b24);
+  border: 1px solid var(--border-subtle, #2a2f3a);
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+}
+.bexport__atlas-ok button:disabled { opacity: .6; cursor: default; }
+
+.bexport__hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  border: 1px solid var(--border-subtle, #2a2f3a);
+  border-radius: 50%;
+  font-size: 10px;
+  cursor: help;
+}
+
+/* The long-stage notice. An impostor bake is ~2 minutes of nothing visible,
+   and a dialog that looks idle for that long reads as finished. */
+.bexport__message.is-busy {
+  color: var(--text-dim, #8b93a1);
+  border-left: 2px solid var(--accent, #4a7cff);
+  padding-left: 10px;
+}
+
+.bexport__atlas-note {
+  align-self: flex-end;
+  padding-bottom: 6px;
+  font-size: 11px;
+  color: var(--text-dim, #8b93a1);
+}

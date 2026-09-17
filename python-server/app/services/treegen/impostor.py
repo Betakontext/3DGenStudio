@@ -347,7 +347,8 @@ def _render_view(direction, tile, mesh, centre, radius, rng, samples_per_pixel=S
 
 
 def bake_impostor(scene: trimesh.Scene, grid: int = 8, tile: int = 128, seed: int = 0,
-                  samples_per_pixel: float = SAMPLES_PER_PIXEL, on_progress=None):
+                  samples_per_pixel: float = SAMPLES_PER_PIXEL, on_progress=None,
+                  name: str = "Tree"):
     """Render a hemi-octahedral impostor for `scene`.
 
     Returns {albedo_png, normal_png, glb, meta}. The GLB is a single quad, sized
@@ -415,7 +416,7 @@ def bake_impostor(scene: trimesh.Scene, grid: int = 8, tile: int = 128, seed: in
     quad_uv = np.array([[u0, v0 + step], [u0 + step, v0 + step], [u0 + step, v0], [u0, v0]])
 
     material = PBRMaterial(
-        name="TreeImpostor",
+        name=f"{name}Impostor",
         baseColorTexture=Image.open(io.BytesIO(albedo_png)),
         alphaMode="MASK",
         alphaCutoff=0.5,
@@ -426,7 +427,7 @@ def bake_impostor(scene: trimesh.Scene, grid: int = 8, tile: int = 128, seed: in
     quad = trimesh.Trimesh(vertices=quad_vertices, faces=quad_faces, process=False)
     quad.visual = trimesh.visual.TextureVisuals(uv=quad_uv, material=material)
     impostor_scene = trimesh.Scene()
-    impostor_scene.add_geometry(quad, geom_name="Tree_Impostor", node_name="Tree_Impostor")
+    impostor_scene.add_geometry(quad, geom_name=f"{name}_Impostor", node_name=f"{name}_Impostor")
 
     return {
         "albedo_png": albedo_png,

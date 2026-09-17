@@ -195,7 +195,16 @@ export function planAtlas(pieces, {
 } = {}) {
   const islands = []
   for (const piece of pieces) {
-    const groups = extractIslands(piece.indices, piece.vertexCount)
+    // ONE ISLAND FOR THE WHOLE PIECE, when the caller says so. A piece whose
+    // faces all share one 0..1 parameterisation - every instance of the same
+    // window model, every placeholder box - does not want a cell each: they are
+    // UV-IDENTICAL, so one cell reproduces all of them exactly. Splitting them
+    // is not merely wasteful, it is ruinous: two hundred and forty islands each
+    // claiming the source's full resolution overflows any atlas, and the global
+    // rescale below then shrinks every OTHER piece to slivers to compensate.
+    const groups = piece.singleIsland
+      ? [Array.from({ length: piece.indices.length / 3 }, (_, i) => i)]
+      : extractIslands(piece.indices, piece.vertexCount)
     for (const faceList of groups) {
       const bounds = islandBounds(piece.indices, piece.uv, faceList)
       if (!(bounds.width > 0) && !(bounds.height > 0)) continue
@@ -212,8 +221,23 @@ export function planAtlas(pieces, {
   }
   if (!islands.length) return null
 
-  // Try at full density first, shrinking only if the cap forces it.
-  let scale = 1
+  // SEEDED FROM THE AREA BUDGET, then refined. Starting at 1 and stepping down by
+  // 0.85 means the reachable scale is 0.85^24 ~ 0.02 and no lower, so a big
+  // enough model simply failed to pack - a 150 m building in a 2048 atlas needs
+  // about 0.023 and landed just the wrong side of the last attempt. The scale
+  // that fits is not a search problem though: island area scales with the
+  // square, so sqrt(budget / needed) lands within a step or two of the answer
+  // whatever the size asked for.
+  //
+  // CLAMPED TO 1, which keeps the old behaviour where it mattered: anything that
+  // fits at full density still starts there and stops immediately.
+  let needed = 0
+  for (const island of islands) {
+    needed += (island.texelW + padding * 2) * (island.texelH + padding * 2)
+  }
+  let scale = needed > 0
+    ? Math.min(1, Math.sqrt((size * size * maxAtlases) / needed))
+    : 1
   let result = null
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const bins = []

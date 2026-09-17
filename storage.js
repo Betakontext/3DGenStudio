@@ -4356,7 +4356,7 @@ export async function createCardAttribute(projectId, externalCardId, { attribute
   return await getCardAttributeView(card.id, position);
 }
 
-export async function createAssetEditRecord({ assetId, editId, name = '', filePath, width = 0, height = 0, createdAt = Date.now(), projectId = null }) {
+export async function createAssetEditRecord({ assetId, editId, name = '', filePath, width = 0, height = 0, createdAt = Date.now(), projectId = null, metadata = {} }) {
   const parentAsset = await getRootAssetById(assetId);
 
   if (!parentAsset) {
@@ -4371,6 +4371,11 @@ export async function createAssetEditRecord({ assetId, editId, name = '', filePa
     width,
     height,
     metadata: {
+      // The caller's own keys first, so the two that identify an edit AS an edit
+      // cannot be overwritten by them. Anything extra is carried through: an
+      // impostor's normal atlas is saved as an edit of its albedo and needs to
+      // say which map it is, and before this it was silently dropped.
+      ...(metadata && typeof metadata === 'object' ? metadata : null),
       editId,
       source: 'IMAGE EDIT'
     },

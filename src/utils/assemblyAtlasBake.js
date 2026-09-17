@@ -58,6 +58,9 @@ const FRAGMENT = /* glsl */`
   uniform vec4 uFallback;
   uniform float uHasMap;
   uniform float uEncodeSRGB;
+  uniform float uKeepAlpha;
+  uniform vec2 uRepeat;
+  uniform vec2 uOffset;
   varying vec2 vOldUv;
 
   vec3 linearToSRGB(vec3 c) {
@@ -67,16 +70,29 @@ const FRAGMENT = /* glsl */`
   }
 
   void main() {
+    // THE SOURCE'S OWN repeat AND offset, applied here because a raw
+    // ShaderMaterial gets none of the texture matrix MeshStandardMaterial
+    // builds. For an assembly piece they are 1 and 0 and this is the identity.
+    // For a BUILDING they are the whole story: its walls are UV-mapped in
+    // METRES and tiled with repeat = 1/tileMetres, so sampling the raw uv would
+    // reproduce the brick at one tile per metre - a tower wall runs to uv 153.
     // texture2D, never a colour-managed fetch: see the header.
-    vec4 sampled = texture2D(uMap, vOldUv);
+    vec4 sampled = texture2D(uMap, vOldUv * uRepeat + uOffset);
     // The hardware already decoded an sRGB source; put it back so the stored
     // bytes match what came in. Linear sources skip this untouched.
     vec3 rgb = mix(sampled.rgb, linearToSRGB(sampled.rgb), uEncodeSRGB);
-    // Alpha is COVERAGE here, not opacity — 1 wherever a triangle drew. The
+    // Alpha is COVERAGE here, not opacity - 1 wherever a triangle drew. The
     // source's own alpha must not come through: these textures are 75%
     // transparent in their unused regions, and carrying that into the atlas
     // both darkens the copy and destroys the mask the gutter fill depends on.
-    gl_FragColor = vec4(mix(uFallback.rgb, rgb, uHasMap), 1.0);
+    //
+    // uKeepAlpha bakes the source's alpha as a GREYSCALE COLOUR instead, for the
+    // separate pass that recovers a cut-out mask - see preserveAlpha below.
+    // Coverage still goes in the alpha channel there, so the gutter fill keeps
+    // working on it exactly as it does for every other slot.
+    float a = mix(sampled.a, 1.0, 1.0 - uHasMap);
+    vec3 out3 = mix(mix(uFallback.rgb, rgb, uHasMap), vec3(a), uKeepAlpha);
+    gl_FragColor = vec4(out3, 1.0);
   }
 `
 
@@ -135,6 +151,26 @@ function bakeGeometry(source, newUv, faceList) {
 }
 
 
+/**
+ * Move a greyscale mask's red channel into a baked texture's alpha channel.
+ *
+ * On the CPU and on the canvas the bake already produced, because both are
+ * `CanvasTexture`s of the same size and this is one pass over the bytes - far
+ * less machinery than a second render target and a compositing shader.
+ */
+function compositeAlpha(texture, maskCanvas) {
+  const canvas = texture?.image
+  if (!canvas?.getContext) return
+  const context = canvas.getContext('2d')
+  const size = canvas.width
+  const colour = context.getImageData(0, 0, size, size)
+  const mask = maskCanvas.getContext('2d').getImageData(0, 0, size, size)
+  for (let i = 0; i < colour.data.length; i += 4) colour.data[i + 3] = mask.data[i]
+  context.putImageData(colour, 0, 0)
+  texture.needsUpdate = true
+}
+
+
 function renderTargetToCanvas(renderer, target, size) {
   const buffer = new Uint8Array(size * size * 4)
   renderer.readRenderTargetPixels(target, 0, 0, size, size, buffer)
@@ -169,7 +205,9 @@ function renderTargetToCanvas(renderer, target, size) {
  * `sources` are `{ id, geometry, material }` — the geometry still carrying its
  * ORIGINAL uv. Returns one `{ [slot]: THREE.Texture }` per atlas.
  */
-export function bakeAtlases({ renderer, sources, plan, size, dilatePasses = 8, onProgress }) {
+export function bakeAtlases({
+  renderer, sources, plan, size, dilatePasses = 8, preserveAlpha = false, onProgress,
+}) {
   const byId = new Map(sources.map(source => [source.id, source]))
   const camera = new THREE.Camera()
   const quad = new THREE.Mesh(
@@ -196,13 +234,22 @@ export function bakeAtlases({ renderer, sources, plan, size, dilatePasses = 8, o
   // Which slots any piece actually uses. Baking a slot nothing carries would
   // produce a flat texture the merged material does not need.
   const usedSlots = ATLAS_SLOTS.filter(slot => sources.some(s => s.material?.[slot.key]))
+  // A CUT-OUT ATLAS NEEDS ITS HOLES. Every slot above bakes alpha as coverage,
+  // which is right for the gutter fill and wrong for a window that punches
+  // through. So the base colour's alpha is recovered by baking it a second time
+  // as a greyscale image - through the same pipeline, dilation and all - and
+  // compositing it back into the map's alpha channel afterwards.
+  const passes = preserveAlpha
+    ? [...usedSlots, { key: 'map', fallback: [255, 255, 255, 255], srgb: false, alpha: true }]
+    : usedSlots
 
   try {
     plan.placements.forEach((placements, atlasIndex) => {
       const maps = {}
-      usedSlots.forEach((slot, slotIndex) => {
-        onProgress?.((atlasIndex * usedSlots.length + slotIndex)
-          / (plan.placements.length * usedSlots.length), `Baking ${slot.key}`)
+      passes.forEach((slot, slotIndex) => {
+        onProgress?.((atlasIndex * passes.length + slotIndex)
+          / (plan.placements.length * passes.length),
+        slot.alpha ? 'Baking the cut-out mask' : `Baking ${slot.key}`)
 
         const target = new THREE.WebGLRenderTarget(size, size, {
           minFilter: THREE.LinearFilter,
@@ -215,11 +262,29 @@ export function bakeAtlases({ renderer, sources, plan, size, dilatePasses = 8, o
 
         const scene = new THREE.Scene()
         const owned = []
+        // ONE DRAW PER PIECE, not one per island. Every island of a piece shares
+        // its source texture and therefore its uniforms, and `newUv` is
+        // per-vertex data that already covers all of them - so the only thing
+        // that differed between islands was which faces to draw, which is a
+        // concatenation. A building is the case that makes this matter rather
+        // than tidy: the twisted tower packs 8,496 islands, and a geometry, a
+        // mesh and a material for each of them per slot put the renderer past
+        // seventeen gigabytes and still climbing. Six draws do the same work.
+        const byPiece = new Map()
         for (const placement of placements) {
-          const source = byId.get(placement.pieceId)
-          const newUv = plan.uvByPiece.get(placement.pieceId)
+          // A LOOP, NOT A SPREAD. push(...faceList) passes every element as an
+          // argument, and a piece here can carry a million faces - which is an
+          // argument-limit crash, not a slow path. This project has already had
+          // that exact bug once, in the building mesher.
+          let faces = byPiece.get(placement.pieceId)
+          if (!faces) { faces = []; byPiece.set(placement.pieceId, faces) }
+          for (const face of placement.faceList) faces.push(face)
+        }
+        for (const [pieceId, faceList] of byPiece) {
+          const source = byId.get(pieceId)
+          const newUv = plan.uvByPiece.get(pieceId)
           if (!source || !newUv) continue
-          const geometry = bakeGeometry(source, newUv, placement.faceList)
+          const geometry = bakeGeometry(source, newUv, faceList)
           const map = source.material?.[slot.key] || null
           const material = new THREE.ShaderMaterial({
             vertexShader: VERTEX,
@@ -227,7 +292,14 @@ export function bakeAtlases({ renderer, sources, plan, size, dilatePasses = 8, o
             uniforms: {
               uMap: { value: map },
               uHasMap: { value: map ? 1 : 0 },
-              uEncodeSRGB: { value: map?.colorSpace === THREE.SRGBColorSpace ? 1 : 0 },
+              // An alpha pass stores a mask, which is linear data whatever the
+              // colour it was carried in.
+              uEncodeSRGB: {
+                value: !slot.alpha && map?.colorSpace === THREE.SRGBColorSpace ? 1 : 0,
+              },
+              uKeepAlpha: { value: slot.alpha ? 1 : 0 },
+              uRepeat: { value: map?.repeat?.clone?.() || new THREE.Vector2(1, 1) },
+              uOffset: { value: map?.offset?.clone?.() || new THREE.Vector2(0, 0) },
               uFallback: {
                 value: new THREE.Vector4(...slot.fallback.map(v => v / 255)),
               },
@@ -273,11 +345,16 @@ export function bakeAtlases({ renderer, sources, plan, size, dilatePasses = 8, o
         }
 
         const canvas = renderTargetToCanvas(renderer, current, size)
-        const texture = new THREE.CanvasTexture(canvas)
-        texture.flipY = false
-        texture.colorSpace = slot.srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace
-        texture.needsUpdate = true
-        maps[slot.key] = texture
+        if (slot.alpha) {
+          // Composite the mask into the base colour that was baked first.
+          compositeAlpha(maps.map, canvas)
+        } else {
+          const texture = new THREE.CanvasTexture(canvas)
+          texture.flipY = false
+          texture.colorSpace = slot.srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace
+          texture.needsUpdate = true
+          maps[slot.key] = texture
+        }
 
         for (const item of owned) item.dispose()
         target.dispose()

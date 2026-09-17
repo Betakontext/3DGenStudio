@@ -574,3 +574,52 @@ export const DEFAULT_SEGMENT_OPTIONS = {
   w_concavity: 1,
   precise: true,
 }
+
+// Hemi-octahedral impostor bake (/meshes/impostor). Not callMeshTool: the reply
+// carries an atlas PAIR and the meta an impostor shader needs alongside the
+// billboard, so flattening it into the single-mesh envelope would drop the half
+// that makes it an impostor rather than a quad.
+//
+// `meta` describes how the views are laid out — grid size, the hemi-octahedral
+// mapping, and the billboard's world size — which is what an engine-side shader
+// reads to pick the views nearest the camera and blend them.
+export async function bakeImpostor(meshBlob, {
+  options = {}, fileName = 'mesh.glb', onProgress = null,
+} = {}) {
+  const form = new FormData()
+  form.append('meshFile', meshBlob, fileName)
+  form.append('options', JSON.stringify(options))
+
+  const response = await fetch(`${API_BASE}/meshes/impostor`, { method: 'POST', body: form })
+  if (!response.ok) {
+    let message = `Impostor bake failed (${response.status})`
+    try {
+      const payload = await response.json()
+      message = payload.error || message
+    } catch {
+      // non-JSON error body — keep the status message
+    }
+    throw new Error(message)
+  }
+
+  const data = await readSseStream(response, onProgress)
+  return {
+    blob: base64ToBlob(data.mesh_b64, 'model/gltf-binary'),
+    maps: {
+      albedo: base64ToBlob(data.maps?.albedo, 'image/png'),
+      normal: base64ToBlob(data.maps?.normal, 'image/png'),
+    },
+    meta: data.meta || null,
+  }
+}
+
+// Mirrors ImpostorOptions in python-server/app/schemas.py. grid x grid views at
+// `tile` pixels each, so the atlas is grid * tile square: the default is 64
+// views in 1024px, which is where the tree generator settled.
+export const DEFAULT_IMPOSTOR_OPTIONS = {
+  grid: 8,
+  tile: 128,
+  seed: 0,
+  samples_per_pixel: 5.0,
+}
+

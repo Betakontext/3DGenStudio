@@ -30,6 +30,7 @@ from ..config import MAX_UPLOAD_BYTES
 from ..meshio import (export_mesh, load_mesh, load_mesh_vertex_normals, load_scene,
                       mesh_stats, scene_to_mesh)
 from ..schemas import (AutoRetopoOptions, AutoUvOptions, BakeOptions, CollisionOptions,
+                       ImpostorOptions,
                        ConvertOptions, FitOptions, HiddenFaceOptions, InspectOptions,
                        RepairOptions, SegmentOptions)
 from ..services.assembly_fit import run_fit
@@ -38,6 +39,9 @@ from ..services.auto_uv import run_auto_uv
 from ..services.hidden_faces import run_hidden_faces
 from ..services.bake import run_bake
 from ..services.collision import run_collision
+# The impostor baker lives under treegen only because that is where it was
+# first needed; it takes a plain Scene and knows nothing about trees.
+from ..services.treegen.impostor import bake_impostor
 from ..services.convert_fbx import run_convert_fbx
 from ..services.inspect import run_inspect
 from ..services.mesh_thumbnail import render_mesh_thumbnail
@@ -380,3 +384,45 @@ async def thumbnail(meshFile: UploadFile = File(...)) -> dict:
     except Exception as exc:  # noqa: BLE001 — surface as a clean HTTP error
         raise HTTPException(status_code=500, detail=f"Thumbnail render failed: {exc}") from exc
     return {"preview_b64": base64.b64encode(png).decode("ascii")}
+
+@router.post("/impostor")
+async def impostor(
+    meshFile: UploadFile = File(...),
+    options: str | None = Form(None),
+) -> StreamingResponse:
+    """Bake a hemi-octahedral impostor atlas for any mesh.
+
+    The baker is the tree generator's, unchanged and not copied: it always took a
+    plain `trimesh.Scene` and never knew anything about trees, it was simply only
+    ever reachable through /tree/lods. A building wants exactly the same thing
+    for its most distant level, and so would any other large static prop.
+
+    Returns images rather than geometry the way `/meshes/bake` does, plus the
+    billboard GLB and the `meta` an impostor shader needs to pick and blend
+    views.
+    """
+    opts = _parse_options(options, ImpostorOptions)
+    data = await _read_upload(meshFile)
+    scene = load_scene(data, meshFile.filename or "mesh.glb")
+
+    def run(emit):
+        result = bake_impostor(
+            scene,
+            grid=opts.grid,
+            tile=opts.tile,
+            seed=opts.seed,
+            samples_per_pixel=opts.samples_per_pixel,
+            on_progress=lambda frac, label: emit("impostor", frac, label),
+            name=opts.name,
+        )
+        return {
+            "format": "glb",
+            "mesh_b64": base64.b64encode(result["glb"]).decode("ascii"),
+            "maps": {
+                "albedo": base64.b64encode(result["albedo_png"]).decode("ascii"),
+                "normal": base64.b64encode(result["normal_png"]).decode("ascii"),
+            },
+            "meta": result["meta"],
+        }
+
+    return stream_payload(run, "Impostor")

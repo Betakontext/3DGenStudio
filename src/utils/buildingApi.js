@@ -330,6 +330,45 @@ export async function saveMeshToLibrary({ blob, name, metadata = {}, parentAsset
   return payload
 }
 
+/**
+ * Save a PNG into the image library.
+ *
+ * The same library-upload dialect as a mesh, with the type changed. It exists
+ * for the impostor atlases: the albedo is embedded in the billboard GLB, which
+ * is enough for a viewer, but an engine-side impostor shader needs both maps as
+ * addressable images - and the normal atlas has nowhere else to go at all.
+ */
+export async function saveImageToLibrary({ blob, name, metadata = {} }) {
+  const form = new FormData()
+  form.append('file', new File([blob], `${name}.png`, { type: 'image/png' }))
+  form.append('type', 'image')
+  form.append('name', name)
+  form.append('metadata', JSON.stringify(metadata))
+  const response = await fetch(`${API_BASE}/assets/library-upload`, { method: 'POST', body: form })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not save the image')
+  return payload
+}
+
+/**
+ * Save a PNG as an EDIT of an existing image - a child of it in the library.
+ *
+ * The same `payload` dialect as a mesh version. Used for the impostor's normal
+ * atlas: it is the same bake as the albedo from the same views, so it belongs
+ * under it rather than beside it as an unrelated picture.
+ */
+export async function saveImageEdit({ parentAssetId, blob, name, metadata = {} }) {
+  const form = new FormData()
+  form.append('file', new File([blob], `${name}.png`, { type: 'image/png' }))
+  form.append('payload', JSON.stringify({ name, type: 'image', metadata, createdAt: Date.now() }))
+  const response = await fetch(`${API_BASE}/assets/${parentAssetId}/edits`, {
+    method: 'POST', body: form,
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not save the image edit')
+  return payload
+}
+
 /** The bare numeric id from whichever shape a route returned. */
 export function assetIdOf(payload) {
   const raw = payload?.id ?? payload?.assetId ?? payload?.versionId

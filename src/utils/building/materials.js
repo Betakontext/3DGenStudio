@@ -43,8 +43,12 @@ const DEFAULT_FINISH = { roughness: 0.8, metalness: 0 }
 export function buildMaterials(ir, textures = {}) {
   return (ir?.materials || []).map((entry, index) => {
     const finish = FINISH[entry.slot] || DEFAULT_FINISH
+    // THE SLOT RIDES ON THE MATERIAL. A consumer downstream of the mesh - the
+    // atlas merge - needs to know whether a surface tiles by metres or fills a
+    // cell, and by then all it has is a THREE.Material. Recovering it from the
+    // mesh's name would be guessing.
     const map = textures[index] || null
-    return new THREE.MeshStandardMaterial({
+    const material = new THREE.MeshStandardMaterial({
       // A TEXTURE IS THE SURFACE; THE COLOUR IS WHAT YOU SEE WITHOUT ONE.
       //
       // This multiplied the texture by the palette colour, on the VFX sprite
@@ -88,6 +92,8 @@ export function buildMaterials(ir, textures = {}) {
       roughness: finish.roughness,
       metalness: finish.metalness,
     })
+    material.userData.slot = entry.slot
+    return material
   })
 }
 

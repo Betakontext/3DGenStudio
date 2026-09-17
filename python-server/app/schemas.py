@@ -562,3 +562,26 @@ class FitOptions(BaseModel):
         description="'auto' uses the NVIDIA Warp GPU closest-point query when available "
                     "(roughly 1000x faster than the CPU path) and falls back to trimesh.",
     )
+
+class ImpostorOptions(BaseModel):
+    """Options for `/meshes/impostor`.
+
+    HEMI-OCTAHEDRAL, not full: a building and a tree are both rooted to the
+    ground and neither is ever seen from below, so spending half the atlas on
+    views nobody looks at would halve the resolution of the ones they do.
+
+    `grid` x `grid` views are rendered into one atlas, so the cost is quadratic
+    in grid and the atlas is `grid * tile` pixels square. 8 x 128 gives a 1024px
+    atlas of 64 views, which is the size the tree generator settled on.
+    """
+
+    grid: int = Field(default=8, ge=2, le=16,
+                      description="Views per axis of the hemi-octahedral map.")
+    tile: int = Field(default=128, ge=32, le=512,
+                      description="Pixels per view. grid * tile is the atlas size.")
+    seed: int = Field(default=0, ge=0,
+                      description="Seeds the sampling jitter, so a bake is repeatable.")
+    samples_per_pixel: float = Field(default=5.0, ge=0.5, le=32.0,
+                                     description="Supersampling rate of the splat renderer.")
+    name: str = Field(default="Impostor", max_length=64,
+                      description="Names the billboard node and its material in the GLB.")

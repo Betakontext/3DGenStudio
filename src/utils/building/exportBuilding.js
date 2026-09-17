@@ -305,6 +305,13 @@ export function buildExportObject(ir, textures = {}, slotMeshes = {}) {
         : exportMaterials[0],
     )
     mesh.name = name
+    // THE SLOT EACH DRAW GROUP DRESSES, from the IR. A consumer downstream - the
+    // atlas merge - needs to know whether a surface tiles by metres or fills a
+    // cell, and it cannot get that from the material: a bound MODEL brings its
+    // own material, which wins, and knows nothing about building slots.
+    mesh.userData.slots = groups.length
+      ? groups.map(index => ir.materials[index]?.slot)
+      : [ir.materials[0]?.slot]
     root.add(mesh)
   }
 
@@ -330,6 +337,9 @@ export function buildExportObject(ir, textures = {}, slotMeshes = {}) {
       (modelWins && group.modelMaterial) || slotMaterial,
     )
     mesh.name = `${group.tag || group.type}s`
+    // See above: the model's own material usually wins here, so the slot has to
+    // travel with the mesh or every opening looks like a tiled surface.
+    mesh.userData.slots = [ir.materials[group.material]?.slot]
     root.add(mesh)
     // Only the placeholder box belongs to this call; a bound slot mesh is shared
     // with the preview and owned by its loader.
