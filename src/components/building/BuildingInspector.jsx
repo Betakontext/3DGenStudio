@@ -106,6 +106,7 @@ export default function BuildingInspector({
   onRemoveTexture,
   onGenerateTexture,
   onRotateMesh,
+  onRetileTexture,
 }) {
   const node = doc?.nodes?.find(candidate => candidate.id === selectedId) || null
   const def = node ? getNodeDef(node.type) : null
@@ -293,6 +294,7 @@ export default function BuildingInspector({
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
             onRotate={onRotateMesh}
+            onRetile={onRetileTexture}
             note="Timbers draw in the Trim colour. Change it under Colours."
           />
         </section>
@@ -308,6 +310,7 @@ export default function BuildingInspector({
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
             onRotate={onRotateMesh}
+            onRetile={onRetileTexture}
             note="Each Trim node can carry its own; empty uses the building-wide trim."
           />
         </section>
@@ -332,6 +335,7 @@ export default function BuildingInspector({
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
             onRotate={onRotateMesh}
+            onRetile={onRetileTexture}
             note={sidesOpen
               ? 'A side overrides this facade, which overrides the building.'
               : 'Empty rows use the building-wide texture.'}

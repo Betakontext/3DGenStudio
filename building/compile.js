@@ -379,6 +379,7 @@ export function compileBuilding(document) {
       color: palette[slot],
       ref: entry?.ref || '',
       tile: entry?.tileMetres || 0,
+      tileY: entry?.tileMetresY || 0,
     }));
   }
 
@@ -393,6 +394,7 @@ export function compileBuilding(document) {
       color: palette[override.slot],
       ref: override.ref,
       tile: override.tile || 0,
+      tileY: override.tileY || 0,
       fromFloor: override.fromFloor,
       toFloor: override.toFloor,
       side: override.side,
@@ -418,6 +420,7 @@ export function compileBuilding(document) {
       color: palette.trim,
       ref: entry.ref,
       tile: entry.tileMetres || 0,
+      tileY: entry.tileMetresY || 0,
     }));
   }
 
@@ -803,7 +806,8 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {},
             );
             if (entry?.ref) {
               overrides.push({
-                slot, fromFloor: from, toFloor: to, side, ref: entry.ref, tile: entry.tileMetres,
+                slot, fromFloor: from, toFloor: to, side, ref: entry.ref,
+                tile: entry.tileMetres, tileY: entry.tileMetresY || 0,
               });
             }
           }
@@ -858,7 +862,19 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {},
         breakFraction: readProp(node, 'breakFraction'),
         stepRun: readProp(node, 'stepRun'),
         stepRise: readProp(node, 'stepRise'),
+        // `overhang` is the STEPPED shapes' per-tier oversail and nothing else.
+        // The eave is its own control, because the one named "Eave overhang" did
+        // nothing at all on a hip, a gable or a mansard - the three roofs an eave
+        // is most visible on - and could not simply be switched on: its 0.6
+        // default would have re-shaped every roof of every building already
+        // saved. `eave` defaults to 0, so nothing moves until it is asked for.
+        // TIERED ONLY, as it has always been. Extending it to Stepped as well
+        // looked harmless and is not: the Aztec and Mayan packs both use a
+        // Stepped roof and neither sets the prop, so they would have inherited
+        // the 0.6 default and every tread would have grown a lip.
         overhang: kind === ROOF_KIND.TIERED ? readProp(node, 'overhang') : 0,
+        eave: readProp(node, 'eave'),
+        eaveDrop: readProp(node, 'eaveDrop'),
         maxHeight: readProp(node, 'maxHeight'),
         ridge: readMode(node, 'ridge'),
         ridgeAngle: readProp(node, 'ridgeAngle'),

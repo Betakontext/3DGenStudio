@@ -327,7 +327,7 @@ export function makeGable({ path = [] }) {
  * preview draws when `ref` is empty, which is every shipped style pack today.
  */
 export function makeMaterial({
-  slot, color = '', ref = '', tile = 0, fromFloor = -1, toFloor = -1, side = '',
+  slot, color = '', ref = '', tile = 0, tileY = 0, fromFloor = -1, toFloor = -1, side = '',
 }) {
   return {
     slot: String(slot || ''),
@@ -336,6 +336,10 @@ export function makeMaterial({
     // Metres per tile. Zero means "no texture bound", which is not the same as
     // a tile size of zero and is why this is not defaulted to 2 here.
     tile: quantize(tile),
+    // Metres per tile UP the surface, where that differs. Zero means "square" -
+    // use `tile` for both axes - so an untouched binding carries one number and
+    // reads exactly as it did before there were two.
+    tileY: quantize(tileY),
     // WHAT THIS ENTRY APPLIES TO, as a selector rather than as an expanded list.
     // -1 and '' are WILDCARDS: "any storey", "any side". A 40-storey building
     // with one brick has one entry, not 160, and adding a storey does not

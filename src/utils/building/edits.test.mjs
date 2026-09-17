@@ -14,7 +14,7 @@ import {
   addWing, applyFix, canApplyFix, canMoveNode, createStarterGraph, ensureStarterGraph,
   insertNodeAfter, moveNode, moveNodeAfterType, orderedNodes, removeNode, resetPalette,
   setNodeMode,
-  setNodeProp, setPaletteColor,
+  setNodeProp, setPaletteColor, setReferenceTile,
 } from './edits.js'
 import { CODE } from '../../../building/diagnostics.js'
 import { normalizeBuildingDoc } from '../../../building/doc.js'
@@ -580,6 +580,39 @@ test('a colour change does not disturb the geometry', () => {
     painted.materials.find(m => m.slot === 'wall').color,
     plain.materials.find(m => m.slot === 'wall').color,
   )
+})
+
+
+test('setReferenceTile sets each axis, and only on an image', () => {
+  const doc = normalizeBuildingDoc({
+    format: 1,
+    kind: 'building',
+    references: {
+      'tex_roof.0': { kind: 'image', ref: 'asset:8', name: 'Kawara', tileMetres: 1 },
+      'mesh_window.0': { kind: 'mesh', ref: 'asset:4', name: 'Casement' },
+    },
+  })
+
+  const wide = setReferenceTile(doc, 'tex_roof.0', 2.6, 1.5)
+  assert.equal(wide.references['tex_roof.0'].tileMetres, 2.6)
+  assert.equal(wide.references['tex_roof.0'].tileMetresY, 1.5)
+  // Everything else about the binding survives - it is the same asset.
+  assert.equal(wide.references['tex_roof.0'].ref, 'asset:8')
+  assert.equal(wide.references['tex_roof.0'].name, 'Kawara')
+
+  // Back to square, and the second axis goes away rather than lingering.
+  const square = setReferenceTile(wide, 'tex_roof.0', 2, 2)
+  assert.equal(square.references['tex_roof.0'].tileMetres, 2)
+  assert.equal('tileMetresY' in square.references['tex_roof.0'], false)
+
+  // A missing or nonsensical y means "same as x", not zero.
+  const onlyX = setReferenceTile(doc, 'tex_roof.0', 3, 0)
+  assert.equal(onlyX.references['tex_roof.0'].tileMetres, 3)
+  assert.equal('tileMetresY' in onlyX.references['tex_roof.0'], false)
+
+  // A MODEL HAS NO TILE, and asking for one must not invent a field on it.
+  const mesh = setReferenceTile(doc, 'mesh_window.0', 4, 2)
+  assert.deepEqual(mesh.references['mesh_window.0'], doc.references['mesh_window.0'])
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

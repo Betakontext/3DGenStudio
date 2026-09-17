@@ -289,6 +289,36 @@ export function setMeshRotation(doc, key, rotation) {
 }
 
 /**
+ * Resize a bound texture's tile, per axis.
+ *
+ * ON THE REFERENCE for the same reason a model's rotation is: how many metres
+ * one tile covers is a property of the IMAGE, not of the slot it is dropped
+ * into. Roof tiles photographed in ten courses and a plaster sample shot at a
+ * metre want different numbers in the same slot, and a second texture in the
+ * same list keeps its own.
+ *
+ * TWO AXES, because a wall is UV-mapped as (run, height) and a roof as plan
+ * metres, so the horizontal and vertical repeats are independently meaningful -
+ * courses of tile are wide and short, a timber board is long and narrow. Passing
+ * a y equal to x stores nothing extra: "square" is what one number always meant.
+ */
+export function setReferenceTile(doc, key, tileMetres, tileMetresY) {
+  const d = normalizeBuildingDoc(doc)
+  const entry = d.references[key]
+  if (!entry || entry.kind !== 'image') return d
+  const clamp = (value, fallback) => {
+    const n = Number(value)
+    return Number.isFinite(n) && n > 0 ? Math.min(n, 100) : fallback
+  }
+  const x = clamp(tileMetres, entry.tileMetres || 2)
+  const y = clamp(tileMetresY, x)
+  const next = { ...entry, tileMetres: x, tileMetresY: y }
+  // normalizeBuildingDoc drops tileMetresY when it equals tileMetres, so a
+  // document only carries the second number once it is actually doing something.
+  return normalizeBuildingDoc({ ...d, references: { ...d.references, [key]: next } })
+}
+
+/**
  * Change one palette colour.
  *
  * WHY THE DOCUMENT AND NOT THE PACK. A style pack is a file on disk shared by

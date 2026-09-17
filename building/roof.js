@@ -561,6 +561,8 @@ export function generateRoof({
   stepRun = 1.2,
   stepRise = 0.9,
   overhang = 0,
+  eave = 0,
+  eaveDrop = 0,
   maxHeight = 0,
   ridge = RIDGE.LONG,
   ridgeAngle = 0,
@@ -602,12 +604,49 @@ export function generateRoof({
       * estimateMaxInset(base, options.join));
   }
 
+  // THE EAVE OVERSAILS THE WALL, and it does so by starting the ladder OUTSIDE
+  // the building and BELOW it. A roof plane is one plane: continue it past the
+  // wall head and the edge necessarily drops, by exactly the rise it would have
+  // gained over that distance - which is why an overhanging eave is what puts
+  // the deep shadow line under a roof, and why this cannot be done by widening
+  // the contour alone.
+  //
+  // ITS OWN CONTROL, separate from `overhang`. Stepped and Tiered already spend
+  // `overhang` on something else - each tread oversails the one below, which is
+  // the whole difference between an Asian roof and a ziggurat - so the two
+  // cannot share a number. They also cannot share a DEFAULT: `overhang` carries
+  // 0.6, and quietly reusing it here would have put a 0.6m eave on every roof of
+  // every building already saved, none of whose authors ever saw the control.
+  const perTier = kind === ROOF_KIND.STEPPED || kind === ROOF_KIND.TIERED;
+  const oversail = perTier ? 0 : Math.max(eave, 0);
+  let ladderBase = base;
+  let ladderZ = baseZ;
+  let drop = 0;
+  if (oversail > 0) {
+    const widened = offsetPolygonList(base, oversail, options.join)
+      .filter(p => polygonArea(p) > MIN_CONTOUR_AREA);
+    if (widened.length) {
+      // Measured with the SAME rise function the ladder uses, so a mansard's
+      // shallow lower pitch governs its eave rather than an average of the two.
+      drop = riseAt(kind, oversail, options);
+      ladderBase = widened;
+      ladderZ = baseZ - drop;
+      // The break keeps its place relative to the WALL, not to the new contour:
+      // the author picked a fraction of the plan, and an eave is not plan.
+      if (options.breakInset > 0) options.breakInset += oversail;
+      // A height cap still means "this far above the top of the building". The
+      // ladder now starts below that, so the cap has to travel with it or an
+      // overhang would silently shorten every capped roof.
+      if (options.maxHeight > 0) options.maxHeight += drop;
+    }
+  }
+
   const directional = kind === ROOF_KIND.GABLE || kind === ROOF_KIND.SHED;
   const built = directional
-    ? directionalLadder(base, baseZ, kind, options)
-    : (kind === ROOF_KIND.STEPPED || kind === ROOF_KIND.TIERED)
-      ? steppedLadder(base, baseZ, options)
-      : slopedLadder(base, baseZ, kind, options);
+    ? directionalLadder(ladderBase, ladderZ, kind, options)
+    : perTier
+      ? steppedLadder(ladderBase, ladderZ, options)
+      : slopedLadder(ladderBase, ladderZ, kind, options);
 
   // A roof that produced nothing but its own base could not be built at all -
   // a plan too small for one step. Falling back to flat keeps the building
@@ -625,16 +664,27 @@ export function generateRoof({
 
   out.kind = kind;
   out.rungs = built.rungs;
+  // THE FASCIA: the eave edge carried straight down. One more rung with the
+  // SAME contour at a lower z, so the band between them is vertical - the
+  // mesher, the gable end walls and an eave trim all pick it up with no idea it
+  // was added, because a riser is a shape the ladder already describes.
+  const fascia = Math.max(eaveDrop, 0);
+  if (fascia > 0 && out.rungs.length) {
+    out.rungs = [{ polygons: out.rungs[0].polygons, z: out.rungs[0].z - fascia }, ...out.rungs];
+  }
   out.closed = built.closed;
+  // ALWAYS FROM THE TOP OF THE BUILDING, not from the eave. An overhang and a
+  // fascia both start the ladder lower, and reporting the taller number would
+  // make a roof look like it had grown when only its edge had dropped.
   out.height = built.rungs[built.rungs.length - 1].z - baseZ;
   if (directional) {
-    out.gables = endWalls(built.rungs, options.ridgeAxis);
+    out.gables = endWalls(out.rungs, options.ridgeAxis);
     // A SHED ALSO NEEDS ITS TALL SIDE. Kept in `gables` rather than a field of
     // its own because it is the same thing to every consumer - a vertical
     // polygon that travels beside the ladder - and because a bargeboard along
     // its verge is correct for a shed too.
     if (kind === ROOF_KIND.SHED) {
-      out.gables = [...out.gables, ...shedWall(built.rungs, options.ridgeAxis)];
+      out.gables = [...out.gables, ...shedWall(out.rungs, options.ridgeAxis)];
     }
   }
   return out;
@@ -783,5 +833,18 @@ export function stackRoofs(lower, upper) {
     height: rungs[rungs.length - 1].z - baseZ,
     closed: added ? upper.closed : lower.closed,
     fallback: added ? upper.fallback : lower.fallback,
+    // GABLES SURVIVE THE STACK. An end wall is a real surface belonging to the
+    // stage that made it, and dropping the field turned the one roof this
+    // matters most for into an open-ended cone: a Gable capping a truncated Hip
+    // is exactly irimoya, the hip-and-gable roof of every Japanese and Chinese
+    // temple, and its whole point is the vertical tympanum at each end.
+    //
+    // The UNION rather than a winner. Two Gable stages each wall their own band
+    // of the ladder and the bands cannot overlap, because the upper's rung 0 is
+    // the lower's top rung and is dropped above. When the upper added nothing
+    // it is discarded entirely, here as everywhere else in this function.
+    gables: added
+      ? [...(lower.gables || []), ...(upper.gables || [])]
+      : (lower.gables || []),
   };
 }

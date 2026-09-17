@@ -172,6 +172,45 @@ test('layout entries with non-finite coordinates are dropped', () => {
   assert.deepEqual(Object.keys(doc.layout.nodes), ['a']);
 });
 
+test('a texture tile is square unless the second axis says otherwise', () => {
+  // ONE NUMBER STILL MEANS SQUARE. The second axis is written only when it
+  // differs, so every document that predates it - and every square texture -
+  // carries exactly what it carried before and signs the same.
+  const square = normalizeBuildingDoc({
+    format: 1,
+    kind: 'building',
+    references: { 'tex_wall.0': { kind: 'image', ref: 'asset:7', tileMetres: 2.4, tileMetresY: 2.4 } },
+  });
+  assert.equal(square.references['tex_wall.0'].tileMetres, 2.4);
+  assert.equal('tileMetresY' in square.references['tex_wall.0'], false,
+    'a square tile wrote a second axis that says nothing');
+
+  const wide = normalizeBuildingDoc({
+    format: 1,
+    kind: 'building',
+    references: { 'tex_roof.0': { kind: 'image', ref: 'asset:8', tileMetres: 2.6, tileMetresY: 1.5 } },
+  });
+  assert.equal(wide.references['tex_roof.0'].tileMetres, 2.6);
+  assert.equal(wide.references['tex_roof.0'].tileMetresY, 1.5);
+
+  // Junk on either axis falls back rather than poisoning the material table.
+  const bad = normalizeBuildingDoc({
+    format: 1,
+    kind: 'building',
+    references: { 'tex_wall.0': { kind: 'image', ref: 'asset:9', tileMetres: 0, tileMetresY: -3 } },
+  });
+  assert.equal(bad.references['tex_wall.0'].tileMetres, 2);
+  assert.equal('tileMetresY' in bad.references['tex_wall.0'], false);
+
+  // A MESH HAS NO TILE. Only images carry one, either axis.
+  const mesh = normalizeBuildingDoc({
+    format: 1,
+    kind: 'building',
+    references: { 'mesh_window.0': { kind: 'mesh', ref: 'asset:4', tileMetresY: 3 } },
+  });
+  assert.equal('tileMetresY' in mesh.references['mesh_window.0'], false);
+});
+
 // --- INVARIANTS 3 and 4: references -----------------------------------------
 
 test('INVARIANT 4: a bare-number ref is rejected', () => {

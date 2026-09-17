@@ -156,7 +156,16 @@ export function texelDensity(material) {
   const map = material?.map
   const image = map?.image
   const pixels = Math.max(image?.width || 0, image?.height || 0) || 1024
-  const repeat = Math.abs(map?.repeat?.x || 1)
+  // THE DENSER AXIS, now that the two can differ. The packer sizes an island as
+  // `uvBounds x textureSize` with ONE scalar, so an anisotropic tiling has to
+  // collapse to a single number; taking the larger repeat over-allocates the
+  // slack axis rather than under-sampling the tight one, and a blurred bake is
+  // the failure that actually shows.
+  const repeatX = Math.abs(map?.repeat?.x || 1)
+  // Falls back to x rather than to 1: an absent second axis means "square", and
+  // defaulting it to 1 would read a 2m tile as a cell slot and under-allocate.
+  const repeatY = Math.abs(map?.repeat?.y ?? repeatX) || repeatX
+  const repeat = Math.max(repeatX, repeatY)
   return Math.max(1, pixels * repeat)
 }
 

@@ -302,6 +302,146 @@ test('a temple is a stepped base under a hip cap, and reads as neither', () => {
   assert.equal(stackRoofs(lower, more).kind, ROOF_KIND.STEPPED);
 });
 
+// --- eaves ---------------------------------------------------------------------
+
+/** The widest span of a rung, across the x axis. */
+const spanOf = (rung) => {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const polygon of rung.polygons) {
+    for (const point of polygon.outer) { lo = Math.min(lo, point[0]); hi = Math.max(hi, point[0]); }
+  }
+  return hi - lo;
+};
+
+test('an eave oversails the wall and drops by its own pitch', () => {
+  // A roof plane is ONE plane. Carry it past the wall head and the edge has to
+  // fall by the rise it would have gained over that distance - that drop is the
+  // shadow line under a roof, and widening the contour without it would leave
+  // the eave floating level with the wall top.
+  const plain = roofOf(rect(14, 10), { kind: ROOF_KIND.HIP, pitch: 30 });
+  const eaved = roofOf(rect(14, 10), { kind: ROOF_KIND.HIP, pitch: 30, eave: 1.5 });
+
+  assert.ok(Math.abs(spanOf(eaved.rungs[0]) - (spanOf(plain.rungs[0]) + 3)) < 0.05,
+    'the eave contour is not the plan plus an overhang on each side');
+  const drop = plain.rungs[0].z - eaved.rungs[0].z;
+  assert.ok(Math.abs(drop - 1.5 * Math.tan((30 * Math.PI) / 180)) < 0.02,
+    `the eave dropped ${drop.toFixed(3)}m, not one overhang of pitch`);
+
+  // AND THE PLANE STILL PASSES THROUGH THE WALL HEAD. Not "the ridge rose by
+  // the drop" - it does not: a hip's apex is fixed by the inradius, so extending
+  // the plane outward leaves the ridge where it was. What must hold is that the
+  // surface crosses z = baseZ exactly where the wall is, so read the height off
+  // the eaved roof at the span the wall actually has.
+  let crossing = null;
+  for (let i = 1; i < eaved.rungs.length; i++) {
+    const wide = spanOf(eaved.rungs[i - 1]);
+    const narrow = spanOf(eaved.rungs[i]);
+    if (wide >= 14 && narrow <= 14) {
+      const t = (wide - 14) / (wide - narrow);
+      crossing = eaved.rungs[i - 1].z + t * (eaved.rungs[i].z - eaved.rungs[i - 1].z);
+      break;
+    }
+  }
+  assert.ok(crossing !== null, 'the eaved roof never narrows back to the plan');
+  assert.ok(Math.abs(crossing - 10) < 0.02,
+    `the roof crosses the wall line at ${crossing.toFixed(3)}m, not at the wall head`);
+});
+
+test('a height cap measures from the building, not from the eave', () => {
+  // Otherwise adding an overhang silently shortens every capped roof - the cap
+  // would eat the drop first and the deck would come out low.
+  const capped = roofOf(rect(14, 10), {
+    kind: ROOF_KIND.HIP, pitch: 30, maxHeight: 2, eave: 1.5,
+  });
+  const plain = roofOf(rect(14, 10), { kind: ROOF_KIND.HIP, pitch: 30, maxHeight: 2 });
+  assert.ok(Math.abs(roofTop(capped).z - roofTop(plain).z) < 1e-6,
+    'the eave moved where the deck ended up');
+});
+
+test('an eave drop is a vertical rung under the eave', () => {
+  const eaved = roofOf(rect(14, 10), { kind: ROOF_KIND.HIP, pitch: 30, eave: 1.5 });
+  const fascia = roofOf(rect(14, 10), {
+    kind: ROOF_KIND.HIP, pitch: 30, eave: 1.5, eaveDrop: 0.4,
+  });
+
+  assert.equal(fascia.rungs.length, eaved.rungs.length + 1);
+  assert.ok(Math.abs((eaved.rungs[0].z - fascia.rungs[0].z) - 0.4) < 1e-6);
+  // Same contour at two heights is what the mesher reads as a vertical face.
+  assert.ok(Math.abs(spanOf(fascia.rungs[0]) - spanOf(fascia.rungs[1])) < 1e-9);
+  assert.equal(rungKind(fascia.rungs[0], fascia.rungs[1]), 'riser');
+  // The ridge did not move: only the edge dropped.
+  assert.ok(Math.abs(roofTop(fascia).z - roofTop(eaved).z) < 1e-6);
+});
+
+test('a gable end wall reaches down the fascia with it', () => {
+  // The end walls are cut from the ladder, so they have to be cut AFTER the
+  // fascia rung joins it - otherwise the tympanum stops at the eave and the
+  // drop below it is an open slot.
+  const roof = roofOf(rect(14, 10), {
+    kind: ROOF_KIND.GABLE, pitch: 35, eave: 1.2, eaveDrop: 0.5, ridgeAxis: 'x',
+  });
+  assert.equal(roof.gables.length, 2);
+  const lowest = Math.min(...roof.gables.flat().map(point => point[2]));
+  assert.ok(Math.abs(lowest - roof.rungs[0].z) < 1e-6,
+    'the gable face stops above the bottom of the fascia');
+});
+
+test('a tiered roof spends its overhang per tier, not on one eave', () => {
+  // Stepped and Tiered already mean something else by `overhang` - each tread
+  // oversails the one below, which is the whole difference between an Asian
+  // roof and a ziggurat - so the eave must NOT also move their base contour.
+  const tiered = roofOf(rect(30, 24), {
+    kind: ROOF_KIND.TIERED, stepRun: 1.2, stepRise: 0.8, overhang: 0.6,
+  });
+  assert.ok(Math.abs(spanOf(tiered.rungs[0]) - 30) < 1e-6, 'the base contour was widened');
+  assert.equal(tiered.rungs[0].z, 10, 'the base rung dropped');
+});
+
+test('a gable capping a hip keeps its end walls - irimoya', () => {
+  // The hip-and-gable roof: a hip truncated part way, then a gable carrying on
+  // from that deck. The gable's END WALLS are the white tympanum you see on a
+  // temple, and stacking used to drop the field they travel in - so the roof
+  // came out open at both ends with nothing to say so, the same way a shed
+  // without its tall side reads as a vanishing slope rather than a hole.
+  const lower = roofOf(rect(22, 16), { kind: ROOF_KIND.HIP, pitch: 30, maxHeight: 1.6 });
+  assert.equal((lower.gables || []).length, 0, 'a hip has no end walls to begin with');
+
+  const top = roofTop(lower);
+  const upper = generateRoof({
+    polygons: top.polygons, baseZ: top.z, kind: ROOF_KIND.GABLE, pitch: 36, ridgeAxis: 'x',
+  });
+  assert.equal(upper.gables.length, 2, 'the gable stage itself must produce two ends');
+
+  const stacked = stackRoofs(lower, upper);
+  assert.equal(stacked.kind, ROOF_KIND.STACKED);
+  assert.equal(stacked.gables.length, 2, 'the end walls did not survive the stack');
+
+  // And they belong to the UPPER band: every point of a surviving gable stands
+  // at or above the deck the hip stopped on, so this is the gable's own wall
+  // rather than something copied off the roof below.
+  // A gable is a list of [x, y, z] points here; compile.js is what wraps it
+  // into the { path } the mesher reads.
+  for (const gable of stacked.gables) {
+    for (const point of gable) {
+      assert.ok(point[2] >= top.z - 1e-6, 'a gable point sits below the hip it caps');
+    }
+  }
+});
+
+test('two gable stages keep both sets of end walls', () => {
+  // The union, not the upper: each stage walls its own band of the ladder.
+  const lower = roofOf(rect(22, 16), {
+    kind: ROOF_KIND.GABLE, pitch: 24, maxHeight: 1.8, ridgeAxis: 'x',
+  });
+  const top = roofTop(lower);
+  const upper = generateRoof({
+    polygons: top.polygons, baseZ: top.z, kind: ROOF_KIND.GABLE, pitch: 40, ridgeAxis: 'x',
+  });
+  assert.equal(stackRoofs(lower, upper).gables.length,
+    lower.gables.length + upper.gables.length);
+});
+
 test('stacking something that adds nothing leaves the roof below alone', () => {
   // A Flat roof produces only its own base rung, so it must not overwrite the
   // kind, the height or the closure of the roof it sits on.

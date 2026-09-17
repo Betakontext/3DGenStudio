@@ -677,11 +677,28 @@ export const CATALOG = {
         showFor: { kind: ['stepped', 'tiered'] },
       },
       overhang: {
-        type: PROP_TYPE.NUMBER, label: 'Eave overhang', default: 0.6, min: 0, max: 10, step: 0.1,
+        type: PROP_TYPE.NUMBER, label: 'Tier oversail', default: 0.6, min: 0, max: 10, step: 0.1,
         unit: 'm', basic: true,
         hint: 'How far each tier oversails the one below. Zero makes a ziggurat; '
             + 'a little makes an Asian roof.',
         showFor: { kind: ['tiered'] },
+      },
+      eave: {
+        type: PROP_TYPE.NUMBER, label: 'Eave overhang', default: 0, min: 0, max: 10, step: 0.1,
+        unit: 'm', basic: true,
+        hint: 'How far the roof oversails the wall. The edge drops as it goes, '
+            + 'because the slope carries on past the wall head - which is what '
+            + 'puts the shadow line under a roof.',
+        // Not on Flat, which has no slope to carry out, and not on the stepped
+        // shapes, which oversail per tier through the control above.
+        showFor: { kind: ['hip', 'mansard', 'gable', 'shed'] },
+      },
+      eaveDrop: {
+        type: PROP_TYPE.NUMBER, label: 'Eave drop', default: 0, min: 0, max: 5, step: 0.05,
+        unit: 'm', basic: true,
+        hint: 'Carry the eave edge straight down as a fascia. Deepens the roof '
+            + 'where it meets the wall, and gives a gable end its full face.',
+        showFor: { kind: ['hip', 'mansard', 'gable', 'shed'] },
       },
       ridgeAngle: {
         type: PROP_TYPE.NUMBER, label: 'Ridge angle', default: 0, min: 0, max: 180, step: 5,

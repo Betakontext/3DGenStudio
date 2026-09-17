@@ -201,6 +201,13 @@
   border-color: var(--primary);
 }
 
+/* Metres per tile, across and up. Wider than a rotation field because a tile
+   size is a decimal - 0.45 is a normal roof course - where an angle is whole
+   degrees. */
+.btex__tile .btex__rot-axis input {
+  width: 48px;
+}
+
 .btex__entry-del {
   flex: 0 0 auto;
 }

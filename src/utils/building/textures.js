@@ -29,7 +29,7 @@ const loader = new THREE.TextureLoader()
  * repeats, whoever ends up using it. Getting the colour space wrong is a
  * washed-out building that looks like a lighting bug.
  */
-function loadTexture(url, tileMetres, tiles = true) {
+function loadTexture(url, tileMetres, tiles = true, tileMetresY = 0) {
   return new Promise(resolve => {
     loader.load(
       url,
@@ -38,7 +38,13 @@ function loadTexture(url, tileMetres, tiles = true) {
           texture.wrapS = THREE.RepeatWrapping
           texture.wrapT = THREE.RepeatWrapping
           const tile = tileMetres > 0 ? tileMetres : DEFAULT_TILE_METRES
-          texture.repeat.set(1 / tile, 1 / tile)
+          // THE TWO AXES ARE SET SEPARATELY. A roof of wide, short courses and a
+          // wall of tall, narrow boards are the same image at different aspects,
+          // and forcing one number on both made every such texture wrong in one
+          // direction. Zero on the second means square, which is what one number
+          // always meant.
+          const tileV = tileMetresY > 0 ? tileMetresY : tile
+          texture.repeat.set(1 / tile, 1 / tileV)
         } else {
           // FILLS THE CELL. An opening's box is UV-mapped 0..1 across the hole,
           // so repeating by metres shows a fraction of the image - which is how
@@ -89,7 +95,9 @@ export async function loadBuildingTextures(ir) {
       console.warn(`Building texture: ${material.ref} (${material.slot}) has no file.`)
       return
     }
-    const texture = await loadTexture(url, material.tile, tilesByMetres(material.slot))
+    const texture = await loadTexture(
+      url, material.tile, tilesByMetres(material.slot), material.tileY,
+    )
     if (texture) out[index] = texture
     else console.warn(`Building texture: ${material.slot} failed to load from ${url}`)
   }))
@@ -111,7 +119,7 @@ export function disposeTextures(textures) {
 export function textureKeyOf(ir) {
   return (ir?.materials || [])
     .map((material, index) => (material.ref
-      ? `${index}:${material.ref}:${material.tile}`
+      ? `${index}:${material.ref}:${material.tile}:${material.tileY}`
       : ''))
     .filter(Boolean)
     .join('|')

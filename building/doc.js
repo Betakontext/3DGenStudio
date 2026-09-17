@@ -183,6 +183,16 @@ function normalizeReferenceEntry(entry) {
   if (kind === REFERENCE_KIND.IMAGE) {
     const tile = Number(entry.tileMetres);
     out.tileMetres = Number.isFinite(tile) && tile > 0 ? Math.min(tile, 100) : 2;
+    // AND THE OTHER AXIS, because the two are independently meaningful: a wall
+    // is UV-mapped as (run, height) in metres and a roof as plan metres, so
+    // courses of roof tile are wide and short while a timber board is long and
+    // narrow. Written only when it differs, so it is ABSENT on every document
+    // that predates it and on every square texture - which keeps those
+    // documents byte-identical and their signatures unchanged.
+    const tileY = Number(entry.tileMetresY);
+    if (Number.isFinite(tileY) && tileY > 0 && Math.abs(tileY - out.tileMetres) > 1e-9) {
+      out.tileMetresY = Math.min(tileY, 100);
+    }
   }
   // HOW THE MODEL IS TURNED, in degrees, and it belongs on the reference for the
   // same reason the tile size does: it is a property of the ASSET, not of the

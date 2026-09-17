@@ -37,11 +37,13 @@ import './BuildingTextures.css'
  * @param {(entryKey: string) => void} props.onRemove
  * @param {(entryKey: string, rotation: Array<number>) => void} [props.onRotate]
  *   Models only. Degrees about X, Y and Z.
+ * @param {(entryKey: string, tileMetres: number, tileMetresY: number) => void} [props.onRetile]
+ *   Tiling images only. Metres per tile across and up.
  * @param {(refKey: string, guideSlot: string) => void} props.onGenerate
  * @param {string} [props.note]
  */
 export default function BuildingTextures({
-  doc, rows, title, onAdd, onRemove, onGenerate, onRotate, note,
+  doc, rows, title, onAdd, onRemove, onGenerate, onRotate, onRetile, note,
 }) {
   const [picking, setPicking] = useState(null)
 
@@ -78,6 +80,10 @@ export default function BuildingTextures({
           const entries = entryKeys.map(key => ({ key, entry: doc.references[key] }))
           const filled = entries.filter(({ entry }) => entry?.ref)
           const isMesh = row.assetType === 'mesh'
+          // A CELL SLOT HAS NO TILE TO SET. An opening's texture is stretched
+          // across the hole, so offering metres per tile there would be a
+          // control that silently does nothing - see tilesByMetres.
+          const canRetile = !isMesh && Boolean(onRetile) && tilesByMetres(row.guideSlot)
           return (
             <li key={row.refKey} className="btex__group">
               <div
@@ -150,7 +156,10 @@ export default function BuildingTextures({
                   image row keeps the old rule - the entries only appear once
                   there is more than one to tell apart, since a single binding is
                   already named on the row above. */}
-              {(isMesh || filled.length > 1) && filled.map(({ key, entry }) => (
+              {/* A TILING IMAGE LISTS ITS ENTRIES TOO, however few: the tile
+                  size lives on the entry and there is nowhere else to put it,
+                  which is the same reason a model always lists its own. */}
+              {(isMesh || canRetile || filled.length > 1) && filled.map(({ key, entry }) => (
                 <div key={key} className={`btex__entry ${isMesh ? 'btex__entry--mesh' : ''}`}>
                   <span className="btex__entry-name">{entry.name || entry.ref}</span>
                   {/* THREE ANGLES, in degrees, applied BEFORE the model is fitted
@@ -175,6 +184,43 @@ export default function BuildingTextures({
                       ))}
                     </span>
                   )}
+                  {/* METRES PER TILE, across and up. Two fields rather than
+                      one because the axes are independent: roof courses are
+                      wide and short, a board is long and narrow, and one number
+                      for both made every such texture wrong in one direction. */}
+                  {canRetile && (
+                    <span className="btex__rot btex__tile">
+                      {[
+                        ['W', 'tileMetres', 'across'],
+                        ['H', 'tileMetresY', 'up'],
+                      ].map(([mark, field, way]) => (
+                        <label key={field} className="btex__rot-axis" title={`Metres per tile ${way}`}>
+                          <span>{mark}</span>
+                          <input
+                            type="number"
+                            min="0.05"
+                            max="100"
+                            step="0.1"
+                            // The second axis falls back to the first: absent
+                            // means square, which is what one number meant.
+                            value={field === 'tileMetres'
+                              ? (entry.tileMetres ?? 2)
+                              : (entry.tileMetresY ?? entry.tileMetres ?? 2)}
+                            onChange={event => {
+                              const value = Number(event.target.value)
+                              const x = entry.tileMetres ?? 2
+                              const y = entry.tileMetresY ?? x
+                              onRetile(
+                                key,
+                                field === 'tileMetres' ? value : x,
+                                field === 'tileMetres' ? y : value,
+                              )
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </span>
+                  )}
                   <button
                     type="button"
                     className="btex__entry-del"
@@ -186,7 +232,7 @@ export default function BuildingTextures({
                 </div>
               ))}
 
-              {!isMesh && filled.length === 1 && (
+              {!isMesh && !canRetile && filled.length === 1 && (
                 <div className="btex__entry btex__entry--only">
                   <button
                     type="button"

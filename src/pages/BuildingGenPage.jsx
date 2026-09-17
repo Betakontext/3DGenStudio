@@ -44,7 +44,7 @@ import { SEVERITY } from '../../building/diagnostics.js'
 import {
   addWing, applyFix, canApplyFix, canMoveNode, ensureStarterGraph, insertNodeAfter,
   moveNode, orderedNodes, removeNode, resetPalette, setFootprint, setNodeEnabled,
-  setMeshRotation, setNodeMode, setNodeProp, setPaletteColor,
+  setMeshRotation, setNodeMode, setNodeProp, setPaletteColor, setReferenceTile,
 } from '../utils/building/edits'
 import './BuildingGenPage.css'
 
@@ -261,6 +261,15 @@ export default function BuildingGenPage() {
       // A number field fires per keystroke; one undo entry per model rather than
       // one per digit typed.
       coalesceKey: `rotate:${key}`,
+    })
+  }, [commit])
+
+  const onRetileTexture = useCallback((key, tileMetres, tileMetresY) => {
+    commit(current => setReferenceTile(current, key, tileMetres, tileMetresY), {
+      undoLabel: 'Resize Tile',
+      // Same reasoning as the rotation fields: one undo entry per texture, not
+      // one per digit typed into the box.
+      coalesceKey: `tile:${key}`,
     })
   }, [commit])
 
@@ -500,6 +509,7 @@ export default function BuildingGenPage() {
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
             onRotate={onRotateMesh}
+            onRetile={onRetileTexture}
             note={'A texture replaces the slot’s colour and tiles by metres. A Facade '
               + 'node can override the wall and windows on the storeys it covers, and on '
               + 'one side of them.'}
@@ -517,6 +527,7 @@ export default function BuildingGenPage() {
             onRemove={onRemoveTexture}
             onGenerate={onGenerateTexture}
             onRotate={onRotateMesh}
+            onRetile={onRetileTexture}
             note={'A model is scaled to the bay the grammar worked out, so one fits any '
               + 'wall. Empty slots stay plain boxes.'}
           />
@@ -799,6 +810,7 @@ export default function BuildingGenPage() {
             onRemoveTexture={onRemoveTexture}
             onGenerateTexture={onGenerateTexture}
             onRotateMesh={onRotateMesh}
+            onRetileTexture={onRetileTexture}
           />
         </aside>
       </div>
