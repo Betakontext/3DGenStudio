@@ -44,16 +44,103 @@ import { tilesByMetres } from './textureSlots.js'
  * person would accept, not a melted version of the last one.
  */
 export const LOD_LEVELS = [
-  { level: 0, label: 'Full detail', bayScale: 1, trim: true, openings: true, modelBudget: 1 },
+  {
+    level: 0, label: 'Full detail', bayScale: 1, trim: true, openings: true,
+    modelBudget: 1, thin: {}, dropOverBudget: Infinity,
+  },
   // Bays a third wider: the windows are still there and still snapped to whole
   // numbers, there are simply fewer of them. The grammar does this correctly by
   // construction - see grammar.js on integer snapping.
-  { level: 1, label: 'Wider bays, no trim', bayScale: 1.35, trim: false, openings: true, modelBudget: 0.45 },
-  { level: 2, label: 'Sparse openings', bayScale: 2, trim: false, openings: true, modelBudget: 0.2 },
+  //
+  // AND HALF THE POSTS, because bayScale does not touch them. A post is placed
+  // at a bay BOUNDARY and tileSpan floors at one bay per wall, so a plan whose
+  // edges are already shorter than one bay - any curve approximated as a polygon
+  // - gets two posts per edge whatever the bay width is. On the tower that
+  // prompted this, doubling the bay width removed exactly zero of 2,336 posts
+  // and LOD1 and LOD2 came out byte-identical. See thinSlots below.
+  {
+    level: 1, label: 'Wider bays, no trim', bayScale: 1.35, trim: false, openings: true,
+    modelBudget: 0.45, thin: { pillar: 2 }, dropOverBudget: 3,
+  },
+  {
+    level: 2, label: 'Sparse openings', bayScale: 2, trim: false, openings: true,
+    modelBudget: 0.2, thin: { pillar: 4 }, dropOverBudget: 1.5,
+  },
+  // THE RUNG BEFORE THE CLIFF. Without it the chain went straight from a fully
+  // modelled facade to bare massing - 252,154 triangles to 4,526 on the tower,
+  // 301,404 to 1,408 on the cottage. Those are 55x and 214x steps, where every
+  // other step is about 2x, and a step that size is a visible pop.
+  //
+  // It is the last level that still has openings, so it is where the detail is
+  // spent down rather than switched off: the bays are wide, the posts are
+  // thinned hard, and the model allowance is small enough that a model which
+  // cannot comply falls back to its placeholder box rather than holding the
+  // level up. That fallback is why this level works on both buildings - the
+  // tower's fins hit their simplifier floor and keep their shape, the cottage's
+  // windows simplify all the way down, and neither needs its own tuning.
+  {
+    level: 3, label: 'Plain openings', bayScale: 2.8, trim: false, openings: true,
+    modelBudget: 0.04, thin: { pillar: 12 }, dropOverBudget: 2,
+  },
   // No openings at all. At the range this is drawn, a window is smaller than a
   // pixel and the mass and roof are the whole of the silhouette.
-  { level: 3, label: 'Massing only', bayScale: 1, trim: false, openings: false, modelBudget: 0 },
+  {
+    level: 4, label: 'Massing only', bayScale: 1, trim: false, openings: false,
+    modelBudget: 0, thin: {}, dropOverBudget: 1,
+  },
 ]
+
+/**
+ * Keep every Nth instance of the named slot types, and drop the rest.
+ *
+ * THE SECOND REDUCTION LEVER, and the one the LOD chain was missing. bayScale
+ * asks the grammar for fewer BAYS, which is exactly right for windows and does
+ * nothing at all for posts - so a building whose detail is a colonnade had no
+ * usable LOD chain. Shrinking the MODEL cannot cover for it either: a simplifier
+ * has a topology floor (the fin that prompted this will not go below 392
+ * triangles however little it is offered), so two levels that both ask for less
+ * than that floor produce identical geometry.
+ *
+ * WITHIN EACH (type, floor), IN (face, bay) ORDER, which is the ring of posts
+ * round one storey read in order. Keeping every Nth of that is spatially even -
+ * it reads as coarser ribbing rather than as a gap - and it is deterministic, so
+ * the same posts survive every recompile and a level does not shimmer against
+ * the one above it. The first stride is nearly free: the post at the end of one
+ * edge stands on the same corner as the post at the start of the next, so
+ * keeping every second one mostly removes coincident pairs.
+ *
+ * OPENINGS ARE NOT THINNED by default, and should not be: a missing window is a
+ * hole in a facade, and bayScale already reduces windows correctly.
+ */
+export function thinSlots(ir, thin) {
+  const strides = Object.entries(thin || {}).filter(([, n]) => n > 1)
+  if (!strides.length || !ir?.slots?.length) return ir
+
+  const strideOf = new Map(strides)
+  const ordered = ir.slots
+    .map((slot, index) => ({ slot, index }))
+    .sort((left, right) => (
+      (left.slot.type < right.slot.type ? -1 : left.slot.type > right.slot.type ? 1 : 0)
+      || (left.slot.floorIndex | 0) - (right.slot.floorIndex | 0)
+      || (left.slot.faceIndex | 0) - (right.slot.faceIndex | 0)
+      || (left.slot.bayIndex | 0) - (right.slot.bayIndex | 0)
+      || left.index - right.index
+    ))
+
+  const keep = new Set()
+  let group = ''
+  let seen = 0
+  for (const entry of ordered) {
+    const stride = strideOf.get(entry.slot.type)
+    if (!stride) { keep.add(entry.index); continue }
+    const id = entry.slot.type + '#' + (entry.slot.floorIndex | 0)
+    if (id !== group) { group = id; seen = 0 }
+    if (seen % stride === 0) keep.add(entry.index)
+    seen += 1
+  }
+  if (keep.size === ir.slots.length) return ir
+  return { ...ir, slots: ir.slots.filter((_, index) => keep.has(index)) }
+}
 
 /**
  * A document at one detail level.
@@ -285,16 +372,48 @@ export async function buildLevel(doc, spec, loadTextures = null, loadModels = nu
   if (!result.ok || !result.ir.levels.length) {
     throw new Error(`The building does not compile at ${spec.label}.`)
   }
-  const textures = loadTextures ? await loadTextures(result.ir) : {}
+  // THINNED BEFORE THE MODELS ARE LOADED, and the order is the whole point: the
+  // budget divides by the instance count, so thinning afterwards would leave
+  // every survivor holding the allowance of an instance that is no longer drawn
+  // and the level would cost exactly what it did before.
+  const ir = thinSlots(result.ir, spec.thin)
+  const textures = loadTextures ? await loadTextures(ir) : {}
   // THE MODEL BUDGET FALLS WITH THE LEVEL, and it has to. Widening the bays
   // removes instances, which would hand each surviving model a LARGER allowance
   // - so every level saturated the same budget and LOD1 and LOD2 came out
   // exactly as expensive as LOD0. An LOD that is not cheaper is not an LOD.
   const slotMeshes = loadModels
-    ? await loadModels(result.ir, SLOT_TRIANGLE_BUDGET * (spec.modelBudget ?? 1))
+    ? await loadModels(ir, {
+      budget: SLOT_TRIANGLE_BUDGET * (spec.modelBudget ?? 1),
+      dropOverBudget: spec.dropOverBudget ?? Infinity,
+    })
     : {}
-  const object = buildExportObject(result.ir, textures, slotMeshes)
-  return { object, ir: result.ir, textures, slotMeshes, triangles: countTriangles(object), spec }
+  const object = buildExportObject(ir, textures, slotMeshes)
+  return {
+    object, ir, textures, slotMeshes, spec,
+    triangles: countTriangles(object),
+    breakdown: breakdownOf(object),
+  }
+}
+
+/**
+ * Triangles per named mesh, biggest first.
+ *
+ * So the export dialog can say WHICH part of a level is expensive. Four totals
+ * and no breakdown is what made "LOD1 and LOD2 are the same as LOD0" something
+ * a person had to work out from the outside.
+ */
+export function breakdownOf(object) {
+  const out = []
+  object?.traverse?.(node => {
+    const geometry = node.geometry
+    if (!geometry) return
+    const index = geometry.index
+    const position = geometry.getAttribute?.('position')
+    const triangles = Math.round((index ? index.count : position?.count || 0) / 3)
+    if (triangles > 0) out.push({ name: node.name || 'Mesh', triangles })
+  })
+  return out.sort((a, b) => b.triangles - a.triangles)
 }
 
 /**

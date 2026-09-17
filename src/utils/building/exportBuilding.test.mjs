@@ -11,7 +11,7 @@ import { createNode } from '../../../building/catalog.js'
 import { appendReference, normalizeBuildingDoc, setReference } from '../../../building/doc.js'
 import { textureKey } from '../../../building/stylepack.js'
 import {
-  LOD_LEVELS, buildExportObject, countTriangles, disposeLevel, docAtLevel,
+  LOD_LEVELS, buildExportObject, countTriangles, disposeLevel, docAtLevel, thinSlots,
 } from './exportBuilding.js'
 import { buildSlotInstances } from './mesh.js'
 
@@ -351,6 +351,90 @@ test('a coarser level gives its MODELS a smaller allowance, not a larger one', (
     `the model budget does not fall with the level: ${JSON.stringify(budgets)}`)
   assert.equal(budgets[0], 1, 'LOD0 must be the full budget - it is the model')
   assert.ok(budgets[1] < 1 && budgets[2] < budgets[1], 'two levels share an allowance')
+})
+
+test('POSTS are thinned, because widening the bays does not remove any', () => {
+  // The defect this fixes, in one measurement. Posts stand at bay BOUNDARIES and
+  // tileSpan floors at one bay per wall, so a plan whose edges are already
+  // shorter than one bay gets two posts per edge whatever bayScale does. On the
+  // twisted tower, LOD0, LOD1 and LOD2 all had exactly 2,336 posts - the bay
+  // width went 2.2 -> 2.97 -> 4.4 and removed none of them - so the only lever
+  // left was the model budget, and that hits the simplifier's topology floor.
+  // The two coarse levels came out byte-identical.
+  //
+  // A MANY-SIDED PLAN is the fixture, because that is the shape that defeats
+  // bayScale: sixteen edges of about 2 m on a plan a bay is wider than.
+  const lens = {
+    outer: Array.from({ length: 16 }, (_, i) => {
+      const a = (i / 16) * Math.PI * 2
+      return [+(6 * Math.cos(a)).toFixed(3), +(4 * Math.sin(a)).toFixed(3)]
+    }),
+    holes: [],
+  }
+  const footprint = createNode('footprint', 'fp')
+  footprint.props.shape = lens
+  const mass = createNode('mass', 'ms')
+  mass.props.levelCount = 6
+  const facade = createNode('facade', 'fc')
+  facade.modes.posts = 'colonnade'
+  Object.assign(facade.props, {
+    bayWidth: 3, placeDoor: false,
+    openingNorth: false, openingEast: false, openingSouth: false, openingWest: false,
+  })
+  const doc = normalizeBuildingDoc({
+    nodes: [footprint, mass, facade, createNode('output', 'out')],
+    edges: [
+      { from: { node: 'fp', port: 'out' }, to: { node: 'ms', port: 'shape' } },
+      { from: { node: 'ms', port: 'out' }, to: { node: 'fc', port: 'building' } },
+      { from: { node: 'fc', port: 'out' }, to: { node: 'out', port: 'building' } },
+    ],
+  })
+
+  const postsAt = spec => {
+    const ir = compileBuilding(docAtLevel(doc, spec)).ir
+    const before = ir.slots.filter(slot => slot.type === 'pillar').length
+    const after = thinSlots(ir, spec.thin).slots.filter(slot => slot.type === 'pillar').length
+    return { before, after }
+  }
+
+  const full = postsAt(LOD_LEVELS[0])
+  assert.ok(full.before > 100, `only ${full.before} posts in the fixture`)
+
+  // FIRST, THE PREMISE: bayScale really does nothing here. If this ever stops
+  // being true the thinning is solving a problem that no longer exists, and this
+  // test should be the thing that says so.
+  const wide = postsAt(LOD_LEVELS[2])
+  assert.equal(wide.before, full.before,
+    `bayScale removed ${full.before - wide.before} posts, so the premise has changed`)
+
+  // ...and with the thinning, each level really is cheaper than the last.
+  const counts = LOD_LEVELS.slice(0, 3).map(spec => postsAt(spec).after)
+  assert.equal(counts[0], full.before, 'LOD0 must keep every post - it is the model')
+  assert.ok(counts[1] <= counts[0] * 0.6, `LOD1 kept ${counts[1]} of ${counts[0]} posts`)
+  assert.ok(counts[2] <= counts[1] * 0.6, `LOD2 kept ${counts[2]} of ${counts[1]} posts`)
+})
+
+test('thinning is deterministic and leaves the OPENINGS alone', () => {
+  // Deterministic, or a level shimmers against the one above it as the viewer
+  // moves. And openings are not thinned: bayScale already reduces windows
+  // correctly, and a missing window is a hole in a facade rather than coarser
+  // detail.
+  const ir = compileBuilding(graph(FULL, { levelCount: 3 })).ir
+  const windows = ir.slots.filter(slot => slot.type === 'window').length
+  assert.ok(windows > 10, `only ${windows} windows in the fixture`)
+
+  const once = thinSlots(ir, { pillar: 2 })
+  const twice = thinSlots(ir, { pillar: 2 })
+  assert.deepEqual(
+    once.slots.map(slot => slot.seedKey), twice.slots.map(slot => slot.seedKey),
+    'two runs kept different slots',
+  )
+  assert.equal(once.slots.filter(slot => slot.type === 'window').length, windows,
+    'a window was thinned away')
+  // An empty stride map is a no-op that returns the SAME ir, so LOD0 costs
+  // nothing at all.
+  assert.equal(thinSlots(ir, {}), ir)
+  assert.equal(thinSlots(ir, { pillar: 1 }), ir)
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

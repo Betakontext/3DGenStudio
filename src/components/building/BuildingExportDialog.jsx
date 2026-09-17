@@ -195,6 +195,18 @@ export default function BuildingExportDialog({ doc, name, onClose, onExportFiles
           <ul className="bexport__levels">
             {LOD_LEVELS.map(spec => {
               const level = levels?.find(entry => entry.spec.level === spec.level)
+              const above = levels?.find(entry => entry.spec.level === spec.level - 1)
+              // WHAT IS EXPENSIVE, not just how expensive. A level that is barely
+              // cheaper than the one above it is a broken LOD, and with four bare
+              // totals and nothing else the only way to notice was to read them
+              // and do the arithmetic - which is how a chain where LOD1 and LOD2
+              // were within half a percent of LOD0 shipped.
+              const biggest = level?.breakdown?.[0]
+              const share = biggest && level.triangles
+                ? biggest.triangles / level.triangles
+                : 0
+              const barelyCheaper = level && above
+                && level.triangles > above.triangles * 0.75
               return (
                 <li key={spec.level} className="bexport__level">
                   <label>
@@ -207,6 +219,12 @@ export default function BuildingExportDialog({ doc, name, onClose, onExportFiles
                     <span className="bexport__level-name">
                       LOD{spec.level}
                       <small>{spec.label}</small>
+                      {level && biggest && share > 0.4 && (
+                        <small className="bexport__level-detail">
+                          {Math.round(share * 100)}% {biggest.name.toLowerCase()}
+                          {barelyCheaper && ' — barely cheaper than the level above'}
+                        </small>
+                      )}
                     </span>
                   </label>
                   <span className="bexport__level-count">

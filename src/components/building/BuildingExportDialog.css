@@ -321,3 +321,12 @@
   font-size: 12px;
   padding: 6px 8px;
 }
+
+/* What dominates a level, under its name. Muted: it is diagnostic, not a
+   control, and it is only rendered when one mesh owns most of the level. */
+.bexport__level-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-dim, #8b93a1);
+}

@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import * as THREE from 'three'
 import {
-  MIN_SLOT_TRIANGLES, SLOT_TRIANGLE_BUDGET,
+  MIN_SLOT_TRIANGLES, SLOT_TRIANGLE_BUDGET, keepsModel, totalInstances,
   simplifyToBudget, slotUsage, targetTriangles, triangleCount,
 } from './slotBudget.js'
 
@@ -160,6 +160,48 @@ await test('a simplified model is still the SAME SHAPE, not just the same size',
   }
   out.dispose()
   source.dispose()
+})
+
+await test('a model that cannot reach its allowance is dropped for the placeholder', () => {
+  // A simplifier stops where topology stops it, so "simplify harder" is not
+  // always available: the fin this was written for floors at 392 triangles
+  // however little it is offered, which is why LOD1 asking for 231 and LOD2
+  // asking for 150 produced exactly the same geometry. Past some margin the
+  // answer is to stop drawing the model, not to keep paying for it.
+  assert.equal(keepsModel(392, 500, 1.5), true, 'a model inside its allowance was dropped')
+  assert.equal(keepsModel(392, 300, 1.5), true, 'within the tolerated margin')
+  assert.equal(keepsModel(392, 150, 1.5), false, 'the floored fin at LOD2 must go')
+  // LOD0 keeps the model whatever it costs - it is the model.
+  assert.equal(keepsModel(12000, 100, Infinity), true)
+  // And a model nothing places has no allowance to miss.
+  assert.equal(keepsModel(12000, Infinity, 1), true)
+})
+
+await test('the budget is shared over EVERY instance, not once per slot group', () => {
+  // The cottage is the case. It binds three models - 40 windows, one door, one
+  // chimney - and sizing each group against its OWN count gave each of them the
+  // whole budget: the windows were reduced correctly and the door and the
+  // chimney kept all 30,000 of their triangles at every level, 60,000 of the
+  // coarsest modelled level's 108,000 for two objects a few pixels across.
+  const usage = new Map([['mesh_window#0', 40], ['mesh_door#0', 1], ['mesh_chimney#0', 1]])
+  assert.equal(totalInstances(usage), 42)
+
+  // Sized per group, the door is free forever - it is one instance, so it is
+  // handed the lot. This is the line that was wrong.
+  assert.equal(targetTriangles(usage.get('mesh_door#0'), 48_000), 48_000)
+  // Shared over the total, every model gets the same allowance...
+  const shared = targetTriangles(totalInstances(usage), 48_000)
+  assert.equal(shared, Math.floor(48_000 / 42))
+  // ...and the budget is then an actual bound rather than a bound per group.
+  assert.ok(totalInstances(usage) * shared <= 48_000,
+    'the shared allowance still overruns the budget')
+
+  // The floor still wins, so a crowded building gets coarse models and never
+  // shrapnel.
+  assert.equal(targetTriangles(1_000_000, 48_000), MIN_SLOT_TRIANGLES)
+  // And nothing placed has no allowance to compute.
+  assert.equal(targetTriangles(0, 48_000), Infinity)
+  assert.equal(totalInstances(new Map()), 0)
 })
 
 if (process.exitCode) console.error(`\n${passed} passed, failures above.`)

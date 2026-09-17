@@ -63,14 +63,56 @@ export function slotUsage(ir) {
 }
 
 /**
- * The triangle allowance for one model drawn `instances` times.
+ * The triangle allowance for ONE model, given every instance sharing the budget.
  *
- * `Infinity` when nothing draws it, which reads as "leave it alone" - a model
- * loaded for a slot the grammar did not place costs nothing to keep whole.
+ * `instances` IS THE TOTAL ACROSS EVERY SLOT, not the count of the group being
+ * sized, and that distinction is the whole of this function. Dividing by the
+ * group's own count hands EACH group the entire budget, so a building with a
+ * window list, a door and a chimney spends it three times over - and says
+ * nothing whatever about a model placed ONCE, which is handed the lot and never
+ * simplified at any level. The cottage's door and chimney are one instance each
+ * and kept all 30,000 of their triangles into the coarsest level that still had
+ * openings: 60,000 of that level's 108,000 triangles, for two objects a few
+ * pixels across.
+ *
+ * Sharing over the total instead gives every model the same allowance and makes
+ * the budget an actual bound. Equal per instance is also the right answer on its
+ * own terms: at a given viewing distance nothing should be more detailed than
+ * anything else, and being rare is not a reason to be expensive.
+ *
+ * `Infinity` when nothing is placed at all, which reads as "leave it alone".
  */
 export function targetTriangles(instances, budget = SLOT_TRIANGLE_BUDGET) {
   if (!(instances > 0)) return Infinity
   return Math.max(MIN_SLOT_TRIANGLES, Math.floor(budget / instances))
+}
+
+/** Every instance that shares one budget, across every slot in the building. */
+export function totalInstances(usage) {
+  let total = 0
+  for (const count of usage.values()) total += count
+  return total
+}
+
+/**
+ * Is a model still worth drawing, having been simplified as far as it will go?
+ *
+ * A SIMPLIFIER HAS A FLOOR. It is set by topology, not by the target: the fin
+ * this was written for will not go below 392 triangles however little it is
+ * offered, because LockBorder holds its open edges and the rest cannot collapse
+ * without tearing. So on a coarse level a model can miss its allowance by any
+ * margin and there is nothing more to remove - which is exactly how two LOD
+ * levels that both ask for less than the floor end up byte-identical.
+ *
+ * Past that point the honest answer is to stop drawing the model and let the
+ * slot fall back to its placeholder box: twelve triangles, and already what an
+ * unbound slot draws. `ratio` is how far over its allowance a level will
+ * tolerate before doing that - Infinity at LOD0, where the model IS the point,
+ * and tightening with distance.
+ */
+export function keepsModel(triangles, target, ratio = Infinity) {
+  if (!Number.isFinite(target) || !Number.isFinite(ratio)) return true
+  return triangles <= target * ratio
 }
 
 /** Triangles in a geometry, indexed or not. */
