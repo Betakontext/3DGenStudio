@@ -6,6 +6,8 @@ import MeshPreviewDialog from '../components/MeshPreviewDialog'
 import SettingsModal from '../components/SettingsModal'
 import TagFilter from '../components/TagFilter'
 import VfxImportDialog from '../components/vfx/VfxImportDialog'
+import BuildingImportDialog from '../components/building/BuildingImportDialog'
+import BuildingBundleExportDialog from '../components/building/BuildingBundleExportDialog'
 import { useProjects } from '../context/ProjectContext'
 import { createMeshThumbnailFile, isMeshFile } from '../utils/meshThumbnail'
 import { parseAbrFile } from '../utils/brushAbr'
@@ -387,6 +389,10 @@ export default function AssetsPage() {
   const [importFeedback, setImportFeedback] = useState(null)
   // The VFX section imports a FOLDER, not a file - see VfxImportDialog.
   const [vfxImportOpen, setVfxImportOpen] = useState(false)
+  // And so does a building, for the same reason: the graph names its textures by
+  // an id that means nothing in another library.
+  const [buildingImportOpen, setBuildingImportOpen] = useState(false)
+  const [buildingExporting, setBuildingExporting] = useState(null)
   const [workflowLoading, setWorkflowLoading] = useState(true)
   const [workflowSaving, setWorkflowSaving] = useState(false)
   const [workflows, setWorkflows] = useState([])
@@ -743,6 +749,17 @@ export default function AssetsPage() {
     // It still offers the bare-.vfx.json route, which is what this input is.
     if (activeSection === 'vfx') {
       setVfxImportOpen(true)
+      return
+    }
+
+    // An EXPORTED BUILDING IS A FOLDER for the same reason an effect is: the
+    // .building.json alone lands a building whose every texture slot points at
+    // an asset id from somebody else's database - which on a populated library
+    // resolves to whatever holds that id and imports clean wearing the wrong
+    // brick. The dialog installs the files and re-points the slots, and still
+    // offers the bare-file route, which is what this input is.
+    if (activeSection === 'buildings') {
+      setBuildingImportOpen(true)
       return
     }
 
@@ -1578,13 +1595,28 @@ export default function AssetsPage() {
               </>
             ) : activeSection === 'buildings' ? (
               <>
-                <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                {/* NO "OPEN". Every other section's OPEN shows the asset - an
+                    image, a mesh, a workflow. A building's file is its graph,
+                    so opening it hands the browser a page of JSON, which is not
+                    a view of the building and is never what the button meant.
+                    EDIT is how a building is opened. */}
                 <button
                   type="button"
                   className="asset-card__link asset-card__link-btn"
                   onClick={() => navigate(buildBuildingEditorPath(asset))}
                 >
                   EDIT
+                </button>
+                {/* The SOURCE, not a mesh. The editor's own Export bakes LODs
+                    and an impostor; this writes the graph with the files it
+                    depends on, so another install can open and edit it. */}
+                <button
+                  type="button"
+                  className="asset-card__link asset-card__link-btn"
+                  onClick={() => setBuildingExporting(asset)}
+                  title="Export the graph with its textures and models"
+                >
+                  EXPORT
                 </button>
               </>
             ) : (
@@ -1971,6 +2003,33 @@ export default function AssetsPage() {
           // reachable rather than removed: a .vfx.json with no textures of its
           // own is a perfectly ordinary thing to be handed.
           onImportSingleFile={() => assetFileInputRef.current?.click()}
+        />
+      )}
+
+      {buildingImportOpen && (
+        <BuildingImportDialog
+          onClose={() => setBuildingImportOpen(false)}
+          // The grid has to redraw: the import adds the building AND, usually,
+          // several textures to sections the user is not looking at.
+          onImported={asset => {
+            loadLibrary()
+            setImportFeedback({
+              type: 'success',
+              message: `Imported "${asset?.name || 'building'}" into the building library.`
+            })
+          }}
+          // The bare-file route the section's Import button used to be. Kept
+          // reachable rather than removed: a .building.json with no textures of
+          // its own is a perfectly ordinary thing to be handed.
+          onImportSingleFile={() => assetFileInputRef.current?.click()}
+        />
+      )}
+
+      {buildingExporting && (
+        <BuildingBundleExportDialog
+          assetId={buildingExporting.id}
+          name={buildingExporting.name}
+          onClose={() => setBuildingExporting(null)}
         />
       )}
 

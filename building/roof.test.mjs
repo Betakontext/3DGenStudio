@@ -374,17 +374,208 @@ test('an eave drop is a vertical rung under the eave', () => {
   assert.ok(Math.abs(roofTop(fascia).z - roofTop(eaved).z) < 1e-6);
 });
 
-test('a gable end wall reaches down the fascia with it', () => {
-  // The end walls are cut from the ladder, so they have to be cut AFTER the
-  // fascia rung joins it - otherwise the tympanum stops at the eave and the
-  // drop below it is an open slot.
+test('a fascia is closed by the ladder, not by the end wall', () => {
+  // The skirt stands on the EAVE. An eave drop adds a rung with the same contour
+  // at a lower z, and the band between those two IS a vertical riser the mesher
+  // already draws all the way round - so a wall reaching below the eave would be
+  // a second copy of it, and there would be a wall along every eave where there
+  // should be none.
   const roof = roofOf(rect(14, 10), {
-    kind: ROOF_KIND.GABLE, pitch: 35, eave: 1.2, eaveDrop: 0.5, ridgeAxis: 'x',
+    kind: ROOF_KIND.GABLE, pitch: 35, eave: 1.2, eaveDrop: 0.5, ridgeAxis: [1, 0],
   });
-  assert.equal(roof.gables.length, 2);
-  const lowest = Math.min(...roof.gables.flat().map(point => point[2]));
-  assert.ok(Math.abs(lowest - roof.rungs[0].z) < 1e-6,
-    'the gable face stops above the bottom of the fascia');
+  assert.equal(roof.gables.length, 2, 'a gable closes at two ends and nowhere else');
+
+  // The fascia is the first two rungs: one contour at two heights.
+  assert.equal(rungKind(roof.rungs[0], roof.rungs[1]), 'riser');
+  const eaveZ = roof.rungs[1].z;
+  for (const gable of roof.gables) {
+    for (const point of gable) {
+      assert.ok(point[2] >= eaveZ - 1e-6,
+        `a wall point at ${point[2].toFixed(3)} hangs below the eave at ${eaveZ.toFixed(3)}`);
+    }
+  }
+});
+
+test('a shed can fall either way, and the tall wall follows', () => {
+  // `ridge` picks the AXIS a shed falls across; it says nothing about WHICH end
+  // of that axis is high, so without a flip the same plan could only ever slope
+  // one way and the other three of the four directions were unreachable.
+  const plan = rect(12, 8);
+  const opts = { kind: ROOF_KIND.SHED, pitch: 30, ridgeAxis: [1, 0] };
+  const normal = roofOf(plan, opts);
+  const flipped = roofOf(plan, { ...opts, flip: true });
+
+  // The ridge is the top rung's narrow strip. With the axis along x, the fall is
+  // across y - so read where that strip sits in y.
+  const ridgeY = (roof) => {
+    const top = roof.rungs[roof.rungs.length - 1];
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const polygon of top.polygons) {
+      for (const point of polygon.outer) { lo = Math.min(lo, point[1]); hi = Math.max(hi, point[1]); }
+    }
+    return (lo + hi) / 2;
+  };
+
+  assert.ok(ridgeY(normal) < 1, `the unflipped ridge sat at y=${ridgeY(normal).toFixed(2)}`);
+  assert.ok(ridgeY(flipped) > 7, `the flipped ridge sat at y=${ridgeY(flipped).toFixed(2)}`);
+  // Same roof, mirrored: the height must not change with the direction.
+  assert.ok(Math.abs(normal.height - flipped.height) < 1e-6);
+
+  // AND THE TALL WALL MOVES WITH IT. A shed's high side is closed by a wall
+  // carried in `gables`; leaving it behind would show as the slope vanishing
+  // rather than as a hole, because the wall is single-sided.
+  const wallY = (roof) => {
+    // The shed wall is the one whose points all share a y - the vertical face on
+    // the high side. The two end walls span the fall, so they do not.
+    for (const gable of roof.gables) {
+      const ys = gable.map(point => point[1]);
+      if (Math.max(...ys) - Math.min(...ys) < 1e-6) return ys[0];
+    }
+    return null;
+  };
+  assert.ok(wallY(normal) !== null && wallY(flipped) !== null, 'a shed lost its tall wall');
+  assert.ok(Math.abs(wallY(normal) - ridgeY(normal)) < 1.5,
+    'the tall wall is not on the high side');
+  assert.ok(Math.abs(wallY(flipped) - ridgeY(flipped)) < 1.5,
+    'the flipped tall wall did not move with the slope');
+});
+
+/** A 3D polygon's area, from the magnitude of its Newell normal. */
+const wallArea = (points) => {
+  let nx = 0;
+  let ny = 0;
+  let nz = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    nx += (a[1] - b[1]) * (a[2] + b[2]);
+    ny += (a[2] - b[2]) * (a[0] + b[0]);
+    nz += (a[0] - b[0]) * (a[1] + b[1]);
+  }
+  return Math.hypot(nx, ny, nz) / 2;
+};
+
+test('a ridge at any angle still closes the roof', () => {
+  // THE BUG THIS EXISTS FOR. The end walls used to stand on the plane through
+  // each extreme of the ridge axis, which is only a plane when the axis lies
+  // along an edge of the plan. Turn the ridge to 70 degrees over a rectangle and
+  // the extreme is a single CORNER, so every wall collapsed to a zero-width
+  // sliver and the roof came out with no sides - a floating slab you could see
+  // straight through. Broken at every angle but 0, 90 and 180, for gables as
+  // well as sheds, for as long as a custom angle has existed.
+  for (const kind of [ROOF_KIND.GABLE, ROOF_KIND.SHED]) {
+    for (const angle of [0, 15, 37, 45, 70, 90, 115, 180]) {
+      const roof = roofOf(rect(12, 8), {
+        kind, pitch: 35, ridge: RIDGE.CUSTOM, ridgeAngle: angle,
+      });
+      assert.ok(roof.gables.length >= 2, `${kind} at ${angle} deg closed nothing`);
+      for (const [index, wall] of roof.gables.entries()) {
+        assert.ok(wallArea(wall) > 0.01,
+          `${kind} at ${angle} deg: wall ${index} is a sliver of area `
+          + `${wallArea(wall).toFixed(4)} and will not render`);
+      }
+    }
+  }
+});
+
+test('an angled ridge closes an L-plan and a courtyard too', () => {
+  // The skirt follows the plan's BOUNDARY, so a concave plan and a hole are not
+  // special cases - and a courtyard's skirt has to face inward.
+  for (const plan of [L_SHAPE, COURTYARD]) {
+    for (const kind of [ROOF_KIND.GABLE, ROOF_KIND.SHED]) {
+      const roof = generateRoof({
+        polygons: [plan], baseZ: 5, kind, pitch: 35, ridge: RIDGE.CUSTOM, ridgeAngle: 37,
+      });
+      assert.ok(roof.gables.length >= 2);
+      for (const wall of roof.gables) {
+        assert.ok(wallArea(wall) > 0.01, `${kind} left a sliver on a concave plan`);
+      }
+    }
+  }
+});
+
+test('an aligned roof closes exactly as it always did', () => {
+  // The skirt has to reproduce the old two-flat-walls result where that result
+  // was right, or every existing building changes shape. A gable closes at two
+  // ends; a shed at two ends and its tall side; and the areas are the same.
+  const gable = roofOf(rect(12, 8), { kind: ROOF_KIND.GABLE, pitch: 35, ridgeAxis: [1, 0] });
+  assert.equal(gable.gables.length, 2);
+  for (const wall of gable.gables) assert.ok(Math.abs(wallArea(wall) - 11.2) < 0.05);
+
+  const shed = roofOf(rect(12, 8), { kind: ROOF_KIND.SHED, pitch: 35, ridgeAxis: [1, 0] });
+  assert.equal(shed.gables.length, 3);
+  const areas = shed.gables.map(wallArea).sort((a, b) => a - b);
+  assert.ok(Math.abs(areas[0] - 22.41) < 0.05, `ends were ${areas[0].toFixed(2)}`);
+  assert.ok(Math.abs(areas[1] - 22.41) < 0.05);
+  assert.ok(Math.abs(areas[2] - 67.21) < 0.05, `the tall side was ${areas[2].toFixed(2)}`);
+});
+
+test('every vertical wall faces out, whichever way the shed falls', () => {
+  // A wall wound the wrong way is INVISIBLE under a single-sided material - it
+  // does not read as a hole, the slope behind it simply shows through - so this
+  // is the check that a flipped shed is not quietly missing its tall side.
+  //
+  // The rule is one SIGN shared by every wall of a correct roof, measured rather
+  // than assumed: winding follows which side of the profile recedes, and that is
+  // exactly what `flip` changes.
+  const newell = (points) => {
+    let nx = 0;
+    let ny = 0;
+    for (let i = 0; i < points.length; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      nx += (a[1] - b[1]) * (a[2] + b[2]);
+      ny += (a[2] - b[2]) * (a[0] + b[0]);
+    }
+    return [nx, ny];
+  };
+  // The plan's middle, to say which way "out" is from a wall that sits on it.
+  const centreOf = (roof) => {
+    let x = 0;
+    let y = 0;
+    let n = 0;
+    for (const polygon of roof.rungs[0].polygons) {
+      for (const point of polygon.outer) { x += point[0]; y += point[1]; n += 1; }
+    }
+    return [x / n, y / n];
+  };
+
+  const cases = [
+    ['shed', { kind: ROOF_KIND.SHED, pitch: 35, ridgeAxis: [1, 0] }],
+    ['shed flipped', { kind: ROOF_KIND.SHED, pitch: 35, ridgeAxis: [1, 0], flip: true }],
+    ['shed across', { kind: ROOF_KIND.SHED, pitch: 35, ridgeAxis: [0, 1] }],
+    ['shed across flipped', { kind: ROOF_KIND.SHED, pitch: 35, ridgeAxis: [0, 1], flip: true }],
+    ['gable', { kind: ROOF_KIND.GABLE, pitch: 40, ridgeAxis: [1, 0] }],
+  ];
+
+  for (const [label, opts] of cases) {
+    const roof = roofOf(rect(12, 8), opts);
+    const [cx, cy] = centreOf(roof);
+    assert.ok(roof.gables.length >= 2, `${label} lost its walls`);
+    for (const [index, wall] of roof.gables.entries()) {
+      let wx = 0;
+      let wy = 0;
+      for (const point of wall) { wx += point[0]; wy += point[1]; }
+      const out = [wx / wall.length - cx, wy / wall.length - cy];
+      const [nx, ny] = newell(wall);
+      assert.ok(nx * out[0] + ny * out[1] < 0,
+        `${label}: wall ${index} is wound inward and will not render`);
+    }
+  }
+});
+
+test('flipping is a shed-only control and leaves other kinds alone', () => {
+  // Every other shape is symmetric about its ridge, so a flip would be a control
+  // that silently does nothing - and worse, one that could quietly change a
+  // saved roof if it ever started being honoured.
+  const plan = rect(12, 8);
+  for (const kind of [ROOF_KIND.GABLE, ROOF_KIND.HIP, ROOF_KIND.MANSARD]) {
+    const plain = roofOf(plan, { kind, pitch: 35, ridgeAxis: [1, 0] });
+    const flipped = roofOf(plan, { kind, pitch: 35, ridgeAxis: [1, 0], flip: true });
+    assert.equal(flipped.rungs.length, plain.rungs.length, `${kind} changed shape`);
+    assert.ok(Math.abs(flipped.height - plain.height) < 1e-9, `${kind} changed height`);
+  }
 });
 
 test('a tiered roof spends its overhang per tier, not on one eave', () => {

@@ -210,6 +210,31 @@ export async function saveBuildingAsset({ name, doc, thumbnail = null, assetId =
  *
  * Never throws either way: a style picker that explodes takes the page with it.
  */
+/**
+ * Write a building bundle - the graph and every file its slots point at - into a
+ * folder on this machine.
+ *
+ * THE SERVER WRITES IT, not the browser, and the asymmetry with import is
+ * deliberate: a browser can offer one download at a time and cannot write a
+ * folder, while READING one is what a directory picker already does. See the
+ * header of src/utils/building/bundleImport.js.
+ *
+ * @param {number|string} assetId the saved Building asset
+ * @param {{folder: string, name?: string}} options
+ */
+export async function exportBuildingBundle(assetId, { folder, name = '' }) {
+  const id = libraryAssetId(assetId)
+  if (id == null) throw new Error(`"${assetId}" is not a valid asset id.`)
+  const response = await fetch(`${API_BASE}/assets/${id}/building-export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder, name }),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not export the building')
+  return payload
+}
+
 export async function fetchStylePacks() {
   try {
     const response = await fetch(`${API_BASE}/buildings/styles`)

@@ -693,6 +693,12 @@ export const CATALOG = {
         // shapes, which oversail per tier through the control above.
         showFor: { kind: ['hip', 'mansard', 'gable', 'shed'] },
       },
+      flip: {
+        type: PROP_TYPE.BOOL, label: 'Flip the slope', default: false, basic: true,
+        hint: 'Which side of a shed is the high one. Ridge picks the axis and this '
+            + 'picks the end of it, so the two together reach all four directions.',
+        showFor: { kind: ['shed'] },
+      },
       eaveDrop: {
         type: PROP_TYPE.NUMBER, label: 'Eave drop', default: 0, min: 0, max: 5, step: 0.05,
         unit: 'm', basic: true,

@@ -24,6 +24,7 @@ import {
   clearCardProcessingState,
   listWorkflowRecords,
   buildProjectExport,
+  buildBuildingExport,
   buildVfxExport,
   findAssetByFilePath,
   getAssetRecordById,
@@ -489,6 +490,31 @@ export async function buildVfxExportPlan(assetId, { appVersion = '', engineTarge
     'so this effect could not be exported'
   );
   if (!plan) throw new Error('Effect not found');
+  return plan;
+}
+
+/**
+ * The building export plan, from wherever the data lives.
+ *
+ * The exact shape of buildVfxExportPlan above, for the same reason: the PLAN has
+ * to be built where the database is, and the FILES have to be written where the
+ * user is. In remote mode those are two different machines.
+ *
+ * @param {number} assetId
+ * @param {{appVersion?: string}} [options]
+ */
+export async function buildBuildingExportPlan(assetId, { appVersion = '' } = {}) {
+  const remote = getRemoteTarget();
+  if (!remote) {
+    return await buildBuildingExport(Number(assetId), { appVersion });
+  }
+  const query = new URLSearchParams({ appVersion: appVersion || '' });
+  const plan = await getRemoteJson(
+    remote,
+    `/api/assets/${Number(assetId)}/building-export-plan?${query}`,
+    'so this building could not be exported'
+  );
+  if (!plan) throw new Error('Building not found');
   return plan;
 }
 

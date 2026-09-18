@@ -873,6 +873,7 @@ function evaluateNode(node, def, inputValue, diagnostics, seed, references = {},
         // Stepped roof and neither sets the prop, so they would have inherited
         // the 0.6 default and every tread would have grown a lip.
         overhang: kind === ROOF_KIND.TIERED ? readProp(node, 'overhang') : 0,
+        flip: readProp(node, 'flip'),
         eave: readProp(node, 'eave'),
         eaveDrop: readProp(node, 'eaveDrop'),
         maxHeight: readProp(node, 'maxHeight'),

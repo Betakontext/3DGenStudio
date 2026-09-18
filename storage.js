@@ -5,6 +5,9 @@ import path from 'path';
 // vfx/index.js for the three build registrations that keep this resolvable
 // in a packaged app and in Docker.
 import { normalizeVfxDoc } from './vfx/doc.js';
+import { normalizeBuildingDoc } from './building/doc.js';
+import { compileBuilding } from './building/compile.js';
+import { BUILDING_BUNDLE_FORMAT, bundleReferencePlan } from './building/bundle.js';
 import { VFX_BUNDLE_FORMAT } from './vfx/bundle.js';
 import { compileVfxGraph } from './vfx/compile.js';
 import {
@@ -6017,6 +6020,149 @@ export async function buildVfxExport(assetId, { appVersion = '', engineTarget = 
     engineGaps: engineTarget
       ? unsupportedFor(engineTarget, mapping, collectUsedEngineIds(compiled.ir))
       : null,
+    references,
+    warnings
+  };
+
+  return { manifest, files };
+}
+
+/**
+ * The export manifest and file list for one building.
+ *
+ * The shape of buildVfxExport, for the same reason and with the same split: the
+ * manifest is built where the DATABASE is and the files are written where the
+ * USER is, which in remote mode are two machines - so `storagePath` travels and
+ * `source` is dropped by the route.
+ *
+ * A building ships less than an effect does: no IR and no engine mapping table,
+ * because nothing outside this app reads a building bundle. It is a graph, the
+ * files its slots point at, and enough warnings to explain a gap.
+ *
+ * @param {number} assetId
+ * @param {{appVersion?: string}} [options]
+ * @returns {Promise<{manifest: Object, files: Array<{source: string, storagePath: string, dest: string}>}>}
+ */
+export async function buildBuildingExport(assetId, { appVersion = '' } = {}) {
+  const db = await getDb();
+  const row = await get(
+    db,
+    `SELECT a.*, at.name AS typeName
+     FROM Assets a JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE a.id = ?`,
+    [Number(assetId)]
+  );
+  if (!row) throw new Error('Building not found');
+  if (String(row.typeName || '').toLowerCase() !== 'building') {
+    throw new Error('Not a building');
+  }
+
+  let graph = null;
+  try {
+    const raw = await fs.readFile(toAbsoluteStoragePath(row.filePath), 'utf8');
+    graph = normalizeBuildingDoc(JSON.parse(raw));
+  } catch (err) {
+    // Unreadable or unparseable is not a degraded bundle but an empty one, so
+    // it fails rather than warns.
+    throw new Error(`Could not read the building file: ${err?.message || err}`);
+  }
+
+  const warnings = [];
+  const references = [];
+  const files = [];
+  const seenDest = new Set();
+  const addFile = (storagePath, dest) => {
+    if (!storagePath || !dest || seenDest.has(dest)) return;
+    seenDest.add(dest);
+    files.push({ source: toAbsoluteStoragePath(storagePath), storagePath, dest });
+  };
+
+  // The document itself, so the folder is self-describing without the manifest.
+  addFile(row.filePath, `building/${path.basename(row.filePath)}`);
+  if (row.thumbnail) addFile(row.thumbnail, `building/${path.basename(row.thumbnail)}`);
+
+  // One query per referenced id rather than a library scan: a building
+  // references a handful of assets and a library can hold thousands.
+  for (const slot of bundleReferencePlan(graph)) {
+    const entry = graph.references[slot.slot] || {};
+    const record = {
+      slot: slot.slot,
+      kind: slot.kind,
+      ref: entry.ref || '',
+      name: entry.name || '',
+      file: null
+    };
+    if (!slot.assetId) {
+      // An EMPTY slot is not a broken one: the author has not bound anything and
+      // the building draws with its palette colour. Recorded as a reference with
+      // no file rather than as a warning, or every part-dressed building would
+      // export shouting about work in progress.
+      references.push(record);
+      continue;
+    }
+    const referenced = await get(
+      db,
+      `SELECT a.id, a.name, a.filePath, at.name AS typeName
+       FROM Assets a JOIN AssetTypes at ON at.id = a.assetTypeId
+       WHERE a.id = ?`,
+      [slot.assetId]
+    );
+    if (!referenced || !referenced.filePath) {
+      warnings.push({
+        code: 'MISSING_ASSET',
+        severity: 'warn',
+        slot: slot.slot,
+        ref: record.ref,
+        message: `The ${record.kind} slot "${slot.slot}" points at an asset that is not in this library. The bundle ships without it.`
+      });
+      references.push(record);
+      continue;
+    }
+    const dest = `assets/${assetSubdirForTypeName(referenced.typeName)}/${path.basename(referenced.filePath)}`;
+    addFile(referenced.filePath, dest);
+    record.file = dest;
+    record.assetName = referenced.name || '';
+    references.push(record);
+  }
+
+  // Compiled so the bundle carries what is WRONG with the building, not just
+  // what is in it - an author importing one wants to know it arrives with a
+  // roof that could not be built.
+  let stats = null;
+  try {
+    const compiled = compileBuilding(graph);
+    stats = compiled.ir?.stats || null;
+    for (const diagnostic of compiled.diagnostics || []) {
+      if (diagnostic.severity === 'info') continue;
+      warnings.push({
+        code: diagnostic.code,
+        severity: diagnostic.severity,
+        message: diagnostic.message
+      });
+    }
+  } catch (err) {
+    warnings.push({
+      code: 'COMPILE_FAILED',
+      severity: 'error',
+      message: `The building could not be compiled: ${err?.message || err}`
+    });
+  }
+
+  const manifest = {
+    bundleFormat: BUILDING_BUNDLE_FORMAT,
+    // NAMED, because an effect bundle and a building bundle are both a folder
+    // with a manifest.json in it and picking the wrong one is an easy mistake.
+    kind: 'building',
+    appVersion: String(appVersion || ''),
+    exportedAt: Date.now(),
+    asset: {
+      id: row.id,
+      name: row.name || '',
+      file: `building/${path.basename(row.filePath)}`,
+      thumbnail: row.thumbnail ? `building/${path.basename(row.thumbnail)}` : null
+    },
+    graph,
+    stats,
     references,
     warnings
   };

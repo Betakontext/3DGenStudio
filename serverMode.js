@@ -62,7 +62,7 @@ const LOCAL_EXECUTION_DATA_PREFIXES = [
 ];
 
 // Same idea, but the path carries an id: /api/projects/42/export, and
-// /api/assets/42/vfx-export.
+// /api/assets/42/vfx-export, /api/assets/42/building-export.
 //
 // NOTE THE PAIRING IN BOTH CASES. The route that WRITES a bundle to the user's
 // disk is listed here and runs locally; its sibling that only builds the PLAN
@@ -72,7 +72,8 @@ const LOCAL_EXECUTION_DATA_PREFIXES = [
 // being a GET and a POST on one.
 const LOCAL_EXECUTION_DATA_PATTERNS = [
   /^\/api\/projects\/[^/]+\/export$/,
-  /^\/api\/assets\/[^/]+\/vfx-export$/
+  /^\/api\/assets\/[^/]+\/vfx-export$/,
+  /^\/api\/assets\/[^/]+\/building-export$/
 ];
 
 // The subdirectories of data/assets, as URL prefixes.

@@ -40,7 +40,7 @@ import * as pgEmbedded from './pgEmbedded.js';
 import { mountAuth, resolveJwtSecret, seedAdminFromEnv } from './auth.js';
 import { findUncoveredAssetDirectories, mountLocalOnlyGuard } from './serverMode.js';
 import { isGatewayActive, mountGateway } from './gateway.js';
-import { buildProjectExportPlan, buildVfxExportPlan, clearCardProcessing, copyAssetFileTo, createWorkflow, importProject, listWorkflows, getAssetRecord, getWorkflowDefinition, readAssetBytes, resolveProjectSource, replaceAssetFile, saveAssetEdit, saveAssetVersion, saveRootAsset, setCardProcessing, updateWorkflow } from './dataStore.js';
+import { buildBuildingExportPlan, buildProjectExportPlan, buildVfxExportPlan, clearCardProcessing, copyAssetFileTo, createWorkflow, importProject, listWorkflows, getAssetRecord, getWorkflowDefinition, readAssetBytes, resolveProjectSource, replaceAssetFile, saveAssetEdit, saveAssetVersion, saveRootAsset, setCardProcessing, updateWorkflow } from './dataStore.js';
 
 // Node 20 (bundled by Electron 33) has no global WebSocket, so fall back to the
 // `ws` package. Newer Node runtimes (dev) expose a global WebSocket we can reuse.
@@ -55,6 +55,7 @@ import {
   createProject,
   updateProject,
   buildProjectExport,
+  buildBuildingExport,
   buildVfxExport,
   getAssetTypeNameById,
   importProjectExport,
@@ -7984,6 +7985,100 @@ app.post('/api/assets/:id/vfx-export', async (req, res) => {
 // `source`, exactly as /api/projects/:id/export-plan does - the caller fetches
 // each file's bytes over HTTP by storagePath, so a remote-connected install
 // works with no extra code.
+// Write a building bundle - the graph, its thumbnail and every file its slots
+// point at - into a folder on this machine. The counterpart of vfx-export, and
+// the answer to "how do I give this building to someone else": the .building.json
+// alone names its textures by an id that means nothing in another library.
+app.post('/api/assets/:id/building-export', async (req, res) => {
+  try {
+    const assetId = Number(req.params.id);
+    if (!assetId) return res.status(400).json({ error: 'A valid asset id is required' });
+
+    const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
+    if (!folder) return res.status(400).json({ error: 'A destination folder is required.' });
+    if (!path.isAbsolute(folder)) {
+      return res.status(400).json({ error: 'The destination folder must be an absolute path.' });
+    }
+
+    // Through dataStore, so a remote-connected install asks its shared server
+    // for the plan and then writes the bundle to the user's own disk.
+    const { manifest, files } = await buildBuildingExportPlan(assetId, {
+      appVersion: await readAppVersion()
+    });
+
+    const bundleName = sanitizeProjectExportName(
+      typeof req.body?.name === 'string' && req.body.name ? req.body.name : manifest.asset.name,
+      'building'
+    );
+    const bundleDir = path.join(path.resolve(folder), bundleName);
+    await fs.mkdir(bundleDir, { recursive: true });
+
+    let copied = 0;
+    for (const file of files) {
+      const destination = path.join(bundleDir, file.dest);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      // copyAssetFileTo, not fs.copyFile: in remote mode the plan carries no
+      // absolute `source` at all and the bytes arrive over HTTP.
+      //
+      // Best-effort per file, like the project export: one unreadable texture
+      // must not cost the author the other nine files and the manifest.
+      try {
+        await copyAssetFileTo(file.storagePath, destination);
+        copied += 1;
+      } catch (copyErr) {
+        manifest.warnings.push({
+          code: 'FILE_UNREADABLE',
+          severity: 'warn',
+          message: `Could not copy ${file.dest}: ${copyErr?.message || copyErr}`
+        });
+      }
+    }
+
+    // LAST, so the manifest records the copy failures above rather than being
+    // written before they happened.
+    await fs.writeFile(
+      path.join(bundleDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8'
+    );
+
+    res.json({
+      folder: bundleDir,
+      name: bundleName,
+      files: copied,
+      warnings: manifest.warnings
+    });
+  } catch (err) {
+    if (err.message === 'Building not found') {
+      return res.status(404).json({ error: 'Building not found' });
+    }
+    if (err.message === 'Not a building') {
+      return res.status(400).json({ error: 'That asset is not a building' });
+    }
+    console.error('Failed to write the building export bundle:', err);
+    res.status(500).json({ error: err.message || 'Failed to write the building export bundle' });
+  }
+});
+
+// The plan alone, for a remote-connected install: built where the database is,
+// written where the user is. See buildBuildingExportPlan.
+app.get('/api/assets/:id/building-export-plan', async (req, res) => {
+  try {
+    const assetId = Number(req.params.id);
+    if (!assetId) return res.status(400).json({ error: 'A valid asset id is required' });
+    const appVersion = typeof req.query.appVersion === 'string' ? req.query.appVersion : '';
+    const { manifest, files } = await buildBuildingExport(assetId, { appVersion });
+    res.json({ manifest, files: files.map(({ storagePath, dest }) => ({ storagePath, dest })) });
+  } catch (err) {
+    if (err.message === 'Building not found') {
+      return res.status(404).json({ error: 'Building not found' });
+    }
+    if (err.message === 'Not a building') {
+      return res.status(400).json({ error: 'That asset is not a building' });
+    }
+    console.error('Failed to build the building export plan:', err);
+    res.status(500).json({ error: err.message || 'Failed to build the building export plan' });
+  }
+});
+
 app.get('/api/assets/:id/vfx-export-plan', async (req, res) => {
   try {
     const assetId = Number(req.params.id);

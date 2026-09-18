@@ -35,7 +35,7 @@
 // the ladder into geometry with the Earcut it already has.
 
 import { differencePolygons, intersectPolygons, offsetPolygonList } from './clip.js';
-import { polygonArea } from './poly.js';
+import { polygonArea, signedArea } from './poly.js';
 
 /**
  * The roof shapes, all from one offset walk.
@@ -288,9 +288,16 @@ function slab(centre, axis, perp, reach, lo, hi) {
 }
 
 /** The plan cut down by `inset`: from both sides for a gable, one for a shed. */
-function cutTo(base, frame, inset, kind) {
-  const lo = kind === ROOF_KIND.SHED ? frame.pLo : frame.pLo + inset;
-  const hi = frame.pHi - inset;
+function cutTo(base, frame, inset, kind, flip = false) {
+  // A GABLE CLOSES FROM BOTH SIDES, a shed from one - and WHICH one is the only
+  // thing that decides which way a shed falls. Without the flip the contour
+  // always recedes from pHi, so the high edge is always at pLo and the same
+  // building could only ever have its slope one way round: `ridge` picks the
+  // AXIS, not the side, and across-vs-along only turns that axis 90 degrees.
+  // Four directions need two axes and this.
+  const shed = kind === ROOF_KIND.SHED;
+  const lo = shed ? (flip ? frame.pLo + inset : frame.pLo) : frame.pLo + inset;
+  const hi = shed && flip ? frame.pHi : frame.pHi - inset;
   if (hi - lo < 1e-9) return [];
   return intersectPolygons(base, [slab(frame.centre, frame.axis, frame.perp, frame.reach, lo, hi)])
     .filter(polygon => polygonArea(polygon) > MIN_CONTOUR_AREA);
@@ -375,12 +382,12 @@ function directionalLadder(base, baseZ, kind, options) {
     // after overshoots the cap by a whole step.
     if (options.maxHeight > 0 && rise > options.maxHeight) {
       const capped = options.maxHeight / Math.tan(options.pitch);
-      const deck = cutTo(base, frame, capped, kind);
+      const deck = cutTo(base, frame, capped, kind, options.flip);
       if (deck.length) rungs.push({ polygons: deck, z: baseZ + options.maxHeight });
       break;
     }
 
-    const next = cutTo(base, frame, inset, kind);
+    const next = cutTo(base, frame, inset, kind, options.flip);
     if (!next.length) { closed = true; break; }
     rungs.push({ polygons: next, z: baseZ + rise });
     // The ridge has been reached; anything further is slivers.
@@ -426,15 +433,77 @@ function directionalLadder(base, baseZ, kind, options) {
  * Returns [] for anything that is not a shed, and for a shed whose contour never
  * moved (a zero-pitch roof has no wall to draw).
  */
-function shedWall(rungs, axis) {
+/**
+ * A vertical wall's outline, wound so the mesher's triangles face outward.
+ *
+ * WHY THIS IS MEASURED AND NOT POSITIONAL. These outlines are threaded up one
+ * side of a profile and back down the other, so their winding follows WHICH side
+ * recedes - and for a shed that is exactly what `flip` changes. Ordering the
+ * points by hand therefore gets one of the two cases right and the other
+ * backwards, which under a single-sided material is invisible: the wall does not
+ * render as a hole, it simply is not there, and the slope behind it shows
+ * through. That was the flipped shed's missing face.
+ *
+ * The invariant every wall in a correct roof satisfies is Newell(points) . out
+ * being NEGATIVE - the mesher's own convention, established by the three walls of
+ * an unflipped shed and both ends of a gable. Enforcing it directly means a new
+ * way of building an outline cannot get this wrong again.
+ *
+ * @param {Array<Array<number>>} points the outline, in order
+ * @param {Array<number>} out the direction the wall should face, in plan
+ * @returns {Array<Array<number>>} the same points, possibly reversed
+ */
+function faceOutward(points, out) {
+  // Newell's method: works for any planar polygon and needs no triangulation.
+  let nx = 0;
+  let ny = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    nx += (a[1] - b[1]) * (a[2] + b[2]);
+    ny += (a[2] - b[2]) * (a[0] + b[0]);
+  }
+  // Only the horizontal part matters: these walls are vertical, so their normal
+  // has no z to speak of and `out` is a plan direction.
+  return nx * out[0] + ny * out[1] > 0 ? points.slice().reverse() : points;
+}
+
+/**
+ * The vertical closure a directional roof needs, as a SKIRT round the plan.
+ *
+ * WHAT THIS REPLACED, and why the old model could not be patched. A gable and a
+ * shed used to be closed by flat walls standing on the plane through each
+ * extreme of the ridge axis. That is only a plane when the axis lies along an
+ * edge of the plan: turn the ridge to 70 degrees over a rectangle and the
+ * extreme is a single CORNER, so every "wall" collapsed to a zero-width sliver
+ * and the roof came out with no sides at all - visible as a floating slab you
+ * can see straight through. It was broken for every angle except 0, 90 and 180,
+ * for gables as well as sheds.
+ *
+ * THE HONEST MODEL is that a directional roof is a height field over the plan -
+ * the height depends only on the coordinate ACROSS the ridge - so the closure is
+ * the skirt between the plan's boundary and that surface. Where the roof meets
+ * the wall head the skirt has no height and no wall is emitted; where it rises,
+ * the skirt is the gable end, the shed's tall side, or anything in between.
+ *
+ * THE PROFILE IS SAMPLED ALONG EACH EDGE, not just at its ends, and that is the
+ * detail that makes it work: an aligned gable's apex sits in the MIDDLE of its
+ * end edge, so an edge measured only at its corners reads zero at both and would
+ * emit nothing. Every rung bound the edge crosses becomes a sample.
+ *
+ * For an aligned plan this reproduces exactly what the old code did - two
+ * triangles for a gable, a tall rectangle and two triangles for a shed - so the
+ * rake trim that follows these outlines is unchanged in the common case.
+ */
+function boundaryWalls(rungs, axis) {
   if (rungs.length < 2) return [];
   const perp = [-axis[1], axis[0]];
 
-  // WHICH SIDE IS FIXED. A shed's contour recedes from one perpendicular bound
-  // and leaves the other where it was; the fixed one is the high side. Compared
-  // between the first and last rung rather than assumed, because `cutTo` is free
-  // to keep either.
-  const boundsAt = rung => {
+  // What each rung covers ACROSS the ridge, and how high it is. A directional
+  // roof's height depends on nothing else, which is what makes this a function
+  // of one variable rather than a surface query.
+  const spans = [];
+  for (const rung of rungs) {
     let lo = Infinity;
     let hi = -Infinity;
     for (const polygon of rung.polygons) {
@@ -444,100 +513,101 @@ function shedWall(rungs, axis) {
         if (p > hi) hi = p;
       }
     }
-    return { lo, hi };
+    if (Number.isFinite(lo)) spans.push({ lo, hi, z: rung.z });
+  }
+  if (spans.length < 2) return [];
+
+  // THE SKIRT STANDS ON THE EAVE, not on the lowest rung. An eave drop adds a
+  // fascia rung with the SAME contour at a lower z, and the ladder already draws
+  // the band between them as a vertical riser all the way round - so measuring
+  // from the bottom would put the skirt over the top of it and emit a wall along
+  // every eave, where there should be none. The eave is the highest rung that
+  // still spans the full width.
+  let widest = 0;
+  for (const span of spans) widest = Math.max(widest, span.hi - span.lo);
+  let baseZ = spans[0].z;
+  for (const span of spans) {
+    if (span.hi - span.lo > widest - 1e-6 && span.z > baseZ) baseZ = span.z;
+  }
+
+  /** The roof's height above the eave at one coordinate across the ridge. */
+  const heightAt = (p) => {
+    let z = baseZ;
+    for (const span of spans) {
+      if (p >= span.lo - 1e-6 && p <= span.hi + 1e-6 && span.z > z) z = span.z;
+    }
+    return z - baseZ;  // never negative: baseZ is one of the covering rungs
   };
-  const first = boundsAt(rungs[0]);
-  const last = boundsAt(rungs[rungs.length - 1]);
-  if (!Number.isFinite(first.lo) || !Number.isFinite(last.lo)) return [];
 
-  const keptLo = Math.abs(last.lo - first.lo) < Math.abs(last.hi - first.hi);
-  const end = keptLo ? first.lo : first.hi;
-  // The side that moved has to have moved: a flat shed has no wall.
-  if (Math.abs(keptLo ? last.hi - first.hi : last.lo - first.lo) < 1e-6) return [];
+  // Where the profile changes slope: every rung bound. An edge crossing one of
+  // these has to be split there or the skirt would chord across the apex.
+  const breaks = [];
+  for (const span of spans) breaks.push(span.lo, span.hi);
+  breaks.sort((a, b) => a - b);
 
-  // The span the roof covers ON THAT PLANE at each height, exactly as endWalls
-  // does on the two axis ends.
-  const profile = [];
-  for (const rung of rungs) {
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (const polygon of rung.polygons) {
-      for (const point of polygon.outer) {
-        if (Math.abs(alongDir(point, perp) - end) > 1e-3) continue;
-        const a = alongDir(point, axis);
-        if (a < lo) lo = a;
-        if (a > hi) hi = a;
-      }
-    }
-    if (!Number.isFinite(lo)) break;
-    profile.push({ lo, hi, z: rung.z });
-  }
-  if (profile.length < 2) return [];
-
-  const at = (a, z) => [perp[0] * end + axis[0] * a, perp[1] * end + axis[1] * a, z];
-  const points = [];
-  for (const entry of profile) points.push(at(entry.lo, entry.z));
-  for (let i = profile.length - 1; i >= 0; i--) {
-    // One point where the span has collapsed, two where it has not - the same
-    // apex rule endWalls uses, so a shed over a tapering plan closes cleanly.
-    if (profile[i].hi - profile[i].lo > 1e-6) points.push(at(profile[i].hi, profile[i].z));
-  }
-  return points.length >= 3 ? [points] : [];
-}
-
-function endWalls(rungs, axis) {
-  if (rungs.length < 2) return [];
-  const perp = [-axis[1], axis[0]];
-
-  let aLo = Infinity;
-  let aHi = -Infinity;
-  for (const polygon of rungs[0].polygons) {
-    for (const point of polygon.outer) {
-      const a = alongDir(point, axis);
-      if (a < aLo) aLo = a;
-      if (a > aHi) aHi = a;
-    }
-  }
-  if (!Number.isFinite(aLo)) return [];
-
+  const eave = rungs.find(rung => Math.abs(rung.z - baseZ) < 1e-9) || rungs[0];
   const walls = [];
-  for (const [end, outward] of [[aHi, 1], [aLo, -1]]) {
-    const profile = [];
-    for (const rung of rungs) {
-      let lo = Infinity;
-      let hi = -Infinity;
-      for (const polygon of rung.polygons) {
-        for (const point of polygon.outer) {
-          // On the end plane, within a millimetre. A rung that has pulled away
-          // from the end contributes nothing, which is what stops a contour that
-          // shrank in both directions from inventing a wall it does not need.
-          if (Math.abs(alongDir(point, axis) - end) > 1e-3) continue;
-          const p = alongDir(point, perp);
-          if (p < lo) lo = p;
-          if (p > hi) hi = p;
-        }
-      }
-      if (!Number.isFinite(lo) || hi - lo < -1e-9) break;
-      profile.push({ lo, hi, z: rung.z });
-    }
-    if (profile.length < 2) continue;
+  for (const polygon of eave.polygons) {
+    const rings = [polygon.outer, ...(polygon.holes || [])];
+    for (let r = 0; r < rings.length; r++) {
+      const ring = rings[r];
+      if (!Array.isArray(ring) || ring.length < 3) continue;
+      // A hole's skirt faces INTO the courtyard, which is the opposite way round
+      // from the outer boundary's.
+      const facing = (r === 0 ? 1 : -1) * (signedArea(ring) >= 0 ? 1 : -1);
 
-    const at = (p, z) => [
-      axis[0] * end + perp[0] * p,
-      axis[1] * end + perp[1] * p,
-      z,
-    ];
-    const points = [];
-    for (const entry of profile) points.push(at(entry.lo, entry.z));
-    for (let i = profile.length - 1; i >= 0; i--) {
-      // The apex is ONE point, not two: a ridge that closed to nothing would
-      // otherwise leave a zero-width sliver at the top of every gable.
-      if (i === profile.length - 1 && profile[i].hi - profile[i].lo < 1e-6) continue;
-      points.push(at(profile[i].hi, profile[i].z));
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i];
+        const b = ring[(i + 1) % ring.length];
+        const pA = alongDir(a, perp);
+        const pB = alongDir(b, perp);
+
+        // The parameters along the edge where the profile bends.
+        const cuts = [0];
+        if (Math.abs(pB - pA) > 1e-9) {
+          for (const value of breaks) {
+            const t = (value - pA) / (pB - pA);
+            if (t > 1e-6 && t < 1 - 1e-6) cuts.push(t);
+          }
+        }
+        cuts.push(1);
+        cuts.sort((x, y) => x - y);
+
+        const top = [];
+        let tallest = 0;
+        for (const t of cuts) {
+          const x = a[0] + (b[0] - a[0]) * t;
+          const y = a[1] + (b[1] - a[1]) * t;
+          const h = heightAt(pA + (pB - pA) * t);
+          tallest = Math.max(tallest, h);
+          top.push([x, y, baseZ + h]);
+        }
+        // The roof meets the wall along the whole edge: an eave, and no wall.
+        if (tallest < 1e-6) continue;
+
+        // Round the base and back along the top.
+        const points = [[a[0], a[1], baseZ], [b[0], b[1], baseZ]];
+        for (let k = top.length - 1; k >= 0; k--) points.push(top[k]);
+
+        const tidy = [];
+        for (const point of points) {
+          const last = tidy[tidy.length - 1];
+          if (last && Math.abs(last[0] - point[0]) < 1e-9
+            && Math.abs(last[1] - point[1]) < 1e-9
+            && Math.abs(last[2] - point[2]) < 1e-9) continue;
+          tidy.push(point);
+        }
+        if (tidy.length >= 3
+          && Math.abs(tidy[0][0] - tidy[tidy.length - 1][0]) < 1e-9
+          && Math.abs(tidy[0][1] - tidy[tidy.length - 1][1]) < 1e-9
+          && Math.abs(tidy[0][2] - tidy[tidy.length - 1][2]) < 1e-9) tidy.pop();
+        if (tidy.length < 3) continue;
+
+        const dx = b[0] - a[0];
+        const dy = b[1] - a[1];
+        walls.push(faceOutward(tidy, [dy * facing, -dx * facing]));
+      }
     }
-    // Wound so both ends face outward - the far one is the mirror of the near
-    // one, and a wall lit from inside is invisible until it is shaded.
-    if (points.length >= 3) walls.push(outward > 0 ? points : points.slice().reverse());
   }
   return walls;
 }
@@ -561,6 +631,7 @@ export function generateRoof({
   stepRun = 1.2,
   stepRise = 0.9,
   overhang = 0,
+  flip = false,
   eave = 0,
   eaveDrop = 0,
   maxHeight = 0,
@@ -594,6 +665,9 @@ export function generateRoof({
     overhang: Math.max(overhang, 0),
     maxHeight: Math.max(maxHeight, 0),
     ridgeAxis: ridgeDirection(base, ridge, ridgeAngle),
+    // Shed only. Every other kind is symmetric about its ridge, so there is no
+    // side to swap and setting it would be a control that does nothing.
+    flip: kind === ROOF_KIND.SHED && flip === true,
     join,
   };
 
@@ -678,14 +752,13 @@ export function generateRoof({
   // make a roof look like it had grown when only its edge had dropped.
   out.height = built.rungs[built.rungs.length - 1].z - baseZ;
   if (directional) {
-    out.gables = endWalls(out.rungs, options.ridgeAxis);
-    // A SHED ALSO NEEDS ITS TALL SIDE. Kept in `gables` rather than a field of
-    // its own because it is the same thing to every consumer - a vertical
-    // polygon that travels beside the ladder - and because a bargeboard along
-    // its verge is correct for a shed too.
-    if (kind === ROOF_KIND.SHED) {
-      out.gables = [...out.gables, ...shedWall(out.rungs, options.ridgeAxis)];
-    }
+    // ONE SKIRT COVERS BOTH. A gable's two ends and a shed's tall side are the
+    // same thing - the wall between the plan's boundary and the roof above it -
+    // and building them from the boundary rather than from two chosen planes is
+    // what makes a ridge at 70 degrees work at all. Still `gables`, because that
+    // is what every consumer means by it: a vertical polygon travelling beside
+    // the ladder, with a bargeboard along its verge.
+    out.gables = boundaryWalls(out.rungs, options.ridgeAxis);
   }
   return out;
 }
