@@ -18,7 +18,7 @@
       "conv_backend": "flex_gemm",
       "sparse_backend": "flash_attn",
       "use_reconviagen": false,
-      "pixal3d_multiview": true
+      "pixal3d_multiview": false
     },
     "class_type": "Trellis2LoadModel",
     "_meta": {

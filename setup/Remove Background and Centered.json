@@ -67,6 +67,7 @@
       "padding": 0,
       "remove_background": false,
       "max_size": 8192,
+      "square": true,
       "image": [
         "3",
         0

@@ -733,7 +733,7 @@
 			"DiffusionModels": {
 				"BF16":   { "FileName": "minimax_h3_fl2va_pruned_bf16.safetensors",   "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_bf16.safetensors?download=true",   "Size": 40.2 },
 				"INT8":   { "FileName": "minimax_h3_fl2va_int8_convrot.safetensors",   "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors?download=true",   "Size": 34.0 },
-				"PRUNED INT8":   { "FileName": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors?download=true", "Size": 21.0  },
+				"PRUNED INT8":   { "FileName": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors?download=true", "Size": 21.0  },
 				"PRUNDED FP8":   { "FileName": "minimax_h3_fl2va_pruned_fp8_scaled.safetensors", "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors?download=true", "Size": 21.0  }
 			},
 			"VAE":         [
@@ -887,7 +887,8 @@
 			"File": "setup/Remove Background and Centered.json",
 			"Inputs": [
 				{ "Node": "5", "Input": "image",  "Name": "Source Image", "Type": "Image" },
-				{ "Node": "8",  "Input": "padding",  "Name": "Padding",   "Type": "Number" }
+				{ "Node": "8",  "Input": "padding",  "Name": "Padding",   "Type": "Number" },
+				{ "Node": "8",  "Input": "square",  "Name": "Make Square Image",   "Type": "Boolean" }
 			],
 			"Outputs": [
 				{ "Node": "7", "Name": "Save Image", "Type": "Image" }
