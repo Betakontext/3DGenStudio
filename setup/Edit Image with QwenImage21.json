@@ -36,6 +36,10 @@
       "images.image_1": [
         "478",
         0
+      ],
+      "vae": [
+        "474",
+        0
       ]
     },
     "class_type": "TextEncodeQwenImage21",
