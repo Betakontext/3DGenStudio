@@ -13,6 +13,48 @@
 	},
 	"Models": [
 		{
+			"Name": "Qwen Image 2.1",
+			"DiffusionModels": {
+				"F16":  { "FileName": "qwen_image_2.1_bf16.safetensors",    "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_bf16.safetensors?download=true",    "Size": 14.2 },
+				"INT8": { "FileName": "qwen_image_2.1_int8_convrot.safetensors",   "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_int8_convrot.safetensors?download=true",   "Size": 7.3 }
+			},
+			"VAE":         [{ "FileName": "qwen_image_2.1_vae_bf16.safetensors",                              "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors?download=true",                                "Size": 0.7 }],
+			"TextEncoder": { "FileName": "qwen3vl_8b_int8_convrot.safetensors",                   "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors?download=true",       "Size": 9.4 },		
+			"Workflows": [
+				{
+					"Name": "Gen Image with QwenImage21",
+					"File": "setup/Gen Image with QwenImage21.json",
+					"Inputs": [
+						{ "Node": "472", "Input": "prompt",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "477", "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "477", "Input": "steps", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
+						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
+						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "470", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Edit Image with QwenImage21",
+					"File": "setup/Edit Image with QwenImage21.json",
+					"Inputs": [
+						{ "Node": "478", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+						{ "Node": "472", "Input": "prompt",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "477", "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "477", "Input": "steps", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
+						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
+						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "470", "Name": "Save Image", "Type": "Image" }
+					]
+				}					
+			]
+		},	
+		{
 			"Name": "Qwen Image Edit 2511",
 			"DiffusionModels": {
 				"F16":  { "FileName": "qwen-image-edit-2511-F16.gguf",    "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-F16.gguf?download=true",    "Size": 40.9 },
