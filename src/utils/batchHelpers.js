@@ -25,6 +25,20 @@ import { getWorkflowParameterValueType, isFileWorkflowValueType } from './graphH
 
 export const BATCH_VARIABLE_TYPES = ['string', 'number', 'boolean', 'image', 'mesh']
 
+// Which way the run walks the group x stage grid. Both produce exactly the same
+// results — the difference is how often ComfyUI has to swap models. 'group'
+// finishes one group's whole chain before starting the next, so every stage
+// boundary reloads a different model; 'stage' runs one stage across all groups
+// first, so the model stays resident and only changes once per stage.
+export const BATCH_EXECUTION_ORDERS = ['group', 'stage']
+export const BATCH_ORDER_BY_GROUP = 'group'
+export const BATCH_ORDER_BY_STAGE = 'stage'
+
+export function normalizeExecutionOrder(value) {
+  return BATCH_EXECUTION_ORDERS.includes(value) ? value : BATCH_ORDER_BY_GROUP
+}
+
+
 // Booleans travel through JSON and through form controls, so a stored value can
 // arrive as a real boolean or as text. `Boolean('false')` is `true`, which would
 // silently invert a workflow toggle — so parse rather than cast.
@@ -69,6 +83,7 @@ export function createEmptyBatchConfig() {
     variables: [],
     groups: [],
     stages: [],
+    executionOrder: BATCH_ORDER_BY_GROUP,
     lastRunId: null
   }
 }
@@ -84,8 +99,35 @@ export function normalizeBatchConfig(state) {
     ...state,
     variables: Array.isArray(state.variables) ? state.variables : [],
     groups: Array.isArray(state.groups) ? state.groups : [],
-    stages: Array.isArray(state.stages) ? state.stages : []
+    stages: Array.isArray(state.stages) ? state.stages : [],
+    // Documents written before the order was configurable have no field; they
+    // ran group-major, which is what the fallback keeps them doing.
+    executionOrder: normalizeExecutionOrder(state.executionOrder)
   }
+}
+
+// The run's visiting order over the group x stage grid, as one flat list.
+//
+// Both orders honour the same dependency rule, which is why the choice is free:
+// a stage may only bind to an EARLIER stage, so by the time stage N runs for a
+// group, that group's stage N-1 has already run under either walk.
+export function buildRunOrder(groups, stages, executionOrder) {
+  const steps = []
+  const push = (group, groupIndex, stage, stageIndex) => {
+    steps.push({ group, groupIndex, stage, stageIndex, cellKey: `${group.id}:${stage.id}` })
+  }
+
+  if (normalizeExecutionOrder(executionOrder) === BATCH_ORDER_BY_STAGE) {
+    stages.forEach((stage, stageIndex) => {
+      groups.forEach((group, groupIndex) => push(group, groupIndex, stage, stageIndex))
+    })
+  } else {
+    groups.forEach((group, groupIndex) => {
+      stages.forEach((stage, stageIndex) => push(group, groupIndex, stage, stageIndex))
+    })
+  }
+
+  return steps
 }
 
 export function createVariable(name = '', type = 'string') {
