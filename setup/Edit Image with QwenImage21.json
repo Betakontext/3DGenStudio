@@ -23,7 +23,10 @@
   },
   "472": {
     "inputs": {
-      "prompt": "",
+      "prompt": [
+        "483",
+        0
+      ],
       "negative_prompt": "",
       "resolution": 0,
       "clip": [
@@ -124,6 +127,70 @@
     "class_type": "LoadImage",
     "_meta": {
       "title": "Load Image"
+    }
+  },
+  "479": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Transparent Background"
+    }
+  },
+  "480": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "Prompt"
+    }
+  },
+  "481": {
+    "inputs": {
+      "value": ".The image has alpha channel and the background is transparent."
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "Text"
+    }
+  },
+  "482": {
+    "inputs": {
+      "string_a": [
+        "480",
+        0
+      ],
+      "string_b": [
+        "481",
+        0
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
+    }
+  },
+  "483": {
+    "inputs": {
+      "switch": [
+        "479",
+        0
+      ],
+      "on_false": [
+        "480",
+        0
+      ],
+      "on_true": [
+        "482",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
     }
   }
 }

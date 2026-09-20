@@ -25,12 +25,13 @@
 					"Name": "Gen Image with QwenImage21",
 					"File": "setup/Gen Image with QwenImage21.json",
 					"Inputs": [
-						{ "Node": "472", "Input": "prompt",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "482", "Input": "value",  "Name": "Prompt", "Type": "String" },
 						{ "Node": "477", "Input": "seed",  "Name": "Seed",   "Type": "Number" },
 						{ "Node": "477", "Input": "steps", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
 						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
-						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" }
+						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
+						{ "Node": "478",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
 					],
 					"Outputs": [
 						{ "Node": "470", "Name": "Save Image", "Type": "Image" }
@@ -41,12 +42,13 @@
 					"File": "setup/Edit Image with QwenImage21.json",
 					"Inputs": [
 						{ "Node": "478", "Input": "image",  "Name": "Source Image", "Type": "Image" },
-						{ "Node": "472", "Input": "prompt",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "480", "Input": "value",  "Name": "Prompt", "Type": "String" },
 						{ "Node": "477", "Input": "seed",  "Name": "Seed",   "Type": "Number" },
 						{ "Node": "477", "Input": "steps", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
 						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
-						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" }
+						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
+						{ "Node": "479",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
 					],
 					"Outputs": [
 						{ "Node": "470", "Name": "Save Image", "Type": "Image" }
