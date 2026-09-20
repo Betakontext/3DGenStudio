@@ -13,9 +13,6 @@ import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import {
   buildImageEditorPath,
   buildMeshEditorPath,
-  filterImageGenerationWorkflows,
-  filterImageEditWorkflows,
-  filterMeshGenerationWorkflows,
   getWorkflowFileInputAccept
 } from '../utils/graphHelpers'
 import {
@@ -33,6 +30,7 @@ import {
   getGroupLabel,
   getRunIdFromCells,
   getStageLabel,
+  isBatchStageWorkflow,
   variableValueKind,
   summarizeRunProgress,
   normalizeBatchConfig,
@@ -92,19 +90,13 @@ export default function BatchPage({ project }) {
   const uploadTargetRef = useRef(null)
 
   // Any workflow can be a stage: the chain mixes image generation, image edit
-  // and mesh generation, so the union of the three filtered lists is offered
-  // rather than a single category.
-  const stageWorkflows = useMemo(() => {
-    const byId = new Map()
-    for (const workflow of [
-      ...filterImageGenerationWorkflows(workflows),
-      ...filterImageEditWorkflows(workflows),
-      ...filterMeshGenerationWorkflows(workflows)
-    ]) {
-      byId.set(String(workflow.id), workflow)
-    }
-    return Array.from(byId.values())
-  }, [workflows])
+  // and mesh generation, so everything that produces an image or a mesh is
+  // offered rather than a single category. The rule lives in the document model
+  // because the MCP batch tools have to offer the same list.
+  const stageWorkflows = useMemo(
+    () => (workflows || []).filter(isBatchStageWorkflow),
+    [workflows]
+  )
 
   const workflowsById = useMemo(() => {
     const map = {}

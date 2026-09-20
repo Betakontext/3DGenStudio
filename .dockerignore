@@ -45,6 +45,13 @@
 # `COPY . .` is filtered by this allowlist - so without it the FRONTEND build
 # fails to resolve ../../building/*.js and the image build dies at vite.
 !building/
+
+# The Batch document model. Needed twice over, exactly like vfx/ and building/:
+# the runtime stage reaches it from server.js through the MCP batch tools, and
+# the builder stage's `COPY . .` is filtered by this allowlist - so without it
+# the FRONTEND build fails to resolve ../../batch/document.js and the image
+# build dies at vite.
+!batch/
 !vfxPreview.js
 
 # File-based wiki (resolved against the module dir, not cwd).

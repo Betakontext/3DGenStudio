@@ -91,6 +91,11 @@ files:
   # modules so the editor and the backend cannot disagree about the format.
   # Same rule as db/, mcp/ and vfx/: the whole directory ships.
   - building/**/*
+  # The Batch document model: how a stage's inputs resolve, what a result is
+  # named and which asset it is filed under. src/ imports it for the Batch page
+  # and mcp/ imports it for the batch tools, so a run started from either side
+  # produces the same assets - the same rule as db/, mcp/, vfx/ and building/.
+  - batch/**/*
   # THE PARTICLE SIMULATION, and the one place src/ ships. The rule everywhere
   # else is that src/ is browser code and only dist/ is packaged - this subtree
   # is the exception because it is provably neither: system.js, emitter.js,

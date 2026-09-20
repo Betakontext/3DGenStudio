@@ -82,6 +82,8 @@ COPY --chown=node:node mcp ./mcp
 COPY --chown=node:node vfx ./vfx
 # The building generator contract (schema, catalog, compiler, BuildingIR).
 COPY --chown=node:node building ./building
+# The Batch document model, shared by the Batch page and the MCP batch tools.
+COPY --chown=node:node batch ./batch
 # The particle simulation, and the one place src/ is copied. vfxPreview.js needs
 # it to render an effect server-side with no GPU; the subtree imports nothing
 # but vfx/ and has always run in plain Node. See the same note in

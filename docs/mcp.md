@@ -112,6 +112,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Projects | `list_projects`, `get_project`, `create_project`, `update_project`, `delete_project`, `export_project`, `import_project` |
 | Kanban cards | `list_cards`, `create_card`, `move_card`, `delete_card`, `list_card_attributes`, `create_card_attribute`, `update_card_attribute`, `delete_card_attribute` |
 | Graph | `get_graph`, `create_node`, `update_node`, `move_node`, `delete_node`, `connect_nodes`, `disconnect_nodes` |
+| Batch projects | `get_batch`, `update_batch`, `run_batch` |
 | ComfyUI workflows | `list_workflows`, `inspect_workflow`, `import_workflow`, `update_workflow`, `run_workflow`, `get_run_status` |
 | AI actions | `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `get_mesh_result`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
 | Mesh tools | `auto_uv_mesh`, `auto_retopo_mesh`, `repair_mesh`, `auto_rig_mesh`, `optimize_mesh`, `convert_mesh_fbx` (all fully-typed), `run_mesh_tool` (the same operations, untyped), `export_mesh` |
@@ -126,7 +127,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 
 ### Context cost and loading only the groups you need
 
-An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 92 tools cost ~115 KB of JSON plus ~5 KB of server instructions — roughly **33,000 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~33k tokens: the question is ~10 tokens, the connection is the rest.
+An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 95 tools cost ~121 KB of JSON plus ~5 KB of server instructions — roughly **34,500 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~33k tokens: the question is ~10 tokens, the connection is the rest.
 
 Clients that load tool schemas lazily (Claude Code fetches them on demand) pay almost nothing. For clients that load everything eagerly — most local LLM stacks — load only the groups you need, either with the `--tools` flag or the `MCP_TOOLS` environment variable:
 
@@ -154,13 +155,13 @@ Two forms are accepted, comma- or space-separated:
 - **include** — `projects,graph,workflows` loads exactly those groups
 - **exclude** — `-mesh,-actions` loads everything except those
 
-Unset, empty, or `all` loads every group, so nothing changes for an existing config. Unknown names are ignored with a warning on stderr rather than failing. Group names: `projects`, `cards`, `graph`, `workflows`, `actions`, `mesh`, `tree`, `vfx`, `building`, `assets`, `settings`.
+Unset, empty, or `all` loads every group, so nothing changes for an existing config. Unknown names are ignored with a warning on stderr rather than failing. Group names: `projects`, `cards`, `graph`, `batch`, `workflows`, `actions`, `mesh`, `tree`, `vfx`, `building`, `assets`, `settings`.
 
 | Selector | Tools | Catalog | Saved |
 |---|---|---|---|
-| *(unset)* / `all` | 92 | ~31,600 tokens | — |
-| `-mesh` | 77 | ~23,000 | 27% |
-| `-mesh,-actions` | 67 | ~16,700 | 47% |
+| *(unset)* / `all` | 95 | ~33,300 tokens | — |
+| `-mesh` | 80 | ~24,700 | 26% |
+| `-mesh,-actions` | 70 | ~18,400 | 45% |
 | `projects,graph,workflows,assets` | 34 | ~8,600 | 73% |
 | `projects,mesh,assets` | 35 | ~13,100 | 59% |
 | `projects,cards,assets` | 29 | ~5,600 | 82% |
@@ -170,7 +171,7 @@ The server instructions are assembled to match, so dropping a group also drops i
 
 Over the HTTP endpoint the same selector is available per request as `POST /mcp?tools=graph,workflows`, or as `settings.mcp.tools` for a persistent default.
 
-The heaviest groups are `mesh` (~8,600 tokens across 14 tools), `actions` (~6,300 across 10), `tree` (~3,300 across 3) and `assets` (~3,400 across 14) — the parameter-dense ones, since each tool documents its full option set with ranges and defaults. `building` is ~1,700 across 9, and `vfx` ~1,500 across 10, because both push their vocabulary into a `describe_*` tool the caller fetches once instead of into every schema.
+The heaviest groups are `mesh` (~8,600 tokens across 14 tools), `actions` (~6,300 across 10), `tree` (~3,300 across 3) and `assets` (~3,400 across 14) — the parameter-dense ones, since each tool documents its full option set with ranges and defaults. `batch` is ~1,700 across 3 tools, because a batch's whole vocabulary — variables, groups, stages, bindings — has to be explained somewhere and `get_batch` is where an agent reads it back. `building` is ~1,700 across 9, and `vfx` ~1,500 across 10, because both push their vocabulary into a `describe_*` tool the caller fetches once instead of into every schema.
 
 #### Tool *results* cost context too
 
@@ -207,6 +208,28 @@ The target node's connected input assets also **auto-fill the workflow's image/m
 When you *do* pass an image/mesh parameter in `inputs` (e.g. in a kanban project, which has no wiring), the value is simply the asset's **numeric id** — nothing else. The same plain id works for a root asset, an **edit**, or a **version**: a background-removed image is an edit, so pass that edit's own `id` (from the `children`/`edits` tree in `list_assets`). Do **not** pass a file path or filename, and do **not** pass a `{assetId, editId}` object — a bare id is always correct.
 
 **Connect the input nodes _before_ you run.** `run_workflow`, `edit_image`, and `generate_mesh` read a node's connected input at the moment they execute — the input feeds the workflow/API and determines whether the result is saved as an edit/version. So the correct order is always: (1) `create_node` for the target, (2) `connect_nodes` to wire its input asset(s), then (3) run the workflow or API on that node. Running first and connecting afterwards is wrong: the run sees no input, so it can't use the source image/mesh and saves a stray new root asset instead of an edit/version — and the late connection does **not** re-run or re-parent it. If you ran in the wrong order, delete the stray result, connect the inputs, and run again.
+
+### Batch projects
+
+A **Batch** project is a grid, not a graph. `variables` are declared once, each `group` is one **row** of values for them, and `stages` are a linear chain of ComfyUI workflows run once per row — so 4 groups x 3 stages is 12 generations, each saved as an ordinary result card in the project. Three tools cover it:
+
+| Tool | What it does |
+|---|---|
+| `get_batch` | The whole recipe: variables, group rows, the stage chain with every parameter's source and value, the problems that would block a run, and the results already produced |
+| `update_batch` | Writes it. Each section you pass (`variables` / `groups` / `stages`) **replaces that whole section**; a section you omit is untouched |
+| `run_batch` | Runs the grid, one generation per cell, streaming progress |
+
+**Sources, not ids.** A stage parameter is fed by one of three things, written the same way in both directions: `"manual"` (the stage's own value), `"variable:<name>"` (the current row supplies it), or `"stage:<n>"` (the output of an earlier stage, 1-based, strictly earlier — which is why a batch chain can never contain a cycle). The document's internal ids never appear: variables are named and stages and groups are positions.
+
+**Image/mesh parameters cannot be typed in.** Bind them to an earlier stage, or to an image/mesh variable whose groups pick assets by id (`update_batch` links each picked asset to the project for you, which a run requires). That is what lets a first stage run over a list of meshes you already have.
+
+**A stage name is a template.** `"{{character}} - {{resolution}}px"` is resolved per row and becomes the result's name, so a result carries the values that produced it.
+
+**Positions carry identity.** A result card's key embeds the group and the stage it came from, so `update_batch` keeps their ids wherever it can: a row or a stage left at the same position keeps the results already sitting in its cells, and a stage keeps its manual values and bindings while its workflow is unchanged. Changing a stage's workflow re-seeds it from that workflow's defaults, because the old values were keyed to parameter ids that no longer exist.
+
+**Running is resumable.** `run_batch` **continues** by default: a cell that already produced an asset is kept and reused as the input for the stages after it, so a stopped, failed or half-finished grid picks up where it left off. `mode: "restart"` regenerates instead, and `groups` / `stages` narrow the walk to some rows or some steps — a filtered restart is how you regenerate a single cell without touching the rest. Long grids are budgeted (`maxSeconds`): when the budget runs out the tool returns what finished, and calling it again carries on.
+
+`executionOrder` decides how the grid is walked: `"group"` finishes one row through every stage before the next row, `"stage"` runs one stage across every row first. The results are identical — the difference is how often ComfyUI has to swap models.
 
 ### Small and local models (LM Studio, Ollama, …)
 
@@ -290,6 +313,7 @@ Two behaviours worth knowing:
 |---|---|
 | Projects / cards / graph / assets / export / import | just the app running |
 | `run_workflow`, ComfyUI-based edits | ComfyUI running (URL in Settings, default `127.0.0.1:8188`) |
+| `run_batch` | ComfyUI running — a batch is a chain of ComfyUI workflows |
 | `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` | provider API keys in Settings |
 | `auto_uv_mesh`, `auto_retopo_mesh`, `repair_mesh`, `convert_mesh_fbx`, `inspect_mesh`, `bake_mesh_maps`, `generate_collision` | Python mesh-tools service (`:8200`) running — the desktop app can start it from Settings |
 | `auto_rig_mesh` | rigging service (`:8300`) running |
@@ -300,5 +324,5 @@ Two behaviours worth knowing:
 
 - The **Mesh Editor** modes that run in the browser (WebGL/canvas) are not exposed over MCP: sculpting, modeling, displace/boolean, painting, projection, applying baked maps to a material, and animation retargeting (Auto Rig -> Animations). **Image Editor** pixel operations (crop, filters, shadow remover) are browser-only too. AI-driven alternatives: ComfyUI workflows (`run_workflow`), prompt-based edits (`edit_image`), and the mesh-tool services. Note that *running* a bake is available (`bake_mesh_maps`) — only applying the result to a material is not.
 - `update_settings` refuses to write any field whose key looks like an API key, secret, token, password, or credential. Reads are redacted, so a client that round-tripped a settings object would otherwise overwrite a real key with the redaction placeholder. Set credentials (including `mcp.token`) in the app's Settings dialog or with a direct `POST /api/settings`.
-- Not yet exposed: Brainstorming Boards, Batch project configuration, the Wiki, and tasks.
+- Not yet exposed: Brainstorming Boards, the Wiki, and tasks.
 - If the app UI is open in a browser while an MCP client mutates data, open Graph/Kanban pages refresh automatically via the app event stream; other pages may need a manual refresh.
