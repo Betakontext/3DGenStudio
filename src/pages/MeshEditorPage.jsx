@@ -220,7 +220,7 @@ import {
   writeSegmentColors
 } from '../utils/meshSegment'
 import { exportObject3D, loadObject3DFromUrl, measureUvHealth, uvsAreBroken, measureBakeOverlap, bakeSourceIsMisaligned, BAKE_COVERAGE_COMPLETE } from '../utils/meshExport'
-import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig, setRigAnimations } from '../utils/meshRig'
+import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig, transformRig, setRigAnimations } from '../utils/meshRig'
 import {
   collectSkinSource,
   planRigSourceAlignment,
@@ -5410,20 +5410,22 @@ export default function MeshEditorPage() {
       if (plan.refuse) throw new Error(plan.refuse)
 
       // The skeleton is taken WHOLE — that is what lets the clips come along
-      // unretargeted. Cloned per run because translateRig rewrites bone
+      // unretargeted. Cloned per run because transformRig rewrites bone
       // positions and the bind pose in place, so a second run has to start from
       // the source rig as it arrived rather than from the moved copy.
       const rig = rigFromScene(cloneRigScene(source.rig.rigScene))
       if (!rig) throw new Error('The source skeleton could not be copied.')
       setRigAnimations(rig, source.rig.animations)
       // Both halves of the source have to make the same move: the surface being
-      // sampled, and the bones that surface's weights refer to.
-      if (plan.offset) translateRig(rig, plan.offset.x, plan.offset.y, plan.offset.z)
+      // sampled, and the bones that surface's weights refer to. A rig scaled
+      // onto this mesh but sampled unscaled (or the reverse) is worse than no
+      // alignment at all — hence the one plan driving both calls.
+      if (plan.offset || plan.scale !== 1) transformRig(rig, plan.scale, plan.offset)
 
       // Yielded first: computeBoundsTree on a dense source is seconds of blocked
       // main thread, and the button should be showing its spinner by then.
       await new Promise(resolve => { setTimeout(resolve, 0) })
-      sampler = buildSkinSampler(source.collected, plan.offset)
+      sampler = buildSkinSampler(source.collected, plan.offset, plan.scale)
       if (!sampler) throw new Error('The source mesh could not be prepared for sampling.')
 
       const nextGeometry = geometry.clone()
@@ -5481,7 +5483,13 @@ export default function MeshEditorPage() {
       if (rig.animations?.length) {
         rows.push({ label: 'Animations', value: `${rig.animations.length} clip${rig.animations.length === 1 ? '' : 's'} carried over` })
       }
-      if (plan.recentred) {
+      // Two separate facts, and the scale is the one worth naming: a source that
+      // came back from an external simplifier at half size is corrected
+      // silently otherwise, and the number is what tells you the correction was
+      // the one you expected.
+      if (plan.rescaled) {
+        rows.push({ label: 'Source rescaled', value: `${plan.scale.toFixed(3)}x onto this mesh` })
+      } else if (plan.recentred) {
         rows.push({ label: 'Source re-centred', value: `${plan.offset.length().toFixed(3)} units onto this mesh` })
       }
       rows.push({ label: 'Smoothing', value: `${rigTransferSmoothing} pass${rigTransferSmoothing === 1 ? '' : 'es'}` })
@@ -9355,6 +9363,37 @@ export default function MeshEditorPage() {
     ? 'segments'
     : weightPaintGeometry ? 'weights' : displayMode
 
+  // Where the pivot sits right now, so the panel can offer the one move that
+  // changes something instead of making the user run the check to find out. The
+  // tolerance is relative to the mesh's own size: an absolute epsilon calls a
+  // half-millimetre offset on a two-metre prop "off-centre", and the button
+  // label would flip-flop after every move.
+  const pivotPlacement = useMemo(() => {
+    if (!geometry) {
+      return null
+    }
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox()
+    }
+    const box = geometry.boundingBox
+    if (!box) {
+      return null
+    }
+    const size = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z)
+    const eps = Math.max(size * 1e-3, 1e-6)
+    const offCentreXZ = Math.abs(box.min.x + box.max.x) / 2 > eps || Math.abs(box.min.z + box.max.z) / 2 > eps
+    if (offCentreXZ) {
+      return 'off'
+    }
+    if (Math.abs(box.min.y) <= eps) {
+      return 'ground'
+    }
+    if (Math.abs(box.min.y + box.max.y) / 2 <= eps) {
+      return 'centre'
+    }
+    return 'off'
+  }, [geometry, geometryRevision])
+
   // Move the mesh's pivot to where an engine expects it. 'ground_pivot' drops the
   // mesh onto Y=0 centred on X/Z (a prop that snaps to the floor when placed);
   // 'centre_pivot' puts the bbox centre on the origin (so the asset rotates about
@@ -9406,14 +9445,16 @@ export default function MeshEditorPage() {
       // the overlay arrays are all there is, so shift them directly.
       setSkeleton(prev => (prev ? translateSkeleton(prev, offsetX, offsetY, offsetZ) : prev))
     }
-    // Show the user the check going green rather than making them re-run it. The
-    // re-check has to wait for the new geometry to land in state — see the
-    // geometryRevision effect below.
-    pendingGameReadyRecheckRef.current = true
+    // Show the user the check going green rather than making them re-run it —
+    // but only when a report is already on screen, so the standalone pivot
+    // button in the panel does not drag in a service round trip the user never
+    // asked for. The re-check has to wait for the new geometry to land in state
+    // — see the geometryRevision effect below.
+    pendingGameReadyRecheckRef.current = !!gameReadyReport
     setFeedback(mode === 'ground_pivot'
       ? 'Pivot moved to the ground at the origin.'
       : 'Pivot centred on the origin.')
-  }, [geometry, applyGeometryUpdate])
+  }, [geometry, applyGeometryUpdate, gameReadyReport])
 
   // A finding's fix button either jumps to the mode that resolves it (Repair has
   // no mode of its own — its controls live inside the Auto Retopo panel) or, for
@@ -11497,6 +11538,7 @@ export default function MeshEditorPage() {
                       running: gameReadyRunning, report: gameReadyReport,
                       onRun: handleRunGameReady,
                       onFix: handleGameReadyFix,
+                      pivotPlacement, onMovePivot: handleMovePivot,
                       disabled: !geometry
                     }} />
                   ) : activeMenu === 'sculpting' ? (

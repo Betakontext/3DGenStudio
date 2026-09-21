@@ -107,31 +107,100 @@ export function setRigAnimations(rig, clips) {
 // matrices stop being identity at rest — they become the translation itself —
 // and the export would shift the mesh a second time.
 export function translateRig(rig, offsetX, offsetY, offsetZ) {
+  transformRig(rig, 1, new THREE.Vector3(offsetX, offsetY, offsetZ))
+}
+
+// Move AND resize the captured skeleton: every bone's rest world position maps
+// to p · scale + offset.
+//
+// The scaling half exists for the rig transfer (utils/rigTransfer.js). A mesh
+// simplified or re-exported outside the editor comes back as the same object in
+// different units, and the transfer corrects for that by scaling the source
+// surface onto this mesh — so the bones whose weights that surface carries have
+// to make the identical move, or the mesh is bound to a skeleton half its size
+// sitting inside it.
+//
+// Only positions change. A UNIFORM scale leaves every rotation alone, so the
+// bones keep their orientation, and rotation and scale tracks keep meaning what
+// they meant. What does not come free is a clip's own TRANSLATION tracks (root
+// motion, a hips bob): those are keyed in the source's units, so they are
+// remapped here too — on CLONED clips, because the caller hands over the source
+// rig's own animation objects and a second run must start from them unmodified.
+//
+// A translation track is remapped by where the bone it drives sits in the
+// hierarchy, and the two cases are not the same:
+//
+//   * a CHILD bone's position is an offset from its parent, expressed in the
+//     parent's frame. That frame's rotation is untouched, so the offset simply
+//     scales: v → v · s.
+//   * a ROOT bone's position is a place, not an offset — it is what the whole
+//     rig stands on. Scaling it alone would key the rig back to where the source
+//     stood, undoing the move the rest of this function just made, so it takes
+//     the FULL transform (through its parent's frame, which itself did not move).
+//
+// The inverse bind matrices are recalculated afterwards. Without that the joint
+// matrices stop being identity at rest — they become the transform itself — and
+// the export would apply it a second time.
+export function transformRig(rig, scale = 1, offset = null) {
   const scene = rig?.rigScene
   if (!scene) return
 
+  // Pre-order, so a bone is always reached before its descendants — which is
+  // what lets each one be placed against a parent that is already in its new
+  // position.
   const bones = []
   scene.traverse(node => { if (node.isBone) bones.push(node) })
   if (!bones.length) return
 
-  const boneSet = new Set(bones)
-  const offset = new THREE.Vector3(offsetX, offsetY, offsetZ)
-  const worldPosition = new THREE.Vector3()
-  const parentInverse = new THREE.Matrix4()
-
   scene.updateMatrixWorld(true)
-  for (const bone of bones) {
-    // Only the roots move; every descendant follows through the hierarchy.
-    if (boneSet.has(bone.parent)) continue
-    bone.getWorldPosition(worldPosition).add(offset)
+  // Read every original world position BEFORE moving anything: once a parent
+  // moves, its children's world positions are no longer the ones being mapped.
+  const before = bones.map(bone => bone.getWorldPosition(new THREE.Vector3()))
+
+  const boneSet = new Set(bones)
+  // How a keyframed position on each bone has to be remapped — the root case,
+  // built per bone because it goes through that bone's parent frame. Collected
+  // in the same pass that moves the bones so the two cannot drift apart.
+  const rootMap = new Map()
+  const parentInverse = new THREE.Matrix4()
+  const place = new THREE.Matrix4().makeScale(scale, scale, scale)
+  if (offset) place.premultiply(new THREE.Matrix4().makeTranslation(offset.x, offset.y, offset.z))
+
+  bones.forEach((bone, index) => {
+    const target = before[index].clone().multiplyScalar(scale)
+    if (offset) target.add(offset)
     if (bone.parent) {
       bone.parent.updateWorldMatrix(true, false)
       parentInverse.copy(bone.parent.matrixWorld).invert()
-      worldPosition.applyMatrix4(parentInverse)
+      if (!boneSet.has(bone.parent) && !rootMap.has(bone.name)) {
+        rootMap.set(bone.name, parentInverse.clone().multiply(place).multiply(bone.parent.matrixWorld))
+      }
+      target.applyMatrix4(parentInverse)
+    } else if (!rootMap.has(bone.name)) {
+      rootMap.set(bone.name, place.clone())
     }
-    bone.position.copy(worldPosition)
-  }
+    bone.position.copy(target)
+    bone.updateMatrix()
+  })
   scene.updateMatrixWorld(true)
+
+  if ((scale !== 1 || offset) && rig.animations?.length) {
+    const point = new THREE.Vector3()
+    setRigAnimations(rig, rig.animations.map(clip => {
+      const copy = clip.clone()
+      for (const track of copy.tracks) {
+        if (!track.name.endsWith('.position')) continue
+        const rootTransform = rootMap.get(track.name.slice(0, -'.position'.length).split('/').pop())
+        for (let i = 0; i + 2 < track.values.length; i += 3) {
+          point.fromArray(track.values, i)
+          if (rootTransform) point.applyMatrix4(rootTransform)
+          else point.multiplyScalar(scale)
+          point.toArray(track.values, i)
+        }
+      }
+      return copy
+    }))
+  }
 
   scene.traverse(node => {
     if (node.isSkinnedMesh && node.skeleton) node.skeleton.calculateInverses()

@@ -63,6 +63,20 @@ function CheckRow({ check, onFix, disabled }) {
   )
 }
 
+// The standalone pivot button offers whichever move actually changes something,
+// so it reads as a toggle: a grounded mesh gets "Center Pivot", a centred one
+// gets "Set Pivot on the Ground". A mesh sitting at neither defaults to the
+// ground — that is what a prop dropped into a level needs — and a second press
+// then centres it.
+const PIVOT_ACTIONS = {
+  ground: { fix: 'centre_pivot', label: 'Center Pivot', icon: 'filter_center_focus',
+    state: 'The pivot is on the ground at the origin.' },
+  centre: { fix: 'ground_pivot', label: 'Set Pivot on the Ground', icon: 'vertical_align_bottom',
+    state: 'The pivot is at the centre of the mesh.' },
+  off: { fix: 'ground_pivot', label: 'Set Pivot on the Ground', icon: 'vertical_align_bottom',
+    state: 'The pivot is off the mesh — neither grounded nor centred.' },
+}
+
 export default function GameReadyPanel({
   options,
   setOption,
@@ -70,6 +84,8 @@ export default function GameReadyPanel({
   report,
   onRun,
   onFix,
+  pivotPlacement,
+  onMovePivot,
   disabled,
 }) {
   const o = options
@@ -88,6 +104,8 @@ export default function GameReadyPanel({
   const summary = report?.summary
   const blocking = summary ? summary.fail : 0
   const warnings = summary ? summary.warn : 0
+
+  const pivot = PIVOT_ACTIONS[pivotPlacement] || null
 
   return (
     <>{/* GAME-READY CHECK */}
@@ -124,6 +142,23 @@ export default function GameReadyPanel({
             </span>
           </div>
         )}
+      </div>
+
+      <div className="mesh-editor-panel__section">
+        <span className="mesh-editor-panel__section-title">Pivot</span>
+        <button
+          type="button"
+          className="mesh-editor-btn mesh-editor-btn--secondary"
+          onClick={() => pivot && onMovePivot(pivot.fix)}
+          disabled={fieldsDisabled || !pivot}
+          title={pivot
+            ? `${pivot.label} — applies straight away, undoable with Ctrl+Z`
+            : 'Load a mesh to move its pivot'}
+        >
+          <span className="material-symbols-outlined">{pivot ? pivot.icon : 'adjust'}</span>
+          <span>{pivot ? pivot.label : 'Center Pivot'}</span>
+        </button>
+        {pivot && <span className="mesh-editor-panel__hint">{pivot.state}</span>}
       </div>
 
       {groups.map(group => (
