@@ -8025,12 +8025,22 @@ export default function MeshEditorPage() {
     setRepairOptions(prev => ({ ...prev, [key]: value }))
   }, [])
 
-  // Targeted non-manifold / topology repair via the Python mesh-tools service:
-  // weld → drop duplicate/degenerate faces → resolve non-manifold edges → close
-  // small holes. Runs the same round-trip as Auto Retopo (undoable via Keep/
-  // Revert) and reports before/after non-manifold + boundary edge counts.
+  // Targeted topology repair via the Python mesh-tools service: weld → drop
+  // duplicate/degenerate faces → resolve non-manifold edges → close small holes.
+  // Runs the same round-trip as Auto Retopo (undoable via Keep/Revert) and
+  // reports before/after non-manifold + boundary edge counts.
+  //
+  // A mesh with open edges but no non-manifold ones reaches the same call, where
+  // the only stage with work to do is the hole close. 'split' skips that stage
+  // entirely and close_holes gates it, so both are pinned here rather than left
+  // to a toggle the user set for an earlier, different mesh — otherwise the run
+  // would succeed having changed nothing.
   const handleCleanNonManifold = useCallback(() => {
-    runMeshTool(runRepairService, repairOptions, {
+    const openEdgesOnly = !(watertightResult?.nonManifoldEdges > 0)
+    const options = openEdgesOnly
+      ? { ...repairOptions, method: 'remove', close_holes: true }
+      : repairOptions
+    runMeshTool(runRepairService, options, {
       setRunning: setRepairRunning,
       setResult: setRepairResult,
       setProgress: setRepairProgress,
@@ -8040,7 +8050,7 @@ export default function MeshEditorPage() {
       // painted texture can be carried straight onto the result. Without it the
       // UVs are gone and a carried-over texture would map to nothing, so the
       // blank-canvas reset is the honest outcome.
-      preserveTexture: repairOptions.preserve_uv,
+      preserveTexture: options.preserve_uv,
       buildRows: stats => {
         const t = stats?.tool || {}
         const before = t.before || {}
@@ -8060,7 +8070,7 @@ export default function MeshEditorPage() {
         return rows
       },
     })
-  }, [runMeshTool, repairOptions])
+  }, [runMeshTool, repairOptions, watertightResult])
 
   // Any geometry change (edits, Auto Retopo, revert…) invalidates a prior result,
   // so clear it and let the user re-check against the new topology. The
