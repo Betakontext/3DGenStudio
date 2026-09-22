@@ -250,3 +250,96 @@ export function buildRiggedObject(rig, geometry, material = null) {
 
   return scene
 }
+
+// Turn (or otherwise rigidly move) the captured skeleton with the mesh.
+//
+// transformRig above maps bone POSITIONS only, which is all a translate or a
+// uniform scale needs — neither changes any bone's orientation. A rotation
+// does, so it cannot go through there: mapping the joints alone would swing the
+// skeleton into place while every bone kept pointing the old way, and the first
+// posed frame would fold the limbs sideways.
+//
+// `matrix` must be rigid (rotation and translation, no scale or shear), which
+// is what makes the handling below correct:
+//
+//   * only the ROOT bones are touched. A child's local matrix is expressed in
+//     its parent's frame, and that frame is about to carry exactly this turn —
+//     re-deriving the child would apply it twice.
+//   * a clip that KEYS a root bone would drive it straight back to the old
+//     orientation, so root position and rotation tracks are remapped through
+//     the same frame. On cloned clips, for the reason transformRig gives.
+//
+// The inverse bind matrices are recalculated afterwards, or the joint matrices
+// stop being identity at rest and the export applies the turn a second time.
+export function rigidTransformRig(rig, matrix) {
+  const scene = rig?.rigScene
+  if (!scene || !matrix) return
+
+  const bones = []
+  scene.traverse(node => { if (node.isBone) bones.push(node) })
+  if (!bones.length) return
+
+  scene.updateMatrixWorld(true)
+
+  const boneSet = new Set(bones)
+  const roots = bones.filter(bone => !boneSet.has(bone.parent))
+  if (!roots.length) return
+
+  // Per root bone, the transform expressed in ITS parent's frame — the one thing
+  // both the bone and any track driving it have to be mapped by.
+  const frames = new Map()
+  const local = new THREE.Matrix4()
+
+  roots.forEach(bone => {
+    const frame = new THREE.Matrix4()
+    if (bone.parent) {
+      bone.parent.updateWorldMatrix(true, false)
+      frame.copy(bone.parent.matrixWorld).invert().multiply(matrix).multiply(bone.parent.matrixWorld)
+    } else {
+      frame.copy(matrix)
+    }
+    frames.set(bone.name, frame)
+
+    local.copy(frame).multiply(bone.matrix)
+    local.decompose(bone.position, bone.quaternion, bone.scale)
+    bone.updateMatrix()
+  })
+  scene.updateMatrixWorld(true)
+
+  if (rig.animations?.length) {
+    const point = new THREE.Vector3()
+    const spin = new THREE.Quaternion()
+    const keyed = new THREE.Quaternion()
+    setRigAnimations(rig, rig.animations.map(clip => {
+      const copy = clip.clone()
+      for (const track of copy.tracks) {
+        const dot = track.name.lastIndexOf('.')
+        if (dot < 0) continue
+        const property = track.name.slice(dot + 1)
+        if (property !== 'position' && property !== 'quaternion') continue
+
+        const frame = frames.get(track.name.slice(0, dot).split('/').pop())
+        if (!frame) continue
+
+        if (property === 'position') {
+          for (let i = 0; i + 2 < track.values.length; i += 3) {
+            point.fromArray(track.values, i).applyMatrix4(frame)
+            point.toArray(track.values, i)
+          }
+        } else {
+          spin.setFromRotationMatrix(frame)
+          for (let i = 0; i + 3 < track.values.length; i += 4) {
+            keyed.fromArray(track.values, i)
+            keyed.premultiply(spin)
+            keyed.toArray(track.values, i)
+          }
+        }
+      }
+      return copy
+    }))
+  }
+
+  scene.traverse(node => {
+    if (node.isSkinnedMesh && node.skeleton) node.skeleton.calculateInverses()
+  })
+}

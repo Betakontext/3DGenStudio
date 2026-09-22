@@ -195,6 +195,30 @@ export function translateSkeleton(skeleton, offsetX, offsetY, offsetZ) {
   return { ...skeleton, joints: shift(skeleton.joints), segments: shift(skeleton.segments) }
 }
 
+// Map extracted skeleton data through a world-space matrix.
+//
+// The rotate-mesh buttons' counterpart to translateSkeleton, and needed for the
+// same reason: the overlay is baked world-space positions, so a mesh that turns
+// without it leaves its skeleton standing in the old orientation. Only the
+// joints move — the overlay carries no orientation of its own, it is drawn as
+// segments between joints.
+export function transformSkeleton(skeleton, matrix) {
+  if (!skeleton || !matrix) return skeleton
+
+  const point = new THREE.Vector3()
+  const map = source => {
+    if (!source?.length) return source
+    const out = new Float32Array(source.length)
+    for (let i = 0; i < source.length; i += 3) {
+      point.fromArray(source, i).applyMatrix4(matrix)
+      point.toArray(out, i)
+    }
+    return out
+  }
+
+  return { ...skeleton, joints: map(skeleton.joints), segments: map(skeleton.segments) }
+}
+
 // Parse an in-memory GLB (ArrayBuffer) and extract its skeleton overlay data.
 // Used for the rigged result returned by the rig service. Returns null on no rig.
 export function extractSkeletonFromGlbBuffer(arrayBuffer) {

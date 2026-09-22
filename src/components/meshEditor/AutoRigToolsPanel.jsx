@@ -16,6 +16,17 @@ import RigTransferSection from './RigTransferSection'
 import WeightPaintSection from './WeightPaintSection'
 import { AUTO_RIG_BONE_NAME_OPTIONS } from '../../utils/meshTools'
 
+// The quarter turns offered above the rig options. Left and right are the
+// MESH's own — "Turn Left" turns it to ITS left, which for a model facing you
+// sweeps its face across to your RIGHT. Up and down are which way its face
+// tips. MESH_ROTATIONS in MeshEditorPage holds the matching axes and signs.
+const ORIENTATION_TURNS = [
+  { direction: 'left', label: 'Turn Left', icon: 'rotate_left', title: 'Turn the mesh 90° to its left (about the up axis)' },
+  { direction: 'right', label: 'Turn Right', icon: 'rotate_right', title: 'Turn the mesh 90° to its right (about the up axis)' },
+  { direction: 'up', label: 'Tip Up', icon: 'arrow_upward', title: 'Tip the mesh 90° face-up — stands up a model lying on its front' },
+  { direction: 'down', label: 'Tip Down', icon: 'arrow_downward', title: 'Tip the mesh 90° face-down — lays down a model standing on its head' },
+]
+
 export default function AutoRigToolsPanel({
   options,
   setOption,
@@ -37,6 +48,7 @@ export default function AutoRigToolsPanel({
   rigDropped,
   rigEdited,
   boneMappings,
+  onRotateMesh,
   rigTransfer,
   weightPaint,
   disabled,
@@ -210,6 +222,35 @@ export default function AutoRigToolsPanel({
         )}
       </div>
 
+      {/* ORIENTATION */}
+      <div className="mesh-editor-panel__section">
+        <span className="mesh-editor-panel__section-title">Orientation</span>
+        <span className="mesh-editor-panel__hint">
+          Auto Rig names bones from where they sit in the mesh&apos;s own axes, so a model that was
+          exported facing sideways comes back with its left and right swapped. Stand it up facing
+          you first — the mesh should face the camera in the Front view.
+        </span>
+        <div className="mesh-editor-icon-grid mesh-editor-icon-grid--double">
+          {ORIENTATION_TURNS.map(turn => (
+            <button
+              key={turn.direction}
+              type="button"
+              className="mesh-editor-btn"
+              onClick={() => onRotateMesh(turn.direction)}
+              disabled={fieldsDisabled}
+              title={`${turn.title} — applies straight away, undoable with Ctrl+Z`}
+            >
+              <span className="material-symbols-outlined">{turn.icon}</span>
+              <span>{turn.label}</span>
+            </button>
+          ))}
+        </div>
+        <span className="mesh-editor-panel__hint">
+          Turns the mesh itself, not the camera — the skeleton, the skin weights and any animations
+          come with it, and saving keeps the new orientation.
+        </span>
+      </div>
+
       <RigTransferSection {...rigTransfer} />
 
       <WeightPaintSection {...weightPaint} />
@@ -219,7 +260,7 @@ export default function AutoRigToolsPanel({
         <SelectField label="Bone names" value={o.rename_bones}
           onChange={v => setOption('rename_bones', v)} disabled={fieldsDisabled}
           options={AUTO_RIG_BONE_NAME_OPTIONS}
-          hint="Rename the generated bones to a standard humanoid convention for retargeting" />
+          hint="Rename the generated bones to a standard humanoid convention for retargeting. Left and right are read off the mesh’s axes, so fix its Orientation above before rigging a model that faces sideways." />
         <ToggleField label="Preserve texture & scale" value={o.use_transfer}
           onChange={v => setOption('use_transfer', v)} disabled={fieldsDisabled}
           hint="Transfer the rig onto your original mesh (keeps its texture and scale). Recommended — leave on." />

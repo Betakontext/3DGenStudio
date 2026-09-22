@@ -28,6 +28,7 @@ import {
   extractSkeletonFromObject,
   filterSkeleton,
   translateSkeleton,
+  transformSkeleton,
   mergeSelectedVertices,
   smoothSelectedVertices,
   subdivideSelectedFaces
@@ -220,7 +221,7 @@ import {
   writeSegmentColors
 } from '../utils/meshSegment'
 import { exportObject3D, loadObject3DFromUrl, measureUvHealth, uvsAreBroken, measureBakeOverlap, bakeSourceIsMisaligned, BAKE_COVERAGE_COMPLETE } from '../utils/meshExport'
-import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig, transformRig, setRigAnimations } from '../utils/meshRig'
+import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig, transformRig, rigidTransformRig, setRigAnimations } from '../utils/meshRig'
 import {
   collectSkinSource,
   planRigSourceAlignment,
@@ -307,6 +308,29 @@ function geometryWorldBox(geometry) {
   if (!geometry) return null
   geometry.computeBoundingBox()
   return geometry.boundingBox ? geometry.boundingBox.clone() : null
+}
+
+// The four quarter turns the Auto Rig panel offers, with the mesh's front taken
+// to be +Z (the default camera sits on +Z looking down -Z, so a correctly
+// oriented model faces you).
+//
+// Left and right are the MESH's own, not the viewer's, because that is how you
+// talk about a model you are looking at: "turn it to its left". For a model
+// facing the camera those are mirrored on screen — its left hand is on your
+// right — so a turn to ITS left sends its face from +Z to +X, which is +90 deg
+// about Y. Reading the labels as the viewer's instead is what got these two
+// swapped the first time round.
+//
+// Up and down are which way the face TIPS, where there is no mirror to get
+// wrong: -90 deg about X brings +Z round to +Y, face towards the ceiling.
+//
+// Exact axis-aligned quarter turns, so four clicks land back on the original
+// numbers instead of drifting through a float.
+const MESH_ROTATIONS = {
+  left: { axis: new THREE.Vector3(0, 1, 0), angle: Math.PI / 2, label: 'left' },
+  right: { axis: new THREE.Vector3(0, 1, 0), angle: -Math.PI / 2, label: 'right' },
+  up: { axis: new THREE.Vector3(1, 0, 0), angle: -Math.PI / 2, label: 'up' },
+  down: { axis: new THREE.Vector3(1, 0, 0), angle: Math.PI / 2, label: 'down' },
 }
 
 // Undo depth for the animation edit dock. Each entry holds two copies of one
@@ -9456,6 +9480,70 @@ export default function MeshEditorPage() {
       : 'Pivot centred on the origin.')
   }, [geometry, applyGeometryUpdate, gameReadyReport])
 
+  // Turn the whole mesh a quarter turn about the world axes.
+  //
+  // Auto Rig's bone naming reads the mesh in its OWN axes: it decides left from
+  // right, and up from along, by where a joint sits, not by looking for a face.
+  // A model exported facing down +X — which plenty of generators and DCC
+  // round-trips produce — therefore comes back with its left and right limbs
+  // named the wrong way round, and nothing downstream can tell, because the
+  // names are the only record of which side is which. Putting the mesh the
+  // right way up FIRST is what fixes that, and it is what every engine wants of
+  // the saved asset anyway.
+  //
+  // Same shape as handleMovePivot: a client-side transform of the editable
+  // geometry that takes the rig with it, through applyGeometryUpdate so Ctrl+Z
+  // undoes it. The pivot placement is re-applied afterwards because a turn
+  // about the origin lifts a grounded mesh off the floor — a pitch puts it
+  // underground — which reads as a bug even when the orientation is now right.
+  const handleRotateMesh = useCallback((direction) => {
+    const spec = MESH_ROTATIONS[direction]
+    if (!geometry || !spec) {
+      return
+    }
+
+    // Accumulates into the full move the rig has to make: the turn, plus
+    // whatever re-grounding follows it.
+    const matrix = new THREE.Matrix4().makeRotationAxis(spec.axis, spec.angle)
+
+    const next = geometry.clone()
+    next.applyMatrix4(matrix)
+    next.computeBoundingBox()
+
+    const box = next.boundingBox
+    if (box && (pivotPlacement === 'ground' || pivotPlacement === 'centre')) {
+      const offsetX = -(box.min.x + box.max.x) / 2
+      const offsetZ = -(box.min.z + box.max.z) / 2
+      const offsetY = pivotPlacement === 'ground' ? -box.min.y : -(box.min.y + box.max.y) / 2
+      next.translate(offsetX, offsetY, offsetZ)
+      matrix.premultiply(new THREE.Matrix4().makeTranslation(offsetX, offsetY, offsetZ))
+      next.computeBoundingBox()
+    }
+    next.computeBoundingSphere()
+
+    applyGeometryUpdate(next, [], { pushUndo: true })
+
+    // The bones are a separate scene graph and the overlay is baked world-space
+    // arrays, so neither follows the geometry on its own. Where there is a
+    // captured rig it is the single source of truth and the overlay is
+    // re-derived from it — see handleMovePivot for why two copies are not kept
+    // in step by hand.
+    if (rigRef.current) {
+      rigidTransformRig(rigRef.current, matrix)
+      try {
+        setSkeleton(extractSkeletonFromObject(rigRef.current.rigScene))
+      } catch (err) {
+        console.warn('Could not re-derive the skeleton overlay after rotating the mesh:', err)
+        setSkeleton(prev => (prev ? transformSkeleton(prev, matrix) : prev))
+      }
+    } else {
+      setSkeleton(prev => (prev ? transformSkeleton(prev, matrix) : prev))
+    }
+
+    pendingGameReadyRecheckRef.current = !!gameReadyReport
+    setFeedback(`Mesh turned 90° ${spec.label}.`)
+  }, [geometry, pivotPlacement, applyGeometryUpdate, gameReadyReport])
+
   // A finding's fix button either jumps to the mode that resolves it (Repair has
   // no mode of its own — its controls live inside the Auto Retopo panel) or, for
   // the parameterless corrections, applies the fix directly.
@@ -11439,6 +11527,7 @@ export default function MeshEditorPage() {
                       rigDropped,
                       rigEdited: rigEditDirty,
                       boneMappings: boneMappingSummary,
+                      onRotateMesh: handleRotateMesh,
                       rigTransfer: {
                         source: rigSourceInfo,
                         loading: rigSourceLoading,
