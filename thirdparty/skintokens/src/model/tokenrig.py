@@ -236,7 +236,20 @@ class TokenRig(ModelSpec):
         )[0], device=device).unsqueeze(0)
         assert start_tokens.shape[0] == 1
         start_embed = self.transformer.get_input_embeddings()(start_tokens)
-        inputs_embeds = torch.cat([learned_mesh_cond, start_embed], dim=1)
+        # Everything here is bfloat16, but the LLM's input must be pinned to the
+        # transformer's own dtype anyway: torch >= 2.12 runs `nn.RMSNorm` in fp32
+        # under autocast (the policy `nn.LayerNorm` has always had), and
+        # `output_proj` ends in one — so `learned_mesh_cond` comes back fp32 on a
+        # newer torch even though every weight on the path is bf16. A fp32 prefill
+        # fills the KV cache with fp32 keys; the next decode step's query is bf16
+        # (a plain embedding lookup, which autocast leaves alone) and flash-attn
+        # rejects the pair with "query and key must have the same dtype". The
+        # prefill itself survives because transformers casts a fp32 *query* down
+        # for flash-attn but never rewrites the cache it already wrote.
+        llm_dtype = self.transformer.get_input_embeddings().weight.dtype
+        inputs_embeds = torch.cat(
+            [learned_mesh_cond.to(llm_dtype), start_embed.to(llm_dtype)], dim=1
+        )
         
         results = self.transformer.generate(
             inputs_embeds=inputs_embeds,
