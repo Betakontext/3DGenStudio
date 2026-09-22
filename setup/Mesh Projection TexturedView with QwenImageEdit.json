@@ -2,6 +2,7 @@
   "1": {
     "inputs": {
       "shift": 3.1,
+      "sampling": "flow",
       "model": [
         "13",
         0
@@ -51,7 +52,7 @@
   "4": {
     "inputs": {
       "pixels": [
-        "38",
+        "37",
         0
       ],
       "vae": [
@@ -113,7 +114,7 @@
   },
   "8": {
     "inputs": {
-      "prompt": "",
+      "prompt": "Draw the missing parts",
       "clip": [
         "14",
         0
@@ -180,7 +181,7 @@
   "12": {
     "inputs": {
       "pixels": [
-        "28",
+        "39",
         0
       ],
       "vae": [
@@ -238,7 +239,7 @@
   },
   "20": {
     "inputs": {
-      "seed": 1000,
+      "seed": 1234,
       "steps": 4,
       "cfg": 1,
       "sampler_name": "euler",
@@ -273,79 +274,6 @@
     "class_type": "LoadImage",
     "_meta": {
       "title": "Position Image"
-    }
-  },
-  "22": {
-    "inputs": {
-      "image": ""
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Reference Image"
-    }
-  },
-  "25": {
-    "inputs": {
-      "value": 1,
-      "width": [
-        "34",
-        0
-      ],
-      "height": [
-        "34",
-        0
-      ]
-    },
-    "class_type": "SolidMask",
-    "_meta": {
-      "title": "SolidMask"
-    }
-  },
-  "26": {
-    "inputs": {
-      "mask": [
-        "22",
-        1
-      ]
-    },
-    "class_type": "InvertMask",
-    "_meta": {
-      "title": "InvertMask"
-    }
-  },
-  "27": {
-    "inputs": {
-      "mask": [
-        "25",
-        0
-      ]
-    },
-    "class_type": "MaskToImage",
-    "_meta": {
-      "title": "Convert Mask to Image"
-    }
-  },
-  "28": {
-    "inputs": {
-      "x": 0,
-      "y": 0,
-      "resize_source": true,
-      "destination": [
-        "27",
-        0
-      ],
-      "source": [
-        "22",
-        0
-      ],
-      "mask": [
-        "26",
-        0
-      ]
-    },
-    "class_type": "ImageCompositeMasked",
-    "_meta": {
-      "title": "ImageCompositeMasked"
     }
   },
   "34": {
@@ -385,24 +313,6 @@
     "class_type": "LoadImage",
     "_meta": {
       "title": "Textured View"
-    }
-  },
-  "38": {
-    "inputs": {
-      "blend_factor": 1,
-      "blend_mode": "screen",
-      "image1": [
-        "37",
-        0
-      ],
-      "image2": [
-        "39",
-        0
-      ]
-    },
-    "class_type": "ImageBlend",
-    "_meta": {
-      "title": "Blend Images"
     }
   },
   "39": {

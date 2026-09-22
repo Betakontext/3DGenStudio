@@ -53,7 +53,36 @@
 					"Outputs": [
 						{ "Node": "470", "Name": "Save Image", "Type": "Image" }
 					]
-				}					
+				},
+				{
+					"Name": "Mesh Projection with QwenImage21",
+					"File": "setup/Mesh Projection with QwenImage21.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
+						{ "Node": "43",  "Input": "value", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "20", "Input": "steps",   "Name": "Number of Steps",              "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "42", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Mesh Projection TexturedView with QwenImage21",
+					"File": "setup/Mesh Projection TexturedView with QwenImage21.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
+						{ "Node": "43",  "Input": "value", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }					
+					],
+					"Outputs": [
+						{ "Node": "48", "Name": "Save Image", "Type": "Image" }
+					]
+				}				
 			]
 		},	
 		{
@@ -102,7 +131,6 @@
 					"File": "setup/Mesh Projection TexturedView with QwenImageEdit.json",
 					"Inputs": [
 						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
-						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
 						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
 						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
 						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
@@ -174,7 +202,6 @@
 					"File": "setup/Mesh Projection TexturedView with QwenImageEdit - Upscaled.json",
 					"Inputs": [
 						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
-						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
 						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
 						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
 						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
@@ -183,7 +210,7 @@
 						{ "Node": "36", "Input": "mask_blur",  "Name": "RMBG - Mask Blur",  "Type": "Number" }						
 					],
 					"Outputs": [
-						{ "Node": "43", "Name": "Save Image", "Type": "Image" }
+						{ "Node": "40", "Name": "Save Image", "Type": "Image" }
 					]
 				},
 				{
@@ -257,7 +284,7 @@
 					"Outputs": [
 						{ "Node": "40", "Name": "Save Image", "Type": "Image" }
 					]
-				}				
+				}		
 			]
 		},
 		{
