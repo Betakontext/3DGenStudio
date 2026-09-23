@@ -123,10 +123,14 @@
         0
       ],
       "images.image_1": [
-        "37",
+        "50",
         0
       ],
       "images.image_2": [
+        "37",
+        0
+      ],
+      "images.image_3": [
         "39",
         0
       ],
@@ -198,6 +202,15 @@
     "class_type": "UnetLoaderGGUF",
     "_meta": {
       "title": "Unet Loader (GGUF)"
+    }
+  },
+  "50": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Reference Image"
     }
   }
 }

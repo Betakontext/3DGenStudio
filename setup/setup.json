@@ -80,9 +80,11 @@
 					"Inputs": [
 						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
 						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
+						{ "Node": "50", "Input": "image",  "Name": "Reference Image",     "Type": "Image"  },
 						{ "Node": "43",  "Input": "value", "Name": "Prompt",            "Type": "String" },
 						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
-						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }					
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" },
+						{ "Node": "20", "Input": "steps",  "Name": "Number of Steps",  "Type": "Number" }
 					],
 					"Outputs": [
 						{ "Node": "48", "Name": "Save Image", "Type": "Image" }
