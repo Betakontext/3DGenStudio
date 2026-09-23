@@ -45,7 +45,7 @@
       "scheduler": "simple",
       "denoise": 1,
       "model": [
-        "41",
+        "49",
         0
       ],
       "positive": [
@@ -105,16 +105,6 @@
     "class_type": "Canny",
     "_meta": {
       "title": "Canny"
-    }
-  },
-  "41": {
-    "inputs": {
-      "unet_name": "{diffusion_model}",
-      "weight_dtype": "default"
-    },
-    "class_type": "UNETLoader",
-    "_meta": {
-      "title": "Load Diffusion Model"
     }
   },
   "42": {
@@ -199,6 +189,15 @@
     "class_type": "PreviewImage",
     "_meta": {
       "title": "Preview Image"
+    }
+  },
+  "49": {
+    "inputs": {
+      "unet_name": "{diffusion_model}"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
     }
   }
 }
