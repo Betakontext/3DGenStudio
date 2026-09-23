@@ -55,6 +55,15 @@ const MIN_OVERLAP = 0.5;
 // Per-axis extent agreement, as a fraction of the target's diagonal, within
 // which two boxes count as the same object at the same scale.
 const SCALE_TOLERANCE = 0.05;
+// A source at a different scale is still placeable when all three axes agree on
+// ONE factor — the same object in different units, which is what a mesh
+// simplified or re-exported outside the app looks like next to the original.
+// Kept in step with BAKE_UNIFORM_TOLERANCE and friends in src/utils/meshExport.js,
+// which decide the same thing in the browser: the two paths must not disagree
+// about whether a transfer is worth starting.
+const UNIFORM_TOLERANCE = 0.02;
+const MIN_AXIS_FRAC = 0.01;
+const MIN_SCALE_DELTA = 0.005;
 
 const COMPONENT_READERS = {
   5120: (view, offset) => view.getInt8(offset),
@@ -231,7 +240,7 @@ function skinBoneNames(json, skin) {
  * dropped: dropping them leaves vertices with an all-zero weight set, which
  * reads downstream as "bound to bone 0" and pins that patch to the root.
  */
-function buildSourceSampler(json, bin, skinIndex, offset) {
+function buildSourceSampler(json, bin, skinIndex, offset, scale = 1) {
   const skin = (json.skins || [])[skinIndex];
   const names = skinBoneNames(json, skin);
   const boneIndex = new Map();
@@ -268,10 +277,14 @@ function buildSourceSampler(json, bin, skinIndex, offset) {
     }
 
     for (let i = 0; i < prim.count; i += 1) {
+      // The placement the alignment plan decided: scale first, then offset.
+      // The skeleton is put through the identical transform below — sampling a
+      // surface the bones are not actually inside is worse than not aligning
+      // at all.
       positions.push(
-        prim.positions[i * 3] + offset.x,
-        prim.positions[i * 3 + 1] + offset.y,
-        prim.positions[i * 3 + 2] + offset.z
+        prim.positions[i * 3] * scale + offset.x,
+        prim.positions[i * 3 + 1] * scale + offset.y,
+        prim.positions[i * 3 + 2] * scale + offset.z
       );
       for (let s = 0; s < 4; s += 1) {
         joints.push(Math.max(0, remap[j[i * 4 + s]] ?? 0));
@@ -317,67 +330,124 @@ function boxOf(primitives) {
 }
 
 /**
- * Can this source be sampled onto this target, and how far must it move first?
+ * Can this source be sampled onto this target, and what must it be moved by?
  *
  * The transfer is purely positional, so two meshes in different spaces produce a
  * rig that is not slightly wrong but meaningless. Reported as the WORST axis
  * rather than a volume ratio, because the volume ratio hides exactly this: a
  * source offset along one axis still overlaps perfectly on the other two.
  *
- * A source that only needs re-centring is re-centred; at a different scale that
- * is refused rather than guessed at, because re-centring boxes of different
- * sizes leaves the surfaces crossing each other.
+ * Returns the placement as `scale` then `offset` — p · s + offset — which both
+ * the sampled surface and the skeleton are put through. A source that only needs
+ * re-centring is re-centred; one whose three axes agree on a single ratio is the
+ * same object in other units and is scaled onto the target as well. Axes that
+ * disagree about the ratio are two different shapes, and that is still refused
+ * rather than guessed at.
+ *
+ * Mirrors planRigSourceAlignment in src/utils/rigTransfer.js, which decides this
+ * for the editor; the two must not disagree about the same pair of meshes.
  */
 function planAlignment(targetBox, sourceBox) {
-  if (targetBox.isEmpty() || sourceBox.isEmpty()) {
-    return { offset: new THREE.Vector3(), recentred: false, refuse: null, warn: null, diagonal: 0 };
-  }
+  const idle = {
+    offset: new THREE.Vector3(), scale: 1, recentred: false, rescaled: false,
+    refuse: null, warn: null, diagonal: 0
+  };
+  if (targetBox.isEmpty() || sourceBox.isEmpty()) return idle;
+
   const targetSize = targetBox.getSize(new THREE.Vector3());
   const sourceSize = sourceBox.getSize(new THREE.Vector3());
   const diagonal = targetSize.length();
-  const scale = Math.max(targetSize.x, targetSize.y, targetSize.z);
+  const longest = Math.max(targetSize.x, targetSize.y, targetSize.z);
   const axes = ['x', 'y', 'z'];
+  idle.diagonal = diagonal;
 
-  const worstAxis = (shift) => axes.reduce((worst, axis) => {
+  // Coverage of the target by a source box given as a centre and a size, so the
+  // "after placement" case can vary both — a rescale changes the size, and every
+  // placement this performs leaves the two boxes concentric.
+  const worstAxis = (centre, size) => axes.reduce((worst, axis) => {
     const extent = targetSize[axis];
-    if (extent <= scale * 1e-4) return worst;      // a flat axis is not a miss
-    const span = Math.min(targetBox.max[axis], sourceBox.max[axis] + shift[axis])
-      - Math.max(targetBox.min[axis], sourceBox.min[axis] + shift[axis]);
+    if (extent <= longest * 1e-4) return worst;    // a flat axis is not a miss
+    const span = Math.min(targetBox.max[axis], centre[axis] + size[axis] / 2)
+      - Math.max(targetBox.min[axis], centre[axis] - size[axis] / 2);
     return Math.min(worst, Math.max(span, 0) / extent);
   }, 1);
 
-  const zero = new THREE.Vector3();
-  const shift = targetBox.getCenter(new THREE.Vector3()).sub(sourceBox.getCenter(new THREE.Vector3()));
+  const targetCentre = targetBox.getCenter(new THREE.Vector3());
+  const sourceCentre = sourceBox.getCenter(new THREE.Vector3());
   const sameScale = axes.every(axis =>
     Math.abs(targetSize[axis] - sourceSize[axis]) <= SCALE_TOLERANCE * Math.max(diagonal, 1e-9));
 
-  // A size mismatch that still overlaps is not refused — one box inside the
-  // other overlaps perfectly on every axis, so the measure cannot see it — but
-  // it is worth saying, because the weights then come from the wrong part of
-  // the source.
-  const warn = sameScale ? null
-    : `The source mesh is ${(sourceSize.length() / Math.max(diagonal, 1e-9)).toFixed(2)}x the size of the target. `
-      + 'The weights were sampled anyway, but check the result: they come from the wrong part of the source '
-      + 'unless the two are exported at the same scale.';
+  // The single factor that takes the source to the target, or null when the
+  // axes disagree about what it is. Disagreement is the answer, not a nuisance:
+  // one ratio everywhere measures a units change, three different ratios mean
+  // two different objects. Axes too thin to divide by contribute no ratio, and
+  // one axis alone is not evidence — it agrees with itself.
+  const uniformScale = (() => {
+    if (sameScale) return null;
+    const floor = MIN_AXIS_FRAC * Math.max(diagonal, 1e-9);
+    const ratios = axes
+      .filter(axis => targetSize[axis] > floor && sourceSize[axis] > floor)
+      .map(axis => targetSize[axis] / sourceSize[axis]);
+    if (ratios.length < 2) return null;
+    const mean = ratios.reduce((sum, r) => sum + r, 0) / ratios.length;
+    if (!(mean > 0)) return null;
+    if (ratios.some(r => Math.abs(r - mean) > UNIFORM_TOLERANCE * mean)) return null;
+    return Math.abs(mean - 1) <= MIN_SCALE_DELTA ? null : mean;
+  })();
 
-  if (worstAxis(zero) >= MIN_OVERLAP) {
-    return { offset: zero, recentred: false, refuse: null, warn, diagonal };
-  }
-  if (!sameScale) {
+  if (uniformScale) {
+    const placed = sourceSize.clone().multiplyScalar(uniformScale);
+    if (worstAxis(targetCentre, placed) < MIN_OVERLAP) {
+      return {
+        ...idle,
+        refuse: 'The two meshes are different sizes and do not line up even rescaled, so there is no '
+          + 'source surface under most of the target. Pick a version of the same mesh, or align them first.'
+      };
+    }
     return {
-      offset: zero, recentred: false, warn, diagonal,
-      refuse: 'The two meshes are different sizes and sit apart, so the weights cannot be sampled across them. '
-        + 'Export both at the same scale and try again.'
+      // Applied AFTER the scale, so it carries the already-scaled source centre
+      // onto the target's: p · s + (targetCentre - sourceCentre · s).
+      offset: targetCentre.clone().sub(sourceCentre.clone().multiplyScalar(uniformScale)),
+      scale: uniformScale,
+      recentred: true,
+      rescaled: true,
+      refuse: null,
+      warn: null,
+      diagonal
     };
   }
-  if (worstAxis(shift) < MIN_OVERLAP) {
+
+  // Left over: the axes disagree about the ratio, so there is no one factor to
+  // apply. One box inside the other still overlaps perfectly on every axis, so
+  // the measure cannot see this at all and it has to be said out loud.
+  const warn = sameScale ? null
+    : `The source mesh is ${(sourceSize.length() / Math.max(diagonal, 1e-9)).toFixed(2)}x the size of the `
+      + 'target and its axes do not agree on a single factor, so it could not be rescaled onto it. '
+      + 'The weights were sampled anyway, but check the result: they come from the wrong part of the source.';
+
+  if (worstAxis(sourceCentre, sourceSize) >= MIN_OVERLAP) return { ...idle, warn };
+  if (!sameScale) {
     return {
-      offset: zero, recentred: false, warn, diagonal,
+      ...idle,
+      warn,
+      refuse: 'The two meshes are different sizes in a way that no single scale factor undoes, so the '
+        + 'weights cannot be sampled across them. Export both at the same scale and try again.'
+    };
+  }
+  if (worstAxis(targetCentre, sourceSize) < MIN_OVERLAP) {
+    return {
+      ...idle,
+      warn,
       refuse: 'The two meshes barely overlap, so there is no source surface under most of the target. '
         + 'They have to be in the same space — an earlier version of the same mesh usually is.'
     };
   }
-  return { offset: shift, recentred: true, refuse: null, warn, diagonal };
+  return {
+    ...idle,
+    offset: targetCentre.clone().sub(sourceCentre),
+    recentred: true,
+    warn
+  };
 }
 
 // --- writing ----------------------------------------------------------------
@@ -445,6 +515,21 @@ function copySkeleton(sourceJson, targetJson, skin) {
   return { remap, roots: roots.map(index => remap.get(index)) };
 }
 
+/**
+ * Park the copied bone roots under one node carrying the alignment.
+ *
+ * Returns the index of the node to put in the scene in their place.
+ */
+function attachSkeleton(targetJson, roots, plan) {
+  targetJson.nodes.push({
+    name: 'rig_alignment',
+    translation: [plan.offset.x, plan.offset.y, plan.offset.z],
+    scale: [plan.scale, plan.scale, plan.scale],
+    children: roots
+  });
+  return targetJson.nodes.length - 1;
+}
+
 // --- the operation -----------------------------------------------------------
 
 /**
@@ -482,7 +567,7 @@ export function transferRig(sourceBuffer, targetBuffer, { smoothIters = 2 } = {}
   const plan = planAlignment(boxOf(targetPrimitives), boxOf(sourcePrimitives));
   if (plan.refuse) throw new Error(plan.refuse);
 
-  const sampler = buildSourceSampler(source.json, source.bin, skinIndex, plan.offset);
+  const sampler = buildSourceSampler(source.json, source.bin, skinIndex, plan.offset, plan.scale);
   if (!sampler) throw new Error('The source mesh could not be prepared for sampling.');
 
   const stats = {
@@ -492,6 +577,7 @@ export function transferRig(sourceBuffer, targetBuffer, { smoothIters = 2 } = {}
     farthest: 0,
     primitives: targetPrimitives.length,
     recentred: plan.recentred ? plan.offset.length() : 0,
+    rescaled: plan.rescaled ? plan.scale : 0,
     skippedSourceParts: sampler.skipped,
     warning: plan.warn
   };
@@ -584,24 +670,34 @@ export function transferRig(sourceBuffer, targetBuffer, { smoothIters = 2 } = {}
     throw new Error('The source skeleton is missing joints its own skin references.');
   }
 
+  // The placement, as a matrix: A = T(offset) · S(scale), which is exactly what
+  // a glTF node with that translation and scale composes to. The bones are
+  // copied in the SOURCE's space, so both halves of the rig have to go through
+  // it — see the note above `attachSkeleton`.
+  const align = new THREE.Matrix4()
+    .makeScale(plan.scale, plan.scale, plan.scale)
+    .premultiply(new THREE.Matrix4().makeTranslation(plan.offset.x, plan.offset.y, plan.offset.z));
+  const aligned = plan.recentred || plan.rescaled;
+  const alignInverse = align.clone().invert();
+
   const bindBytes = Buffer.alloc(joints.length * 16 * 4);
-  if (skin.inverseBindMatrices !== undefined) {
-    const read = readAccessor(source.json, source.bin, skin.inverseBindMatrices).values;
-    // Re-centring moved the bones, so the bind matrices — which map a vertex
-    // INTO each bone's space — have to make the same move, or the mesh snaps
-    // back to where the source stood the moment it is posed.
-    const matrix = new THREE.Matrix4();
-    const shift = new THREE.Matrix4().makeTranslation(-plan.offset.x, -plan.offset.y, -plan.offset.z);
-    for (let i = 0; i < joints.length; i += 1) {
-      matrix.fromArray(read, i * 16);
-      if (plan.recentred) matrix.multiply(shift);
-      matrix.toArray().forEach((value, k) => bindBytes.writeFloatLE(value, (i * 16 + k) * 4));
-    }
-  } else {
-    // Absent means identity per spec.
-    for (let i = 0; i < joints.length; i += 1) {
-      new THREE.Matrix4().toArray().forEach((value, k) => bindBytes.writeFloatLE(value, (i * 16 + k) * 4));
-    }
+  const identity = new THREE.Matrix4();
+  // Absent inverse bind matrices mean identity per spec, which still has to be
+  // put through the placement — an unaligned identity would leave the rest pose
+  // reading the target's vertices in the source's space.
+  const read = skin.inverseBindMatrices !== undefined
+    ? readAccessor(source.json, source.bin, skin.inverseBindMatrices).values
+    : null;
+  const matrix = new THREE.Matrix4();
+  for (let i = 0; i < joints.length; i += 1) {
+    if (read) matrix.fromArray(read, i * 16);
+    else matrix.copy(identity);
+    // An inverse bind matrix maps a vertex INTO its bone's space. The vertices
+    // it will be given are the TARGET's, so it has to undo the placement first
+    // — the mirror of the placement node the bones sit under, and the pair is
+    // what makes the rest pose come out as the identity it has to be.
+    if (aligned) matrix.multiply(alignInverse);
+    matrix.toArray().forEach((value, k) => bindBytes.writeFloatLE(value, (i * 16 + k) * 4));
   }
   const bindAccessor = addAccessor(target.json, addView(bindBytes), 5126, 'MAT4', joints.length);
 
@@ -619,7 +715,13 @@ export function transferRig(sourceBuffer, targetBuffer, { smoothIters = 2 } = {}
 
   const scene = (target.json.scenes || [])[target.json.scene ?? 0];
   if (!scene) throw new Error('The target GLB has no scene to attach the skeleton to.');
-  scene.nodes = [...(scene.nodes || []), ...roots];
+  // A source that had to be moved or resized gets ONE extra node above its bone
+  // roots carrying that placement, rather than every copied node being rewritten
+  // — a node composes T · R · S, so a translation and a uniform scale on it is
+  // precisely the p · s + offset the surface was sampled through. Without it the
+  // skeleton would stay in the source's space and its size, and the rig would
+  // drag the mesh there the moment anything posed it.
+  scene.nodes = [...(scene.nodes || []), ...(aligned ? [attachSkeleton(target.json, roots, plan)] : roots)];
 
   target.json.buffers = target.json.buffers || [{}];
   const bin = Buffer.concat(parts);

@@ -120,6 +120,34 @@ def fail(code: int, error: str) -> None:
     sys.exit(code)
 
 
+def hidden_from_render(obj) -> bool:
+    """Is this object disabled for rendering, directly or through a collection?
+
+    `bpy.ops.object.bake` errors on the first selected object it finds disabled,
+    so this is the gate every object has to pass before it can be a bake source
+    or target. Collections carry the flag as well as objects, and a collection
+    inherits it from its parents — which is exactly how the glTF importer hides
+    its bone widgets, in a `glTF_not_exported` collection.
+    """
+    import bpy
+
+    if obj.hide_render:
+        return True
+    parent_of = {}
+    for collection in bpy.data.collections:
+        for child in collection.children:
+            parent_of[child.name] = collection
+    for collection in obj.users_collection:
+        node = collection
+        seen = set()
+        while node is not None and node.name not in seen:
+            if node.hide_render:
+                return True
+            seen.add(node.name)
+            node = parent_of.get(node.name)
+    return False
+
+
 def principled_input_is_linked(objects, input_name: str) -> bool:
     """Is a Principled BSDF input driven by a node graph rather than a constant?
 
@@ -638,8 +666,20 @@ def main() -> None:
 
     def import_glb(path: str) -> list:
         before = set(bpy.data.objects)
-        bpy.ops.import_scene.gltf(filepath=path)
-        return [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
+        # bone_heuristic: the default 'BLENDER' gives a rigged glTF's bones an
+        # Icosphere display widget, and that widget is a real mesh object parked
+        # in a hidden 'glTF_not_exported' collection. Both halves of the bake
+        # then break: the widget joins the source selection, where Blender
+        # refuses the whole bake outright ('Object "Icosphere" is not enabled for
+        # rendering'), and it sorts before most mesh names, so it can be picked
+        # as the target too. 'TEMPERANCE' only orients bones, no widgets — the
+        # FBX and thumbnail workers import the same way, for the same reason.
+        bpy.ops.import_scene.gltf(filepath=path, bone_heuristic="TEMPERANCE")
+        new_meshes = [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
+        # Belt and braces on top of the heuristic: anything that reaches the bake
+        # disabled for rendering fails it, so drop those rather than hand Blender
+        # a selection it will reject.
+        return [o for o in new_meshes if not hidden_from_render(o)]
 
     emit("import", 0.12, "Importing the low-poly mesh…")
     low_objects = import_glb(args.low)

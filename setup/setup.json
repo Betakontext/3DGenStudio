@@ -13,6 +13,86 @@
 	},
 	"Models": [
 		{
+			"Name": "Qwen Image 2.1",
+			"DiffusionModels": {
+				"F16":  { "FileName": "qwen-image-2.1-F16.gguf",    "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-F16.gguf?download=true",    "Size": 14.2 },
+				"Q8": { "FileName": "qwen-image-2.1-Q8_0.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q8_0.gguf?download=true",   "Size": 7.6 },
+				"Q6": { "FileName": "qwen-image-2.1-Q6_K.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q6_K.gguf?download=true",   "Size": 6.3 },
+				"Q5": { "FileName": "qwen-image-2.1-Q5_K_M.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q5_K_M.gguf?download=true",   "Size": 5.4 },
+				"Q4": { "FileName": "qwen-image-2.1-Q4_K_M.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q4_K_M.gguf?download=true",   "Size": 4.2 },
+				"Q3": { "FileName": "qwen-image-2.1-Q3_K_M.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q3_K_M.gguf?download=true",   "Size": 3.2 },
+				"Q2": { "FileName": "qwen-image-2.1-Q2_K.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q2_K.gguf?download=true",   "Size": 2.5 }
+			},
+			"VAE":         [{ "FileName": "qwen_image_2.1_vae_bf16.safetensors",                              "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors?download=true",                                "Size": 0.7 }],
+			"TextEncoder": { "FileName": "qwen3vl_8b_int8_convrot.safetensors",                   "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors?download=true",       "Size": 9.4 },		
+			"Workflows": [
+				{
+					"Name": "Gen Image with QwenImage21",
+					"File": "setup/Gen Image with QwenImage21.json",
+					"Inputs": [
+						{ "Node": "482", "Input": "value",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "477", "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "477", "Input": "steps", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
+						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
+						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
+						{ "Node": "478",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
+					],
+					"Outputs": [
+						{ "Node": "470", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Edit Image with QwenImage21",
+					"File": "setup/Edit Image with QwenImage21.json",
+					"Inputs": [
+						{ "Node": "478", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+						{ "Node": "480", "Input": "value",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "477", "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "477", "Input": "steps", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
+						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
+						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
+						{ "Node": "479",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
+					],
+					"Outputs": [
+						{ "Node": "470", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Mesh Projection with QwenImage21",
+					"File": "setup/Mesh Projection with QwenImage21.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
+						{ "Node": "43",  "Input": "value", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "20", "Input": "steps",   "Name": "Number of Steps",              "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "42", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Mesh Projection TexturedView with QwenImage21",
+					"File": "setup/Mesh Projection TexturedView with QwenImage21.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
+						{ "Node": "50", "Input": "image",  "Name": "Reference Image",     "Type": "Image"  },
+						{ "Node": "43",  "Input": "value", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" },
+						{ "Node": "20", "Input": "steps",  "Name": "Number of Steps",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "48", "Name": "Save Image", "Type": "Image" }
+					]
+				}				
+			]
+		},	
+		{
 			"Name": "Qwen Image Edit 2511",
 			"DiffusionModels": {
 				"F16":  { "FileName": "qwen-image-edit-2511-F16.gguf",    "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-F16.gguf?download=true",    "Size": 40.9 },
@@ -58,7 +138,6 @@
 					"File": "setup/Mesh Projection TexturedView with QwenImageEdit.json",
 					"Inputs": [
 						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
-						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
 						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
 						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
 						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
@@ -130,7 +209,6 @@
 					"File": "setup/Mesh Projection TexturedView with QwenImageEdit - Upscaled.json",
 					"Inputs": [
 						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
-						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
 						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
 						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
 						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
@@ -139,7 +217,7 @@
 						{ "Node": "36", "Input": "mask_blur",  "Name": "RMBG - Mask Blur",  "Type": "Number" }						
 					],
 					"Outputs": [
-						{ "Node": "43", "Name": "Save Image", "Type": "Image" }
+						{ "Node": "40", "Name": "Save Image", "Type": "Image" }
 					]
 				},
 				{
@@ -213,7 +291,7 @@
 					"Outputs": [
 						{ "Node": "40", "Name": "Save Image", "Type": "Image" }
 					]
-				}				
+				}		
 			]
 		},
 		{
@@ -887,7 +965,8 @@
 			"File": "setup/Remove Background and Centered.json",
 			"Inputs": [
 				{ "Node": "5", "Input": "image",  "Name": "Source Image", "Type": "Image" },
-				{ "Node": "8",  "Input": "padding",  "Name": "Padding",   "Type": "Number" }
+				{ "Node": "8",  "Input": "padding",  "Name": "Padding",   "Type": "Number" },
+				{ "Node": "8",  "Input": "square",  "Name": "Make Square Image",   "Type": "Boolean" }
 			],
 			"Outputs": [
 				{ "Node": "7", "Name": "Save Image", "Type": "Image" }

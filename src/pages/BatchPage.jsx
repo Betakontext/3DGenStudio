@@ -13,12 +13,11 @@ import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import {
   buildImageEditorPath,
   buildMeshEditorPath,
-  filterImageGenerationWorkflows,
-  filterImageEditWorkflows,
-  filterMeshGenerationWorkflows,
   getWorkflowFileInputAccept
 } from '../utils/graphHelpers'
 import {
+  BATCH_ORDER_BY_GROUP,
+  BATCH_ORDER_BY_STAGE,
   createBatchAssetValue,
   createEmptyBatchConfig,
   createGroup,
@@ -31,6 +30,7 @@ import {
   getGroupLabel,
   getRunIdFromCells,
   getStageLabel,
+  isBatchStageWorkflow,
   variableValueKind,
   summarizeRunProgress,
   normalizeBatchConfig,
@@ -90,19 +90,13 @@ export default function BatchPage({ project }) {
   const uploadTargetRef = useRef(null)
 
   // Any workflow can be a stage: the chain mixes image generation, image edit
-  // and mesh generation, so the union of the three filtered lists is offered
-  // rather than a single category.
-  const stageWorkflows = useMemo(() => {
-    const byId = new Map()
-    for (const workflow of [
-      ...filterImageGenerationWorkflows(workflows),
-      ...filterImageEditWorkflows(workflows),
-      ...filterMeshGenerationWorkflows(workflows)
-    ]) {
-      byId.set(String(workflow.id), workflow)
-    }
-    return Array.from(byId.values())
-  }, [workflows])
+  // and mesh generation, so everything that produces an image or a mesh is
+  // offered rather than a single category. The rule lives in the document model
+  // because the MCP batch tools have to offer the same list.
+  const stageWorkflows = useMemo(
+    () => (workflows || []).filter(isBatchStageWorkflow),
+    [workflows]
+  )
 
   const workflowsById = useMemo(() => {
     const map = {}
@@ -196,6 +190,13 @@ export default function BatchPage({ project }) {
   const patchConfig = useCallback((updater) => {
     setConfig(current => updater(normalizeBatchConfig(current)))
   }, [])
+
+  // The order is part of the saved document, so it survives a reload and is
+  // carried by Duplicate Project. It is locked while a run is in flight: the
+  // walk is decided once, when the run starts.
+  const handleSetExecutionOrder = useCallback((executionOrder) => {
+    patchConfig(current => ({ ...current, executionOrder }))
+  }, [patchConfig])
 
   const handleAddVariable = useCallback(() => {
     patchConfig(current => ({ ...current, variables: [...current.variables, createVariable()] }))
@@ -660,6 +661,9 @@ export default function BatchPage({ project }) {
   // falls back to its own — otherwise Continue would vanish mid-grid.
   const resumeRunId = getRunIdFromCells(displayCells)
     || (runState.status !== 'idle' ? runState.runId : null)
+  const orderDescription = normalized.executionOrder === BATCH_ORDER_BY_STAGE
+    ? 'one stage at a time across all groups'
+    : 'one group at a time through all stages'
   const canContinue = !isRunning
     && Boolean(resumeRunId)
     && progress.done > 0
@@ -819,6 +823,37 @@ export default function BatchPage({ project }) {
         </div>
 
         <div className="batch-page__toolbar-right">
+          <div
+            className="batch-order"
+            role="group"
+            aria-label="Execution order"
+            title={isRunning
+              ? 'The execution order cannot be changed while the batch is running'
+              : 'By group: one group through every stage, then the next group. By stage: one stage across every group, then the next stage — which keeps ComfyUI’s model loaded between groups instead of swapping it at every stage.'}
+          >
+            <span className="batch-order__label font-label">ORDER</span>
+            <button
+              type="button"
+              aria-pressed={normalized.executionOrder === BATCH_ORDER_BY_GROUP}
+              className={`batch-order__option ${normalized.executionOrder === BATCH_ORDER_BY_GROUP ? 'batch-order__option--active' : ''}`}
+              onClick={() => handleSetExecutionOrder(BATCH_ORDER_BY_GROUP)}
+              disabled={loading || isRunning}
+            >
+              <span className="material-symbols-outlined">table_rows</span>
+              BY GROUP
+            </button>
+            <button
+              type="button"
+              aria-pressed={normalized.executionOrder === BATCH_ORDER_BY_STAGE}
+              className={`batch-order__option ${normalized.executionOrder === BATCH_ORDER_BY_STAGE ? 'batch-order__option--active' : ''}`}
+              onClick={() => handleSetExecutionOrder(BATCH_ORDER_BY_STAGE)}
+              disabled={loading || isRunning}
+            >
+              <span className="material-symbols-outlined">view_column</span>
+              BY STAGE
+            </button>
+          </div>
+
           <button
             type="button"
             className="batch-btn"
@@ -866,9 +901,7 @@ export default function BatchPage({ project }) {
                 disabled={loading || problems.length > 0 || plannedRuns === 0}
                 title={problems.length > 0
                   ? 'Resolve the problems listed below first'
-                  : canContinue
-                    ? 'Start over: run every group through every stage again'
-                    : 'Run every group through every stage'}
+                  : `${canContinue ? 'Start over: run' : 'Run'} every group through every stage, ${orderDescription}`}
               >
                 <span className="material-symbols-outlined">{canContinue ? 'restart_alt' : 'play_arrow'}</span>
                 {canContinue ? 'Restart' : 'Run batch'}

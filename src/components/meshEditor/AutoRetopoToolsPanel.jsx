@@ -30,6 +30,20 @@ export default function AutoRetopoToolsPanel({
   const o = options
   const fieldsDisabled = disabled || running
 
+  // Both defects are repairable and both are handled by the same service call,
+  // so the button shows for either — it is only the wording (and which options
+  // are meaningful) that changes. Open edges alone: the job is closing the
+  // boundary loops, so the remove/split choice and the close-holes toggle drop
+  // away (MeshEditorPage forces them for this case).
+  const hasNonManifold = watertight?.nonManifoldEdges > 0
+  const hasOpenEdges = watertight?.boundaryEdges > 0
+  const repairLabel = hasNonManifold
+    ? (hasOpenEdges ? 'Repair Topology' : 'Clean Non-Manifold Edges')
+    : 'Close Open Edges'
+  const repairTitle = hasNonManifold
+    ? 'Resolve non-manifold edges directly (weld, drop duplicate faces, remove/split the offending faces, close small holes) without a full retopo'
+    : 'Seal the open boundary loops by triangulating them in place, without a full retopo'
+
   const watertightLabel = () => {
     if (watertight.watertight) return 'Mesh is already watertight — no need to build a shell.'
     const parts = []
@@ -69,17 +83,17 @@ export default function AutoRetopoToolsPanel({
           </div>
         )}
 
-        {watertight && !watertightChecking && !watertight.watertight && watertight.nonManifoldEdges > 0 && (
+        {watertight && !watertightChecking && (hasNonManifold || hasOpenEdges) && (
           <>
             <button
               type="button"
               className="mesh-editor-btn"
               onClick={onCleanNonManifold}
               disabled={disabled || running || repairRunning}
-              title="Resolve non-manifold edges directly (weld, drop duplicate faces, remove/split the offending faces, close small holes) without a full retopo"
+              title={repairTitle}
             >
               <span className="material-symbols-outlined">{repairRunning ? 'progress_activity' : 'cleaning_services'}</span>
-              <span>{repairRunning ? 'Repairing…' : 'Clean Non-Manifold Edges'}</span>
+              <span>{repairRunning ? 'Repairing…' : repairLabel}</span>
             </button>
             {repairOptions && (
               <>
@@ -91,27 +105,41 @@ export default function AutoRetopoToolsPanel({
                     The texture will be lost — the fallback welds across UV seams.
                   </span>
                 )}
-                <SelectField label="Repair method" value={repairOptions.method}
-                  onChange={v => setRepairOption('method', v)} disabled={fieldsDisabled || repairRunning}
-                  options={[
-                    { value: 'remove', label: 'Remove faces (then close holes)' },
-                    { value: 'split', label: 'Split vertices (keep faces)' },
-                  ]}
-                  hint="Remove deletes the offending faces; Split detaches the sheets and leaves open edges" />
-                {repairOptions.preserve_uv && repairOptions.method === 'split' && (
-                  <span className="mesh-editor-panel__hint">
-                    Split keeps every face by duplicating the shared vertices. They stay at the same
-                    position, so the watertight check — which compares positions — still reports the
-                    edge. Use Remove to clear the count.
-                  </span>
+                {hasNonManifold && (
+                  <>
+                    <SelectField label="Repair method" value={repairOptions.method}
+                      onChange={v => setRepairOption('method', v)} disabled={fieldsDisabled || repairRunning}
+                      options={[
+                        { value: 'remove', label: 'Remove faces (then close holes)' },
+                        { value: 'split', label: 'Split vertices (keep faces)' },
+                      ]}
+                      hint="Remove deletes the offending faces; Split detaches the sheets and leaves open edges" />
+                    {repairOptions.preserve_uv && repairOptions.method === 'split' && (
+                      <span className="mesh-editor-panel__hint">
+                        Split keeps every face by duplicating the shared vertices. They stay at the same
+                        position, so the watertight check — which compares positions — still reports the
+                        edge. Use Remove to clear the count.
+                      </span>
+                    )}
+                    <ToggleField label="Close resulting holes" value={repairOptions.close_holes}
+                      onChange={v => setRepairOption('close_holes', v)} disabled={fieldsDisabled || repairRunning || repairOptions.method === 'split'}
+                      hint="Seal the small holes that face removal opens (uncheck to leave them and guarantee no new non-manifold edges)" />
+                  </>
                 )}
-                <ToggleField label="Close resulting holes" value={repairOptions.close_holes}
-                  onChange={v => setRepairOption('close_holes', v)} disabled={fieldsDisabled || repairRunning || repairOptions.method === 'split'}
-                  hint="Seal the small holes that face removal opens (uncheck to leave them and guarantee no new non-manifold edges)" />
                 <NumberField label="Max hole size" min={0} max={5000} step={1}
                   value={repairOptions.max_hole_size} onChange={v => setRepairOption('max_hole_size', v)}
-                  disabled={fieldsDisabled || repairRunning || !repairOptions.close_holes || repairOptions.method === 'split'}
+                  disabled={fieldsDisabled || repairRunning
+                    || (hasNonManifold && (!repairOptions.close_holes || repairOptions.method === 'split'))}
                   hint="Largest hole (in edges) to close; bigger openings are left intact" />
+                {!hasNonManifold && (
+                  <span className="mesh-editor-panel__hint">
+                    Each boundary loop is triangulated where it lies — no vertex moves, so the UVs (and
+                    the texture) survive. A loop longer than the limit above is left open on purpose: a
+                    fan across a big opening produces badly stretched texels. This mesh has{' '}
+                    {watertight.boundaryEdges} open edge{watertight.boundaryEdges === 1 ? '' : 's'} in
+                    total, so raise the limit if the hole you want sealed is bigger than it.
+                  </span>
+                )}
               </>
             )}
           </>

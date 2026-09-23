@@ -28,6 +28,7 @@ import {
   extractSkeletonFromObject,
   filterSkeleton,
   translateSkeleton,
+  transformSkeleton,
   mergeSelectedVertices,
   smoothSelectedVertices,
   subdivideSelectedFaces
@@ -220,7 +221,7 @@ import {
   writeSegmentColors
 } from '../utils/meshSegment'
 import { exportObject3D, loadObject3DFromUrl, measureUvHealth, uvsAreBroken, measureBakeOverlap, bakeSourceIsMisaligned, BAKE_COVERAGE_COMPLETE } from '../utils/meshExport'
-import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig, setRigAnimations } from '../utils/meshRig'
+import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig, transformRig, rigidTransformRig, setRigAnimations } from '../utils/meshRig'
 import {
   collectSkinSource,
   planRigSourceAlignment,
@@ -307,6 +308,29 @@ function geometryWorldBox(geometry) {
   if (!geometry) return null
   geometry.computeBoundingBox()
   return geometry.boundingBox ? geometry.boundingBox.clone() : null
+}
+
+// The four quarter turns the Auto Rig panel offers, with the mesh's front taken
+// to be +Z (the default camera sits on +Z looking down -Z, so a correctly
+// oriented model faces you).
+//
+// Left and right are the MESH's own, not the viewer's, because that is how you
+// talk about a model you are looking at: "turn it to its left". For a model
+// facing the camera those are mirrored on screen — its left hand is on your
+// right — so a turn to ITS left sends its face from +Z to +X, which is +90 deg
+// about Y. Reading the labels as the viewer's instead is what got these two
+// swapped the first time round.
+//
+// Up and down are which way the face TIPS, where there is no mirror to get
+// wrong: -90 deg about X brings +Z round to +Y, face towards the ceiling.
+//
+// Exact axis-aligned quarter turns, so four clicks land back on the original
+// numbers instead of drifting through a float.
+const MESH_ROTATIONS = {
+  left: { axis: new THREE.Vector3(0, 1, 0), angle: Math.PI / 2, label: 'left' },
+  right: { axis: new THREE.Vector3(0, 1, 0), angle: -Math.PI / 2, label: 'right' },
+  up: { axis: new THREE.Vector3(1, 0, 0), angle: -Math.PI / 2, label: 'up' },
+  down: { axis: new THREE.Vector3(1, 0, 0), angle: Math.PI / 2, label: 'down' },
 }
 
 // Undo depth for the animation edit dock. Each entry holds two copies of one
@@ -5410,20 +5434,22 @@ export default function MeshEditorPage() {
       if (plan.refuse) throw new Error(plan.refuse)
 
       // The skeleton is taken WHOLE — that is what lets the clips come along
-      // unretargeted. Cloned per run because translateRig rewrites bone
+      // unretargeted. Cloned per run because transformRig rewrites bone
       // positions and the bind pose in place, so a second run has to start from
       // the source rig as it arrived rather than from the moved copy.
       const rig = rigFromScene(cloneRigScene(source.rig.rigScene))
       if (!rig) throw new Error('The source skeleton could not be copied.')
       setRigAnimations(rig, source.rig.animations)
       // Both halves of the source have to make the same move: the surface being
-      // sampled, and the bones that surface's weights refer to.
-      if (plan.offset) translateRig(rig, plan.offset.x, plan.offset.y, plan.offset.z)
+      // sampled, and the bones that surface's weights refer to. A rig scaled
+      // onto this mesh but sampled unscaled (or the reverse) is worse than no
+      // alignment at all — hence the one plan driving both calls.
+      if (plan.offset || plan.scale !== 1) transformRig(rig, plan.scale, plan.offset)
 
       // Yielded first: computeBoundsTree on a dense source is seconds of blocked
       // main thread, and the button should be showing its spinner by then.
       await new Promise(resolve => { setTimeout(resolve, 0) })
-      sampler = buildSkinSampler(source.collected, plan.offset)
+      sampler = buildSkinSampler(source.collected, plan.offset, plan.scale)
       if (!sampler) throw new Error('The source mesh could not be prepared for sampling.')
 
       const nextGeometry = geometry.clone()
@@ -5481,7 +5507,13 @@ export default function MeshEditorPage() {
       if (rig.animations?.length) {
         rows.push({ label: 'Animations', value: `${rig.animations.length} clip${rig.animations.length === 1 ? '' : 's'} carried over` })
       }
-      if (plan.recentred) {
+      // Two separate facts, and the scale is the one worth naming: a source that
+      // came back from an external simplifier at half size is corrected
+      // silently otherwise, and the number is what tells you the correction was
+      // the one you expected.
+      if (plan.rescaled) {
+        rows.push({ label: 'Source rescaled', value: `${plan.scale.toFixed(3)}x onto this mesh` })
+      } else if (plan.recentred) {
         rows.push({ label: 'Source re-centred', value: `${plan.offset.length().toFixed(3)} units onto this mesh` })
       }
       rows.push({ label: 'Smoothing', value: `${rigTransferSmoothing} pass${rigTransferSmoothing === 1 ? '' : 'es'}` })
@@ -8025,12 +8057,22 @@ export default function MeshEditorPage() {
     setRepairOptions(prev => ({ ...prev, [key]: value }))
   }, [])
 
-  // Targeted non-manifold / topology repair via the Python mesh-tools service:
-  // weld → drop duplicate/degenerate faces → resolve non-manifold edges → close
-  // small holes. Runs the same round-trip as Auto Retopo (undoable via Keep/
-  // Revert) and reports before/after non-manifold + boundary edge counts.
+  // Targeted topology repair via the Python mesh-tools service: weld → drop
+  // duplicate/degenerate faces → resolve non-manifold edges → close small holes.
+  // Runs the same round-trip as Auto Retopo (undoable via Keep/Revert) and
+  // reports before/after non-manifold + boundary edge counts.
+  //
+  // A mesh with open edges but no non-manifold ones reaches the same call, where
+  // the only stage with work to do is the hole close. 'split' skips that stage
+  // entirely and close_holes gates it, so both are pinned here rather than left
+  // to a toggle the user set for an earlier, different mesh — otherwise the run
+  // would succeed having changed nothing.
   const handleCleanNonManifold = useCallback(() => {
-    runMeshTool(runRepairService, repairOptions, {
+    const openEdgesOnly = !(watertightResult?.nonManifoldEdges > 0)
+    const options = openEdgesOnly
+      ? { ...repairOptions, method: 'remove', close_holes: true }
+      : repairOptions
+    runMeshTool(runRepairService, options, {
       setRunning: setRepairRunning,
       setResult: setRepairResult,
       setProgress: setRepairProgress,
@@ -8040,7 +8082,7 @@ export default function MeshEditorPage() {
       // painted texture can be carried straight onto the result. Without it the
       // UVs are gone and a carried-over texture would map to nothing, so the
       // blank-canvas reset is the honest outcome.
-      preserveTexture: repairOptions.preserve_uv,
+      preserveTexture: options.preserve_uv,
       buildRows: stats => {
         const t = stats?.tool || {}
         const before = t.before || {}
@@ -8060,7 +8102,7 @@ export default function MeshEditorPage() {
         return rows
       },
     })
-  }, [runMeshTool, repairOptions])
+  }, [runMeshTool, repairOptions, watertightResult])
 
   // Any geometry change (edits, Auto Retopo, revert…) invalidates a prior result,
   // so clear it and let the user re-check against the new topology. The
@@ -9345,6 +9387,37 @@ export default function MeshEditorPage() {
     ? 'segments'
     : weightPaintGeometry ? 'weights' : displayMode
 
+  // Where the pivot sits right now, so the panel can offer the one move that
+  // changes something instead of making the user run the check to find out. The
+  // tolerance is relative to the mesh's own size: an absolute epsilon calls a
+  // half-millimetre offset on a two-metre prop "off-centre", and the button
+  // label would flip-flop after every move.
+  const pivotPlacement = useMemo(() => {
+    if (!geometry) {
+      return null
+    }
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox()
+    }
+    const box = geometry.boundingBox
+    if (!box) {
+      return null
+    }
+    const size = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z)
+    const eps = Math.max(size * 1e-3, 1e-6)
+    const offCentreXZ = Math.abs(box.min.x + box.max.x) / 2 > eps || Math.abs(box.min.z + box.max.z) / 2 > eps
+    if (offCentreXZ) {
+      return 'off'
+    }
+    if (Math.abs(box.min.y) <= eps) {
+      return 'ground'
+    }
+    if (Math.abs(box.min.y + box.max.y) / 2 <= eps) {
+      return 'centre'
+    }
+    return 'off'
+  }, [geometry, geometryRevision])
+
   // Move the mesh's pivot to where an engine expects it. 'ground_pivot' drops the
   // mesh onto Y=0 centred on X/Z (a prop that snaps to the floor when placed);
   // 'centre_pivot' puts the bbox centre on the origin (so the asset rotates about
@@ -9396,14 +9469,80 @@ export default function MeshEditorPage() {
       // the overlay arrays are all there is, so shift them directly.
       setSkeleton(prev => (prev ? translateSkeleton(prev, offsetX, offsetY, offsetZ) : prev))
     }
-    // Show the user the check going green rather than making them re-run it. The
-    // re-check has to wait for the new geometry to land in state — see the
-    // geometryRevision effect below.
-    pendingGameReadyRecheckRef.current = true
+    // Show the user the check going green rather than making them re-run it —
+    // but only when a report is already on screen, so the standalone pivot
+    // button in the panel does not drag in a service round trip the user never
+    // asked for. The re-check has to wait for the new geometry to land in state
+    // — see the geometryRevision effect below.
+    pendingGameReadyRecheckRef.current = !!gameReadyReport
     setFeedback(mode === 'ground_pivot'
       ? 'Pivot moved to the ground at the origin.'
       : 'Pivot centred on the origin.')
-  }, [geometry, applyGeometryUpdate])
+  }, [geometry, applyGeometryUpdate, gameReadyReport])
+
+  // Turn the whole mesh a quarter turn about the world axes.
+  //
+  // Auto Rig's bone naming reads the mesh in its OWN axes: it decides left from
+  // right, and up from along, by where a joint sits, not by looking for a face.
+  // A model exported facing down +X — which plenty of generators and DCC
+  // round-trips produce — therefore comes back with its left and right limbs
+  // named the wrong way round, and nothing downstream can tell, because the
+  // names are the only record of which side is which. Putting the mesh the
+  // right way up FIRST is what fixes that, and it is what every engine wants of
+  // the saved asset anyway.
+  //
+  // Same shape as handleMovePivot: a client-side transform of the editable
+  // geometry that takes the rig with it, through applyGeometryUpdate so Ctrl+Z
+  // undoes it. The pivot placement is re-applied afterwards because a turn
+  // about the origin lifts a grounded mesh off the floor — a pitch puts it
+  // underground — which reads as a bug even when the orientation is now right.
+  const handleRotateMesh = useCallback((direction) => {
+    const spec = MESH_ROTATIONS[direction]
+    if (!geometry || !spec) {
+      return
+    }
+
+    // Accumulates into the full move the rig has to make: the turn, plus
+    // whatever re-grounding follows it.
+    const matrix = new THREE.Matrix4().makeRotationAxis(spec.axis, spec.angle)
+
+    const next = geometry.clone()
+    next.applyMatrix4(matrix)
+    next.computeBoundingBox()
+
+    const box = next.boundingBox
+    if (box && (pivotPlacement === 'ground' || pivotPlacement === 'centre')) {
+      const offsetX = -(box.min.x + box.max.x) / 2
+      const offsetZ = -(box.min.z + box.max.z) / 2
+      const offsetY = pivotPlacement === 'ground' ? -box.min.y : -(box.min.y + box.max.y) / 2
+      next.translate(offsetX, offsetY, offsetZ)
+      matrix.premultiply(new THREE.Matrix4().makeTranslation(offsetX, offsetY, offsetZ))
+      next.computeBoundingBox()
+    }
+    next.computeBoundingSphere()
+
+    applyGeometryUpdate(next, [], { pushUndo: true })
+
+    // The bones are a separate scene graph and the overlay is baked world-space
+    // arrays, so neither follows the geometry on its own. Where there is a
+    // captured rig it is the single source of truth and the overlay is
+    // re-derived from it — see handleMovePivot for why two copies are not kept
+    // in step by hand.
+    if (rigRef.current) {
+      rigidTransformRig(rigRef.current, matrix)
+      try {
+        setSkeleton(extractSkeletonFromObject(rigRef.current.rigScene))
+      } catch (err) {
+        console.warn('Could not re-derive the skeleton overlay after rotating the mesh:', err)
+        setSkeleton(prev => (prev ? transformSkeleton(prev, matrix) : prev))
+      }
+    } else {
+      setSkeleton(prev => (prev ? transformSkeleton(prev, matrix) : prev))
+    }
+
+    pendingGameReadyRecheckRef.current = !!gameReadyReport
+    setFeedback(`Mesh turned 90° ${spec.label}.`)
+  }, [geometry, pivotPlacement, applyGeometryUpdate, gameReadyReport])
 
   // A finding's fix button either jumps to the mode that resolves it (Repair has
   // no mode of its own — its controls live inside the Auto Retopo panel) or, for
@@ -11388,6 +11527,7 @@ export default function MeshEditorPage() {
                       rigDropped,
                       rigEdited: rigEditDirty,
                       boneMappings: boneMappingSummary,
+                      onRotateMesh: handleRotateMesh,
                       rigTransfer: {
                         source: rigSourceInfo,
                         loading: rigSourceLoading,
@@ -11487,6 +11627,7 @@ export default function MeshEditorPage() {
                       running: gameReadyRunning, report: gameReadyReport,
                       onRun: handleRunGameReady,
                       onFix: handleGameReadyFix,
+                      pivotPlacement, onMovePivot: handleMovePivot,
                       disabled: !geometry
                     }} />
                   ) : activeMenu === 'sculpting' ? (

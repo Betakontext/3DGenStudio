@@ -107,7 +107,21 @@ export default function RigTransferSection({
           <span>{fit.warn}</span>
         </div>
       )}
-      {!refusal && fit?.recentred && (
+      {/* A source at another scale is the normal result of simplifying a mesh
+          outside the editor, so it is corrected rather than reported as a
+          problem — but silently rescaling someone's rig would be worse than the
+          warning it replaced, so it is said before the run, with the factor. */}
+      {!refusal && fit?.rescaled && (
+        <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4em' }}>
+          <span className="material-symbols-outlined" style={{ fontSize: '1.1em' }}>aspect_ratio</span>
+          <span>
+            The source is {(1 / fit.scale).toFixed(2)}x the size of this mesh on every axis — the same
+            object in different units — so it will be scaled by {fit.scale.toFixed(3)}x and centred onto
+            this mesh before sampling. The skeleton and its animations are resized with it.
+          </span>
+        </div>
+      )}
+      {!refusal && !fit?.rescaled && fit?.recentred && (
         <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4em' }}>
           <span className="material-symbols-outlined" style={{ fontSize: '1.1em' }}>open_with</span>
           <span>

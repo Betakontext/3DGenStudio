@@ -36,7 +36,9 @@
 // permanently. Sampled across a gap, the result is not "slightly wrong", it is
 // every vertex bound to whichever bone happens to face it. So the fit is
 // measured first, with the same box comparison the bake tool uses, and a source
-// that only needs re-centring is re-centred rather than refused (see
+// that only needs placing is placed rather than refused: re-centred, and — when
+// its three axes agree on one ratio, which is what a mesh simplified or
+// re-exported in other units looks like — scaled onto this mesh as well (see
 // planRigSourceAlignment).
 import * as THREE from 'three'
 import { transferSkinFromBase, validateSkin, MAX_INFLUENCES } from './assemblyWeights'
@@ -172,70 +174,103 @@ export function collectSkinSource(root, boneNames) {
 
 
 /**
- * Decide whether a source can be sampled, and how far it has to move first.
+ * Decide whether a source can be sampled, and what it has to be moved by first.
  *
  * One home for the policy, so the panel's warning and the run's refusal cannot
- * disagree. `alignedOverlap` is the bake tool's measure of the overlap after
- * virtually re-centring the source, and it is only claimed when the two boxes
- * are the same size — at a different scale, re-centring would leave the surfaces
- * crossing each other and sample nonsense, so that is refused instead of
- * guessed at.
+ * disagree. Returns the transform to put the source in this mesh's space —
+ * `scale` first, then `offset` — for `buildSkinSampler` to apply to the surface
+ * and `transformRig` to apply to the skeleton.
+ *
+ * `alignedOverlap` is the bake tool's measure of the overlap after virtually
+ * performing that same placement, so it is the right test for whether the plan
+ * is worth running. It is only meaningful when there IS a placement: a source
+ * whose axes disagree about the ratio has no single correction, and that is
+ * still refused rather than guessed at.
  */
 export function planRigSourceAlignment(fit) {
-  if (!fit) return { offset: null, recentred: false, refuse: null, warn: null }
+  const idle = { offset: null, scale: 1, recentred: false, rescaled: false, refuse: null, warn: null }
+  if (!fit) return idle
 
-  // A size mismatch that still overlaps is not refused, because the boxes agree
-  // to within a tolerance sized for the extremities a decimation shaves off —
-  // and because one box inside the other overlaps perfectly on every axis, so
-  // the overlap measure cannot see it at all. It is worth saying out loud
-  // though: sampling a source twice the size maps the mesh onto the middle of
-  // it and hands back weights blended from the wrong place.
+  // A source whose three axes agree on ONE ratio is the same object in
+  // different units — a mesh decimated, re-exported or unit-converted outside
+  // the editor, which is the common way the two versions of a character stop
+  // being the same size. That is measurable rather than ambiguous, so it is
+  // CORRECTED instead of reported: the surface is scaled about its own centre
+  // onto this mesh's, which is exactly the placement `alignedOverlap` measured,
+  // and the skeleton makes the identical move (transformRig).
+  if (!fit.sameScale && fit.uniformScale && fit.sourceCentre && fit.targetCentre) {
+    const scale = fit.uniformScale
+    if (fit.alignedOverlap < BAKE_OVERLAP_BROKEN) {
+      return {
+        ...idle,
+        refuse: 'The two meshes are different sizes and do not line up even rescaled, so there is no '
+          + 'source surface under most of this mesh. Pick a version of this same mesh, or align them first.',
+      }
+    }
+    return {
+      // Applied AFTER the scale, so it carries the already-scaled source centre
+      // onto the target's: p · s + (targetCentre − sourceCentre · s).
+      offset: fit.targetCentre.clone().sub(fit.sourceCentre.clone().multiplyScalar(scale)),
+      scale,
+      recentred: true,
+      rescaled: true,
+      refuse: null,
+      warn: null,
+    }
+  }
+
+  // Left over: the axes disagree about the ratio, so there is no one factor to
+  // apply and guessing at one would sample nonsense. The boxes can still agree
+  // to within the tolerance sized for the extremities a decimation shaves off,
+  // and one box inside the other overlaps perfectly on every axis — so the
+  // overlap measure cannot see this at all, and it has to be said out loud.
   const warn = fit.sameScale || !fit.sourceDiagonal ? null
-    : `The source mesh is ${(fit.sourceDiagonal / fit.diagonal).toFixed(2)}x the size of this one. `
-      + 'The weights can still be sampled, but they will come from the wrong part of the source unless '
-      + 'the two are exported at the same scale — check the result before saving.'
+    : `The source mesh is ${(fit.sourceDiagonal / fit.diagonal).toFixed(2)}x the size of this one, and its `
+      + 'axes do not agree on a single factor, so it cannot be rescaled onto this mesh automatically. '
+      + 'The weights can still be sampled, but they will come from the wrong part of the source — '
+      + 'check the result before saving.'
 
-  if (fit.overlap >= BAKE_OVERLAP_BROKEN) return { offset: null, recentred: false, refuse: null, warn }
+  if (fit.overlap >= BAKE_OVERLAP_BROKEN) return { ...idle, warn }
   if (!fit.sameScale) {
     return {
-      offset: null,
-      recentred: false,
+      ...idle,
       warn,
-      refuse: 'The two meshes are different sizes, so the weights cannot be sampled across them. '
-        + 'Export both at the same scale (or fix the scale of one) and try again.',
+      refuse: 'The two meshes are different sizes in a way that cannot be undone by one scale factor, '
+        + 'so the weights cannot be sampled across them. Export both at the same scale (or fix the '
+        + 'scale of one) and try again.',
     }
   }
   if (fit.alignedOverlap < BAKE_OVERLAP_BROKEN) {
     return {
-      offset: null,
-      recentred: false,
+      ...idle,
       warn,
       refuse: 'The two meshes barely overlap, so there is no source surface under most of this mesh. '
         + 'They need to be in the same space — pick a version of this same mesh, or align them first.',
     }
   }
-  return { offset: fit.offset.clone(), recentred: true, refuse: null, warn }
+  return { ...idle, offset: fit.offset.clone(), recentred: true, warn }
 }
-
 
 /**
  * Build the sampler `transferSkin` needs: the source surface with a BVH over it.
  *
- * `offset` moves the source into the target's space (see planRigSourceAlignment)
- * and is applied to the baked positions here, so the sampler ends up in the same
- * space as the target's vertices and callers can query with plain world
- * positions. The skeleton has to make the same move — `translateRig` does that
- * half.
+ * `scale` and `offset` move the source into the target's space (see
+ * planRigSourceAlignment) and are applied to the baked positions here — p · s +
+ * offset, the scale first — so the sampler ends up in the same space as the
+ * target's vertices and callers can query with plain world positions. The
+ * skeleton has to make the same move; `transformRig` does that half, and the two
+ * must be handed the same pair or the mesh binds to a skeleton that no longer
+ * sits inside it.
  */
-export function buildSkinSampler(collected, offset = null) {
+export function buildSkinSampler(collected, offset = null, scale = 1) {
   if (!collected) return null
 
   const positions = new Float32Array(collected.positions)
-  if (offset) {
+  if (scale !== 1 || offset) {
     for (let i = 0; i < positions.length; i += 3) {
-      positions[i] += offset.x
-      positions[i + 1] += offset.y
-      positions[i + 2] += offset.z
+      positions[i] = positions[i] * scale + (offset?.x || 0)
+      positions[i + 1] = positions[i + 1] * scale + (offset?.y || 0)
+      positions[i + 2] = positions[i + 2] * scale + (offset?.z || 0)
     }
   }
 
@@ -287,11 +322,19 @@ export function geometryBox(geometry) {
 /**
  * Measure how well a source sits on the mesh being rigged.
  *
- * The bake measure plus the source's own diagonal, which is what turns its
- * `sameScale` boolean into something the panel can put a number on.
+ * The bake measure plus the source's own diagonal — which is what turns its
+ * `sameScale` boolean into something the panel can put a number on — and the two
+ * box centres, which are the pivot and the destination of the rescale
+ * `planRigSourceAlignment` builds from `uniformScale`.
  */
 export function measureRigSourceFit(targetGeometry, sourceBox) {
-  const fit = measureBakeOverlap(geometryBox(targetGeometry), sourceBox)
+  const targetBox = geometryBox(targetGeometry)
+  const fit = measureBakeOverlap(targetBox, sourceBox)
   if (!fit) return null
-  return { ...fit, sourceDiagonal: sourceBox.getSize(new THREE.Vector3()).length() }
+  return {
+    ...fit,
+    sourceDiagonal: sourceBox.getSize(new THREE.Vector3()).length(),
+    sourceCentre: sourceBox.getCenter(new THREE.Vector3()),
+    targetCentre: targetBox.getCenter(new THREE.Vector3()),
+  }
 }

@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import { toolHandler, createProgressReporter } from '../client.js';
+import { executeComfyRun } from '../comfyRun.js';
 import { attachResultsToNode, resolveNodeTarget, resolveNodeInputAssets } from '../nodeResults.js';
 import { applyAssetTags, tagsInput } from '../assetTags.js';
 
@@ -83,7 +83,7 @@ function pushInto(map, key, value) {
 // node id ("text"), or the parameter's display name. A loose match only counts
 // when it is unambiguous — otherwise the key is reported as an error rather than
 // silently steering a run onto the wrong parameter.
-function createParameterResolver(parameters) {
+export function createParameterResolver(parameters) {
   const exact = new Set();
   const byLowerId = new Map();
   const byInputKey = new Map();
@@ -507,102 +507,68 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
     // output type is missing/wrong. Pass parentAssetId to override.
     const autoParentFromInputs = (parentAssetId === undefined || parentAssetId === null);
 
-    // Subscribe to the single-job progress stream BEFORE submitting so the
-    // terminal event can't be missed (the endpoint also replays the latest
-    // snapshot on connect).
-    let resolveTerminal;
-    const terminalPromise = new Promise(resolve => { resolveTerminal = resolve; });
-    const subscription = api.subscribeSse(`/comfyui/workflows/progress/${promptId}`, payload => {
-      if (String(payload?.promptId || '') !== promptId) return;
-      if (payload?.status === 'error' || payload?.done) {
-        resolveTerminal(payload);
-        return;
+    const outcome = await executeComfyRun(api, {
+      projectId,
+      workflowId,
+      promptId,
+      cardId: kanbanCardId,
+      name,
+      parentAssetId,
+      // Undefined rather than false, so a pinned parentAssetId keeps the
+      // backend's own default (it falls back to input inference when the pinned
+      // parent's type does not match the output).
+      autoParentFromInputs: autoParentFromInputs || undefined,
+      inputs: { ...autoInputs, ...normalizedInputs },
+      fileInputs: normalizedFileInputs,
+      persistProcessingCard,
+      persistGeneratedAssets,
+      timeoutSeconds,
+      onQueued: () => reportProgress(0, 100, 'Workflow queued in ComfyUI'),
+      onProgress: payload => {
+        const percent = Number(payload?.progressPercent);
+        reportProgress(
+          Number.isFinite(percent) ? percent : 0,
+          100,
+          [payload?.detail, payload?.currentNodeLabel].filter(Boolean).join(' — ') || 'Running ComfyUI workflow'
+        );
       }
-      const percent = Number(payload?.progressPercent);
-      reportProgress(
-        Number.isFinite(percent) ? percent : 0,
-        100,
-        [payload?.detail, payload?.currentNodeLabel].filter(Boolean).join(' — ') || 'Running ComfyUI workflow'
-      );
-    }, {
-      onEnd: err => resolveTerminal({ status: 'error', detail: `Progress stream ended unexpectedly: ${err?.message || err}` })
     });
 
-    let timer = null;
-    try {
-      const form = new FormData();
-      if (projectId !== undefined && projectId !== null) form.append('projectId', String(projectId));
-      form.append('workflowId', String(workflowId));
-      form.append('promptId', promptId);
-      if (kanbanCardId !== undefined && kanbanCardId !== null) form.append('cardId', String(kanbanCardId));
-      if (name) form.append('name', name);
-      if (parentAssetId !== undefined && parentAssetId !== null) {
-        form.append('parentAssetId', String(parentAssetId));
-      } else if (autoParentFromInputs) {
-        form.append('autoParentFromInputs', 'true');
-      }
-      if (persistProcessingCard === false) form.append('persistProcessingCard', 'false');
-      if (persistGeneratedAssets === false) form.append('persistGeneratedAssets', 'false');
-
-      const inputValues = { ...autoInputs, ...normalizedInputs };
-      for (const [key, localPath] of Object.entries(normalizedFileInputs || {})) {
-        const fieldName = `comfyFile:${key}`;
-        const buffer = await fs.readFile(localPath);
-        form.append(fieldName, new Blob([buffer]), path.basename(localPath));
-        inputValues[key] = { __fileField: fieldName };
-      }
-      form.append('inputValues', JSON.stringify(inputValues));
-
-      await api.apiForm('POST', '/comfyui/workflows/run', form);
-      await reportProgress(0, 100, 'Workflow queued in ComfyUI');
-
-      const outcome = await Promise.race([
-        terminalPromise,
-        new Promise(resolve => { timer = setTimeout(() => resolve({ __timeout: true }), timeoutSeconds * 1000); })
-      ]);
-
-      if (outcome.__timeout) {
-        return {
-          status: 'running',
-          promptId,
-          ...(inputWarnings.length > 0 ? { warnings: inputWarnings } : {}),
-          ...(tags?.length ? { tags } : {}),
-          note: `Still running after ${timeoutSeconds}s. The workflow continues in the background — call get_run_status with this promptId to check on it${tags?.length ? ' (pass tags too — the results are not saved yet, so nothing has been tagged yet)' : ''}; results are attached to the project when it finishes.`
-        };
-      }
-      if (outcome.status === 'error') {
-        throw new Error(outcome.detail || outcome.error || 'ComfyUI workflow failed');
-      }
-      await reportProgress(100, 100, 'Workflow completed');
-      const result = outcome.result;
-      const assets = Array.isArray(result) ? result : (result ? [result] : []);
-
-      // Graph projects: display the results on the target node (mirrors what
-      // the GraphPage does after a run — without this the assets exist but no
-      // node shows them).
-      let nodeAttachment = null;
-      if (targetNodeId && projectId) {
-        nodeAttachment = await attachResultsToNode(api, {
-          projectId,
-          nodeId: targetNodeId,
-          assets,
-          metadata: { lastAction: 'comfy-workflow', promptId }
-        });
-        notifyMutation(projectId);
-      }
-
+    if (outcome.status === 'running') {
       return {
-        status: 'completed',
+        status: 'running',
         promptId,
-        assets,
         ...(inputWarnings.length > 0 ? { warnings: inputWarnings } : {}),
-        ...(nodeAttachment ? { nodeAttachment } : {}),
-        ...(await applyAssetTags(api, tags, assets))
+        ...(tags?.length ? { tags } : {}),
+        note: `Still running after ${timeoutSeconds}s. The workflow continues in the background — call get_run_status with this promptId to check on it${tags?.length ? ' (pass tags too — the results are not saved yet, so nothing has been tagged yet)' : ''}; results are attached to the project when it finishes.`
       };
-    } finally {
-      if (timer) clearTimeout(timer);
-      subscription.close();
     }
+
+    await reportProgress(100, 100, 'Workflow completed');
+    const { assets } = outcome;
+
+    // Graph projects: display the results on the target node (mirrors what
+    // the GraphPage does after a run — without this the assets exist but no
+    // node shows them).
+    let nodeAttachment = null;
+    if (targetNodeId && projectId) {
+      nodeAttachment = await attachResultsToNode(api, {
+        projectId,
+        nodeId: targetNodeId,
+        assets,
+        metadata: { lastAction: 'comfy-workflow', promptId }
+      });
+      notifyMutation(projectId);
+    }
+
+    return {
+      status: 'completed',
+      promptId,
+      assets,
+      ...(inputWarnings.length > 0 ? { warnings: inputWarnings } : {}),
+      ...(nodeAttachment ? { nodeAttachment } : {}),
+      ...(await applyAssetTags(api, tags, assets))
+    };
   }));
 
   server.registerTool('get_run_status', {

@@ -599,6 +599,54 @@
   letter-spacing: 0;
 }
 
+/* Execution order: a two-option segmented control, not a checkbox, because
+   neither order is the "on" state of the other. */
+.batch-order {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.15rem 0.15rem 0.15rem 0.5rem;
+  border-radius: var(--radius-sm, 6px);
+  background: rgba(13, 14, 16, 0.8);
+  border: 1px solid rgba(143, 245, 255, 0.14);
+}
+
+.batch-order__label {
+  color: var(--on-surface-variant);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  margin-right: 0.35rem;
+}
+
+.batch-order__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.batch-order__option .material-symbols-outlined { font-size: 1rem; }
+
+.batch-order__option:hover:not(:disabled) { color: var(--primary); }
+
+.batch-order__option--active {
+  background: rgba(143, 245, 255, 0.12);
+  color: var(--primary);
+}
+
+.batch-order__option:disabled { cursor: not-allowed; }
+
+/* Locked mid-run: the active choice stays readable, the other one recedes. */
+.batch-order__option:disabled:not(.batch-order__option--active) { opacity: 0.45; }
+
 /* On its own tab the grid gets the whole workspace. */
 .batch-page__main > .batch-results {
   flex: 1 1 auto;

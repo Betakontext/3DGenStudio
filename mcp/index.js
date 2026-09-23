@@ -21,6 +21,7 @@ import { createApiClient } from './client.js';
 import { registerProjectTools } from './tools/projects.js';
 import { registerCardTools } from './tools/cards.js';
 import { registerGraphTools } from './tools/graph.js';
+import { registerBatchTools } from './tools/batch.js';
 import { registerWorkflowTools } from './tools/workflows.js';
 import { registerActionTools } from './tools/actions.js';
 import { registerMeshToolTools } from './tools/meshTools.js';
@@ -48,6 +49,7 @@ const TOOL_GROUPS = {
   projects: { register: registerProjectTools, cost: 4035 },
   cards: { register: registerCardTools, cost: 4437 },
   graph: { register: registerGraphTools, cost: 5266 },
+  batch: { register: registerBatchTools, cost: 6200 },
   workflows: { register: registerWorkflowTools, cost: 10183 },
   actions: { register: registerActionTools, cost: 23338 },
   mesh: { register: registerMeshToolTools, cost: 31972 },
@@ -64,7 +66,8 @@ const GROUP_NAMES = Object.keys(TOOL_GROUPS);
 const GROUP_ALIASES = {
   meshtools: 'mesh', meshtool: 'mesh', project: 'projects', card: 'cards',
   asset: 'assets', workflow: 'workflows', action: 'actions', setting: 'settings',
-  trees: 'tree', treegen: 'tree', buildings: 'building', buildinggen: 'building'
+  trees: 'tree', treegen: 'tree', buildings: 'building', buildinggen: 'building',
+  batches: 'batch', batching: 'batch'
 };
 
 function normalizeGroup(raw) {
@@ -132,6 +135,10 @@ const INSTRUCTION_BLOCKS = [
   {
     groups: ['graph'],
     text: '- IMPORTANT ordering: connect_nodes to wire a node\'s input asset(s) BEFORE you run_workflow / edit_image / generate_mesh on it. The run reads the node\'s connected input at execution time — it feeds the workflow/API and decides whether the result is saved as an edit of the connected image / a version of the connected mesh. Running first and connecting afterwards is wrong: the run sees no input, so it uses none and saves a stray new root asset, and the late connection does not re-run or re-parent it. If you got the order wrong, delete the stray result, connect the inputs, then run again.'
+  },
+  {
+    groups: ['batch'],
+    text: '- Batch projects: the loop is get_batch -> update_batch -> run_batch. A batch is a GRID, not a graph: `variables` are declared once, each `group` is one ROW of values for them, and `stages` are a linear chain of ComfyUI workflows run once per row - so 4 groups x 3 stages is 12 generations, each saved as an ordinary result card. A stage parameter takes a MANUAL value, a VARIABLE (the row supplies it) or the output of an EARLIER STAGE in the same row, which is what makes a chain (image -> mesh -> texture) work; an image/mesh parameter cannot be typed in, so it must be bound to a stage or to an image/mesh variable whose groups pick assets by id. Sources read and write as "manual", "variable:<name>" and "stage:<n>" (1-based) - ids never appear. update_batch REPLACES a whole section (variables / groups / stages), so read it first and send the list back; positions carry identity, which is how a row keeps the results already in its cells. run_batch CONTINUES by default (a cell that already produced an asset is kept and reused downstream) - "restart" regenerates instead, and the groups/stages filters narrow it to one row, one step or one cell.'
   },
   {
     groups: ['workflows'],

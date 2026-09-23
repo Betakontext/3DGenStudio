@@ -350,11 +350,40 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
       }
 
       // ── Primary file (LOD0) ────────────────────────────────────────────────
+      // LOD0 is the source mesh, so it needs no bake — but it does need the
+      // resolution the bake was asked for. Without this a chain whose every
+      // simplified level is 1024px still ships a 4096px LOD0, which reads as the
+      // setting having been ignored (and hands the engine a chain whose biggest
+      // texture belongs to the level that is on screen least). Resampling is the
+      // whole job here: LOD0's UVs are the source's, so the image only has to
+      // get smaller — no rays, no Blender, no round trip through the service.
+      let primaryGlb = sourceGlb
+      const primaryResolution = bakeEnabled && bakeMapNames.length
+        ? lodBakeResolution(bakeResolution, 0, bakeFalloff)
+        : 0
+      if (lodEnabled && primaryResolution) {
+        setProgress({ frac: 0.6, message: `Resampling LOD0 textures to ${primaryResolution}px…` })
+        try {
+          const object = await loadGlbBlob(sourceGlb)
+          const resampled = await exportObject3D(object, {
+            format: 'glb',
+            baseName: primaryBase,
+            maxTextureSize: primaryResolution,
+          })
+          primaryGlb = resampled[0].blob
+        } catch (resampleError) {
+          // Same contract as a failed bake: the level still ships, at the
+          // resolution it already had.
+          console.error('Resampling the LOD0 textures failed:', resampleError)
+          notes.push(`LOD0 textures kept their original resolution (${resampleError.message || 'resampling failed'})`)
+        }
+      }
+
       setProgress({ frac: 0.62, message: 'Exporting the mesh…' })
       if (embedsCollision) {
         // Unreal: the hulls have to travel inside the render mesh, so the primary
         // file is rebuilt from a merged GLB rather than the untouched source.
-        const merged = await mergeCollisionForUnreal(sourceGlb, collisionGlb, primaryBase)
+        const merged = await mergeCollisionForUnreal(primaryGlb, collisionGlb, primaryBase)
         files.push(...await filesFromGlb(merged.blob, primaryBase, evt => setProgress({
           frac: 0.62 + 0.23 * (evt.frac ?? 0),
           message: evt.message || 'Converting to FBX…',
@@ -362,16 +391,19 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
         notes.push(`${merged.hullCount} UCX collision node${merged.hullCount === 1 ? '' : 's'} embedded`)
       } else if (selectedFormat.value === 'glb') {
         // Byte-passthrough when the source is a .glb (rig/animations/textures
-        // untouched); three.js re-export otherwise.
-        files.push({ filename: `${primaryBase}.glb`, blob: sourceGlb })
+        // untouched); three.js re-export otherwise — or the resampled copy above,
+        // when a bake resolution was asked for.
+        files.push({ filename: `${primaryBase}.glb`, blob: primaryGlb })
       } else if (selectedFormat.kind !== 'preset') {
         const object = getObject3D ? await getObject3D() : await loadObject3DFromUrl(meshUrl)
         if (!object) {
           throw new Error('No mesh is available to export.')
         }
+        // No maxTextureSize: this branch is PLY/STL/OBJ, none of which embed the
+        // texture the way GLB does.
         files.push(...await exportObject3D(object, { format: selectedFormat.value, baseName: primaryBase }))
       } else {
-        const { blob, stats } = await convertMesh(sourceGlb, {
+        const { blob, stats } = await convertMesh(primaryGlb, {
           options: { preset: selectedFormat.preset },
           fileName: `${primaryBase}.glb`,
           onProgress: evt => setProgress({
@@ -612,9 +644,12 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
                           Bakes {bakeMapNames.length ? bakeMapNames.map(name => BAKE_MAP_LABELS[name] || name).join(', ') : 'nothing'}
                           {' '}from the unsimplified mesh onto each level&apos;s own UVs, at{' '}
                           {lodRatios.slice(1).map((_, index) => `${lodBakeResolution(bakeResolution, index + 1, bakeFalloff)}px`).join(' / ')}.
-                          LOD0 is untouched, so it keeps the original textures. This is what fixes
-                          the smearing you get when a simplified mesh reuses the original texture —
-                          levels whose UV seams had to be welded need it most.
+                          LOD0 is the source, so it is never baked — its geometry and UVs are
+                          untouched and its textures are simply resampled to{' '}
+                          {lodBakeResolution(bakeResolution, 0, bakeFalloff)}px, so the whole chain
+                          honours the resolution you picked. This is what fixes the smearing you get
+                          when a simplified mesh reuses the original texture — levels whose UV seams
+                          had to be welded need it most.
                         </p>
                         <p className="export-mesh__hint">
                           Runs headless Blender on the Mesh Tools service, one level at a time — a
