@@ -27,6 +27,21 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v3.5.1',
+    date: '2026-09-23',
+    items: [
+			'ComfyUI: Fixed "Gen TexturedMesh with Trellis2"',
+			'Batch Project: Can run the batch by Stage',
+			'MCP: Added functions for Batch Project',
+			'SetupWizard: Added Qwen Image 2.1',
+			'AutoRetopo: Can fix open edges',
+			'AutoRig: Can modify mesh orientation',
+			'AutoRig: Fixed crash on Linux',
+			'ComfyUI: Updated MeshProjection workflows',
+			'MeshExport: Fixed LOD Texture Size'
+    ]
+  },
+  {
     version: 'v3.5.0',
     date: '2026-09-18',
     items: [
