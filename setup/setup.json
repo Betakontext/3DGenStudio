@@ -731,7 +731,8 @@
 					"File": "setup/Segmentation with SAM3-1.json",
 					"Inputs": [
 						{ "Node": "163", "Input": "image",  "Name": "Source Image", "Type": "Image" },
-						{ "Node": "164:78", "Input": "text",  "Name": "Prompt", "Type": "String" }
+						{ "Node": "164:78", "Input": "text",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "251", "Input": "square",  "Name": "Square Image", "Type": "Boolean" }
 					],
 					"Outputs": [
 						{ "Node": "254", "Name": "Save Images", "Type": "Image" }
