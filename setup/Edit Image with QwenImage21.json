@@ -11,16 +11,6 @@
       "title": "Preview Image"
     }
   },
-  "471": {
-    "inputs": {
-      "unet_name": "{diffusion_model}",
-      "weight_dtype": "default"
-    },
-    "class_type": "UNETLoader",
-    "_meta": {
-      "title": "Load Diffusion Model"
-    }
-  },
   "472": {
     "inputs": {
       "prompt": [
@@ -96,14 +86,14 @@
   },
   "477": {
     "inputs": {
-      "seed": 0,
+      "seed": 571130865078811,
       "steps": 25,
       "cfg": 1,
       "sampler_name": "euler",
       "scheduler": "simple",
       "denoise": 1,
       "model": [
-        "471",
+        "484",
         0
       ],
       "positive": [
@@ -195,6 +185,15 @@
     "class_type": "ComfySwitchNode",
     "_meta": {
       "title": "If/Else Switch"
+    }
+  },
+  "484": {
+    "inputs": {
+      "unet_name": "{diffusion_model}"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
     }
   }
 }

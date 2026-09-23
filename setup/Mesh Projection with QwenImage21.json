@@ -45,7 +45,7 @@
       "scheduler": "simple",
       "denoise": 1,
       "model": [
-        "38",
+        "45",
         0
       ],
       "positive": [
@@ -171,16 +171,6 @@
       "title": "Image Resolution"
     }
   },
-  "38": {
-    "inputs": {
-      "unet_name": "{diffusion_model}",
-      "weight_dtype": "default"
-    },
-    "class_type": "UNETLoader",
-    "_meta": {
-      "title": "Load Diffusion Model"
-    }
-  },
   "39": {
     "inputs": {
       "prompt": [
@@ -263,6 +253,15 @@
     "class_type": "StringConcatenate",
     "_meta": {
       "title": "Concatenate Text"
+    }
+  },
+  "45": {
+    "inputs": {
+      "unet_name": "{diffusion_model}"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
     }
   }
 }

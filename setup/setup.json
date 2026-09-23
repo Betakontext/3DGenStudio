@@ -15,8 +15,13 @@
 		{
 			"Name": "Qwen Image 2.1",
 			"DiffusionModels": {
-				"F16":  { "FileName": "qwen_image_2.1_bf16.safetensors",    "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_bf16.safetensors?download=true",    "Size": 14.2 },
-				"INT8": { "FileName": "qwen_image_2.1_int8_convrot.safetensors",   "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_int8_convrot.safetensors?download=true",   "Size": 7.3 }
+				"F16":  { "FileName": "qwen-image-2.1-F16.gguf",    "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-F16.gguf?download=true",    "Size": 14.2 },
+				"Q8": { "FileName": "qwen-image-2.1-Q8_0.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q8_0.gguf?download=true",   "Size": 7.6 },
+				"Q6": { "FileName": "qwen-image-2.1-Q6_K.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q6_K.gguf?download=true",   "Size": 6.3 },
+				"Q5": { "FileName": "qwen-image-2.1-Q5_K_M.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q5_K_M.gguf?download=true",   "Size": 5.4 },
+				"Q4": { "FileName": "qwen-image-2.1-Q4_K_M.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q4_K_M.gguf?download=true",   "Size": 4.2 },
+				"Q3": { "FileName": "qwen-image-2.1-Q3_K_M.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q3_K_M.gguf?download=true",   "Size": 3.2 },
+				"Q2": { "FileName": "qwen-image-2.1-Q2_K.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q2_K.gguf?download=true",   "Size": 2.5 }
 			},
 			"VAE":         [{ "FileName": "qwen_image_2.1_vae_bf16.safetensors",                              "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors?download=true",                                "Size": 0.7 }],
 			"TextEncoder": { "FileName": "qwen3vl_8b_int8_convrot.safetensors",                   "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors?download=true",       "Size": 9.4 },		
