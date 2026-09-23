@@ -186,7 +186,11 @@ async function textureToPngBlob(texture, channel = null) {
   return await new Promise(resolve => canvas.toBlob(blob => resolve(blob), 'image/png'))
 }
 
-function exportGlb(object, base) {
+// `maxTextureSize` clamps every image the exporter writes (it only ever shrinks —
+// the exporter takes the min of the image's own size and this). It is how an LOD
+// level honours a requested texture resolution without a bake: LOD0's UVs are the
+// source's, so its textures only ever need to be resampled smaller.
+function exportGlb(object, base, maxTextureSize = Infinity) {
   return new Promise((resolve, reject) => {
     new GLTFExporter().parse(
       object,
@@ -201,7 +205,7 @@ function exportGlb(object, base) {
       // Loader-produced clips are already node-name-addressed, so they need no
       // track renaming here — the `.bones[...]` rewrite in animationLibrary.js
       // exists only for the retargeter's mixer-bound clips.
-      { binary: true, onlyVisible: false, animations: object.animations || [] }
+      { binary: true, onlyVisible: false, animations: object.animations || [], maxTextureSize }
     )
   })
 }
@@ -399,7 +403,7 @@ async function exportObj(object, base) {
 
 // Serialize an Object3D into one or more files for the requested format.
 // Returns [{ filename, blob }]. OBJ may return several files (obj/mtl/textures).
-export async function exportObject3D(object, { format, baseName }) {
+export async function exportObject3D(object, { format, baseName, maxTextureSize = Infinity }) {
   if (!object) {
     throw new Error('No mesh is available to export.')
   }
@@ -407,7 +411,7 @@ export async function exportObject3D(object, { format, baseName }) {
   const base = sanitizeBaseName(baseName)
   const fmt = String(format || 'glb').toLowerCase()
 
-  if (fmt === 'glb') return await exportGlb(object, base)
+  if (fmt === 'glb') return await exportGlb(object, base, maxTextureSize)
   if (fmt === 'ply') return await exportPly(object, base)
   if (fmt === 'stl') return exportStl(object, base)
   if (fmt === 'obj') return await exportObj(object, base)
